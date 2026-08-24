@@ -41,8 +41,9 @@ one by appending a new one.
 interface, leaving the file asserting two contradictory things at once. A conflict there is a genuine
 signal that both sides are editing the same boundary and must reconcile.
 
-**Every entry names its host.** With two independent sides and no shared supervisor, an unattributed
-line is close to useless.
+**Every entry names who wrote it**, using that person's GitHub username - `derek` or `andres`. With two
+independent sides and no shared supervisor, an unattributed line is close to useless, and a real name
+tells you who to go and talk to.
 
 ### When to write to which
 
