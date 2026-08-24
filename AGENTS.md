@@ -94,10 +94,35 @@ That protection depends on two things staying true:
 
 ## Working conventions
 
-- Never commit directly to `main`. Branch, then open a pull request.
+**Code** goes through a branch and a pull request. Never commit code directly to `main`.
+
+**The coordination files are the deliberate exception. Commit them straight to `main`.**
+`STATUS.md`, `DECISIONS.md`, `INTERFACES.md` and this file exist so the two sides stay in step, and a
+pull request round trip defeats that: a status line the other side needs now is useless sitting in
+review. Append, commit, push to `main`, done - no branch, no pull request, no waiting.
+
+That is safe here precisely because of the merge configuration. `STATUS.md` and `DECISIONS.md` are
+union-merged, so two people appending at the same moment cannot conflict. Verified: with both sides
+committing to `main` from a stale base, the second push is rejected, a plain `git pull` merges cleanly,
+and both entries survive. So the recovery when your push is rejected is simply:
+
+```sh
+git pull --no-rebase && git push
+```
+
+Two caveats worth knowing rather than discovering:
+
+- **Union merge does not preserve order.** Entries interleave by merge order, not by timestamp. That is
+  why every entry carries an ISO 8601 timestamp - the timestamp is the sort key, not the position.
+- **`INTERFACES.md` is edited in place, so it CAN conflict** even committed directly. That conflict is
+  the signal, not a nuisance: two people are changing the same boundary and need to talk. Resolve it by
+  agreeing, not by picking a side blind.
+
+Other conventions:
+
 - Never merge a red pull request. Green checks only, either side.
 - Do not discard work that has not landed. If something looks stale, ask rather than delete.
-- Both sides may merge their own green work without waiting for the other.
+- Both sides may merge their own green code work without waiting for the other.
 
 ## Required deliverables
 

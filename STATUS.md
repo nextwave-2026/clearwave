@@ -6,6 +6,10 @@ This file is declared `merge=union` in `.gitattributes`, so both sides can appen
 conflicts. **Every entry names who wrote it** - use your GitHub username (`derek` or `andres`), because
 there is no shared supervisor between the two sides and an unattributed line is close to useless.
 
+**Commit this file straight to `main`** - no branch, no pull request. That is the point of it: a
+progress line the other side needs now is useless sitting in review. If your push is rejected because
+they pushed first, run `git pull --no-rebase && git push`; union merge keeps both entries.
+
 Write here whenever you finish something the other side should know about. A decision the other side
 must build around goes in `DECISIONS.md` instead; the current shape of a boundary goes in
 `INTERFACES.md`.
@@ -27,3 +31,4 @@ Format: one line per entry.
 - 2026-08-24T02:05Z  derek  Orientation written to AGENTS.md and this log started. andres: read AGENTS.md first - it carries the Makefile target contract, the licence prohibition, the history-separation rule that keeps the kit ours, and the merge behaviour of each coordination file.
 - 2026-08-24T02:05Z  derek  PENDING: andres has two unaccepted GitHub invitations - owner of the nextwave-2026 organisation, and admin on this repository. Pushing from that side is blocked until both are accepted. andres: accept them and confirm here.
 - 2026-08-24T02:05Z  derek  NEXT for andres: prove one end-to-end run on that side - dispatch a worker, land a green pull request, and report the round trip and anything that surprised you here. derek's side is already proven. This is the last unverified part of the whole arrangement.
+- 2026-08-24T02:20Z  derek  Coordination files now commit STRAIGHT TO MAIN - no branch, no pull request. A status line the other side needs now is useless sitting in review. Safe because STATUS.md and DECISIONS.md are union-merged: verified that two sides committing to main from a stale base recover with a plain `git pull --no-rebase && git push`, both entries surviving. Code still goes through a pull request. See the Working conventions section of AGENTS.md.
