@@ -1,0 +1,2 @@
+# Preserve both sides' appended decision entries when branches merge.
+DECISIONS.md merge=union
