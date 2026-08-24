@@ -1,2 +1,5 @@
-# Preserve both sides' appended decision entries when branches merge.
+# Preserve both sides' appended entries when branches merge. Append-only logs only:
+# never union-merge a file edited in place (INTERFACES.md), or it keeps both the old
+# and the new value and ends up asserting two contradictory things at once.
 DECISIONS.md merge=union
+STATUS.md merge=union
