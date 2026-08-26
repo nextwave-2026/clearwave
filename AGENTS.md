@@ -139,3 +139,7 @@ Keep this file for knowledge useful to almost every future agent session in this
 Do not repeat what the codebase already shows; point to the authoritative file or command instead.
 Prefer rewriting or pruning existing entries over appending new ones.
 When updating this file, preserve this bar for all agents and keep entries concise.
+
+## Competition coordination skills
+
+See `.agents/skills/`: `claim-before-build` checks claims before coding, `boundary-conflict-stop` halts interface contradictions, `decision-capture` records consequential choices, and `hold-under-fire` verifies working claims under unrehearsed use. `.claude/skills` points to the same directory for harness compatibility.
