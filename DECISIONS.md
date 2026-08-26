@@ -7,11 +7,19 @@ Each entry is exactly two lines. The first carries an ISO 8601 UTC timestamp, **
 **Commit this file straight to `main`** - no branch, no pull request. If your push is rejected because
 the other side pushed first, run `git pull --no-rebase && git push`; union merge keeps both entries.
 
-## Example entries - delete these before use
+## Entries
 
-- 2026-08-29T14:43Z  derek  auth: switching to JWT, symmetric key from env
-  -> other side: stop sending the session cookie, read the Authorization header instead
-- 2026-08-29T14:47Z  andres  response: errors now include a stable code field
-  -> other side: display the code in diagnostics and do not parse the message text
-- 2026-08-29T14:52Z  derek  contract: identifiers are opaque strings
-  -> other side: preserve identifier values without numeric conversion
+- 2026-08-26T23:43Z  derek  schedule: the tooling site governs, the terms document is the stale side
+  -> other side: plan Saturday morning against 09:00 check-in, not 10:00, and re-check the site Friday night - it has been revised once already and Luma still embeds the removed Friday start
+- 2026-08-26T23:43Z  derek  pitch: budget the 7 minutes as roughly 3 speaking, 4 with judges operating it themselves
+  -> other side: rehearse the handover into the demo until it is quick and boring, and do not take the keyboard back - trial by fire means unrehearsed input from them, not a driven walkthrough
+- 2026-08-26T23:43Z  derek  quota: our model allowances are separate by design, so priming does not carry across
+  -> other side: schedule your own usage-window priming before Saturday; mine covers only my account, and starting cold at T-ZERO costs you the first window
+- 2026-08-26T23:43Z  derek  unattended work: gnhf is a conditional go, gated on a validation run before the event
+  -> other side: if that run fails we drop it rather than debug it; if it passes, use it only for adversarial test-hardening of a working slice - never features, never the demo branch, never auto-push, and bound it by iteration count because the token counter under-reports
+- 2026-08-26T23:43Z  derek  decision log: an agent may capture what was decided and when, but never the reasoning
+  -> other side: make your agent ask you for the "because" and record your words - judges ask us about this log directly, and a rationale you did not actually give is what collapses under questioning
+- 2026-08-26T23:43Z  derek  coordination skills: four are in flight in nextwave-kit and not yet in this repo
+  -> other side: once they land here they fire automatically - claim before build, stop on an INTERFACES.md conflict rather than resolving it, capture decisions, and verify a working claim by testing it as a stranger would. Say now if you want any of them changed, before they are copied in
+- 2026-08-26T23:43Z  derek  availability: I plan to be offline roughly 03:00-07:00 on Sunday
+  -> other side: do not leave an interface decision pending across that gap, and expect no reply until 07:00 - with no messaging channel, a blocked question costs you the whole window
