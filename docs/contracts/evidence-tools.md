@@ -1,0 +1,308 @@
+# C2 - Evidence-query tools
+
+C2 is the read surface used by the investigation agent. Each tool is a standalone Python 3
+subprocess: it reads one JSON object from stdin, writes one JSON object to stdout, and writes no
+human-oriented output. The reference stubs are in `stubs/evidence/` and are fixture-backed so they
+run offline.
+
+## Common protocol
+
+Invoke a tool as follows:
+
+```sh
+printf '%s\n' '{"cohort":{"merchant_id":"merchant-a"},"window":{"start":"2026-08-29T10:00:00Z","end":"2026-08-29T10:15:00Z"}}' \
+  | python3 stubs/evidence/cohort_metrics.py
+```
+
+A successful response always contains:
+
+- `query_id` - stable identifier for the canonical JSON value of the exact `{tool, input}` call.
+  The reference stubs use `q_<tool>_<first-16-sha256-hex>`.
+- `as_of` - RFC 3339 UTC timestamp at which the returned evidence was measured.
+
+The remaining top-level fields are tool-specific. A failure exits non-zero and prints only this
+shape as JSON:
+
+```json
+{"error":{"code":"invalid_input","message":"stdin must contain a JSON object"}}
+```
+
+`cohort` is an object of equality filters. Supported dimensions are `merchant_id`, `provider`,
+`payment_method`, `card_network`, `country`, and `issuing_bank`; implementations may add a
+registered C1 dimension without changing the meaning of existing fields. `window` is an inclusive
+start/exclusive end UTC interval with RFC 3339 timestamps.
+
+## 1. `cohort_metrics`
+
+**Purpose:** Return the measured conversion and volume for one cohort. Payment-level conversion
+counts distinct customer payments; attempt-level conversion counts provider attempts. These two
+levels must remain explicit and must never be collapsed.
+
+**Input:**
+
+- `cohort` (object, required) - dimension equality filters.
+- `window` (object, required) - `start` and `end` timestamps.
+
+**Output fields:** `cohort`, `window`, `payment_metrics` (`attempted_payments`,
+`approved_payments`, `approval_conversion`, and optional expected/baseline fields),
+`attempt_metrics` (`attempts`, `approved_attempts`, `approval_conversion`, `failed_attempts`),
+`volume.attempted` and `volume.approved` (each `{amount,currency}`), `decline_mix` (reason/count/share),
+and `baseline`.
+
+**Example call:**
+
+```json
+{"cohort":{"merchant_id":"merchant-a","provider":"provider-p2","country":"CO","card_network":"mastercard"},"window":{"start":"2026-08-29T10:00:00Z","end":"2026-08-29T10:15:00Z"}}
+```
+
+**Example response:**
+
+```json
+{"query_id":"q_cohort_metrics_4c7bf85539781845","as_of":"2026-08-29T10:15:00Z","payment_metrics":{"attempted_payments":1000,"approved_payments":640,"approval_conversion":0.64},"attempt_metrics":{"attempts":1350,"approved_attempts":640,"approval_conversion":0.4740740741},"volume":{"attempted":{"amount":100000.0,"currency":"USD"},"approved":{"amount":64000.0,"currency":"USD"}},"decline_mix":[{"reason":"timeout","count":505,"share":0.7112676056}]}
+```
+
+## 2. `cohort_compare`
+
+**Purpose:** Return the same core payment-level, attempt-level, and volume metrics for the target
+cohort, its sibling cohorts, and its parent cohort. This shows whether a deviation is isolated or
+inherited.
+
+**Input:**
+
+- `cohort` (object, required) - target filters.
+- `window` (object, required).
+- `compare_dimensions` (array of strings, optional) - dimensions that define sibling slices.
+
+**Output fields:** `target`, `siblings` (array), and `parent`. Each contains `cohort`,
+`payment_metrics`, `attempt_metrics`, and `volume` with the same field meanings as
+`cohort_metrics`.
+
+**Example call:**
+
+```json
+{"cohort":{"merchant_id":"merchant-a","provider":"provider-p2","country":"CO"},"window":{"start":"2026-08-29T10:00:00Z","end":"2026-08-29T10:15:00Z"},"compare_dimensions":["provider","country"]}
+```
+
+**Example response:**
+
+```json
+{"query_id":"q_cohort_compare_b55163acfb4eb830","as_of":"2026-08-29T10:15:00Z","target":{"payment_metrics":{"attempted_payments":1000,"approved_payments":640,"approval_conversion":0.64},"attempt_metrics":{"attempts":1350,"approved_attempts":640,"approval_conversion":0.4740740741}},"siblings":[{"label":"same merchant, provider P3 sibling","payment_metrics":{"attempted_payments":600,"approved_payments":558,"approval_conversion":0.93}}],"parent":{"label":"merchant A across all dimensions","payment_metrics":{"attempted_payments":5000,"approved_payments":4300,"approval_conversion":0.86}}}
+```
+
+## 3. `drilldown`
+
+**Purpose:** Return the localisation path followed for an incident, level by level, including the
+metric observed at each level and the deterministic reason the path stopped.
+
+**Input:**
+
+- `incident_id` (string, required).
+- `window` (object, optional) - defaults to the incident's observation window.
+- `levels` (array of strings, optional) - requested dimension order.
+
+**Output fields:** `incident_id`, `levels` (each `{level, cohort, metrics, reason}`), `stopped_at`,
+and `stop_reason`.
+
+**Example call:**
+
+```json
+{"incident_id":"inc-2026-08-29-001","levels":["merchant","provider","country","card_network","issuing_bank"]}
+```
+
+**Example response:**
+
+```json
+{"query_id":"q_drilldown_dc1bad2929028414","as_of":"2026-08-29T10:15:00Z","incident_id":"inc-2026-08-29-001","levels":[{"level":"provider","cohort":{"provider":"provider-p2"},"metrics":{"payment_approval_conversion":0.64},"reason":"Provider P2 isolates the shift."}],"stopped_at":"provider_vs_issuing_bank","stop_reason":"No Provider P2 traffic from another issuer and no Bank X traffic through another provider."}
+```
+
+## 4. `decline_breakdown`
+
+**Purpose:** Return the normalised decline-reason distribution for a cohort and its shift against a
+baseline. Shares use the reported failed-attempt denominator, which is explicit in the response.
+
+**Input:**
+
+- `cohort` (object, required).
+- `window` (object, required).
+- `baseline_window` (object, optional).
+
+**Output fields:** `cohort`, `window`, `normalised_denominator`, `reasons` (each
+`{reason,count,share,baseline_share,shift}`), and `baseline`.
+
+**Example call:**
+
+```json
+{"cohort":{"merchant_id":"merchant-a","provider":"provider-p2","country":"CO"},"window":{"start":"2026-08-29T10:00:00Z","end":"2026-08-29T10:15:00Z"}}
+```
+
+**Example response:**
+
+```json
+{"query_id":"q_decline_breakdown_fd55d9c698a6e062","as_of":"2026-08-29T10:15:00Z","normalised_denominator":"failed_attempts","reasons":[{"reason":"timeout","count":505,"share":0.7112676056,"baseline_share":0.1,"shift":0.6112676056},{"reason":"issuer_decline","count":165,"share":0.2323943662,"baseline_share":0.6,"shift":-0.3676056338}]}
+```
+
+## 5. `retry_stats`
+
+**Purpose:** Describe retry depth and amplification without treating retries as new customer
+payments. Queue depth and delay provide operational context for a retry storm.
+
+**Input:**
+
+- `cohort` (object, required).
+- `window` (object, required).
+
+**Output fields:** `payments`, `attempts`, `retried_payments`, `retry_depth` (maximum and
+count distribution), `attempts_per_payment`, `retry_amplification_factor`, and `queue`
+(start/end/peak depth and delay percentiles).
+
+**Example call:**
+
+```json
+{"cohort":{"merchant_id":"merchant-a","provider":"provider-p2"},"window":{"start":"2026-08-29T10:00:00Z","end":"2026-08-29T10:15:00Z"}}
+```
+
+**Example response:**
+
+```json
+{"query_id":"q_retry_stats_4be170e12f0e2d8f","as_of":"2026-08-29T10:15:00Z","payments":1000,"attempts":1350,"retried_payments":300,"retry_depth":{"max":2,"distribution":{"0":700,"1":250,"2":50}},"attempts_per_payment":1.35,"retry_amplification_factor":1.35,"queue":{"depth_start":42,"depth_end":318,"depth_peak":352,"delay_p95_ms":18000}}
+```
+
+## 6. `operational_metrics`
+
+**Purpose:** Return latency percentiles, error and timeout rates, service/runtime health, and the
+deployment identity associated with a cohort or service.
+
+**Input:**
+
+- `target` (object, required) - `{kind:"cohort"|"service", ...filters}`.
+- `window` (object, required).
+
+**Output fields:** `target`, `window`, `latency_ms` (`p50`, `p95`, `p99`), `error_rate`,
+`timeout_rate`, `service_health`, `runtime_health`, and `deployment`.
+
+**Example call:**
+
+```json
+{"target":{"kind":"cohort","merchant_id":"merchant-a","provider":"provider-p2"},"window":{"start":"2026-08-29T10:00:00Z","end":"2026-08-29T10:15:00Z"}}
+```
+
+**Example response:**
+
+```json
+{"query_id":"q_operational_metrics_e7fbb154c1351d42","as_of":"2026-08-29T10:15:00Z","latency_ms":{"p50":420,"p95":1800,"p99":4200},"error_rate":0.018,"timeout_rate":0.35,"service_health":{"status":"degraded"},"runtime_health":{"status":"healthy"},"deployment":{"service":"payment-router","deployment_id":"deploy-2026-08-29.3"}}
+```
+
+## 7. `confounding_check`
+
+**Purpose:** Deterministically establish whether two dimensions are structurally inseparable in the
+observed window. This is a data property, not an LLM judgement. The cross-tabulation and criterion
+make the conclusion auditable.
+
+**Input:**
+
+- `dimension_a` (string, required).
+- `dimension_b` (string, required).
+- `window` (object, required).
+- `cohort` (object, optional) - restrict the observation first.
+
+**Output fields:** `dimension_a`, `dimension_b`, `window`, `structurally_inseparable` (boolean),
+`criterion`, `cross_tabulation` (`dimensions` and `rows`), `observed_mappings`, and `interpretation`.
+A false result is valid and must still include the cross-tabulation.
+
+**Example call:**
+
+```json
+{"dimension_a":"provider","dimension_b":"issuing_bank","window":{"start":"2026-08-29T10:00:00Z","end":"2026-08-29T10:15:00Z"},"cohort":{"merchant_id":"merchant-a"}}
+```
+
+**Example response:**
+
+```json
+{"query_id":"q_confounding_check_8efbcfeb03db80ca","as_of":"2026-08-29T10:15:00Z","dimension_a":"provider","dimension_b":"issuing_bank","structurally_inseparable":true,"cross_tabulation":{"dimensions":["provider","issuing_bank"],"rows":[{"provider":"provider-p2","issuing_bank":"bank-x","payments":1000,"attempts":1350},{"provider":"provider-p3","issuing_bank":"bank-y","payments":600,"attempts":620}]},"interpretation":"The data cannot discriminate a provider P2 cause from a Bank X cause."}
+```
+
+## 8. `incident_history`
+
+**Purpose:** Return prior incidents for a merchant or filtered cohort so recurrence is visible.
+
+**Input:**
+
+- `merchant_id` (string, required).
+- `cohort` (object, optional) - additional filters.
+- `window` (object, optional) - lookback interval.
+
+**Output fields:** `merchant_id`, `cohort_filter`, `incidents` (each prior incident summary), and
+`recurrence` (matching count, lookback and pattern).
+
+**Example call:**
+
+```json
+{"merchant_id":"merchant-a","cohort":{"provider":"provider-p2","country":"CO"}}
+```
+
+**Example response:**
+
+```json
+{"query_id":"q_incident_history_240ddddcbce2998b","as_of":"2026-08-29T10:15:00Z","merchant_id":"merchant-a","incidents":[{"incident_id":"inc-2026-08-10-004","severity":"high","payment_approval_conversion":{"expected":0.91,"actual":0.78}}],"recurrence":{"prior_matching_incidents":2,"lookback_days":30,"pattern":"provider-p2 and country CO"}}
+```
+
+## 9. `external_status`
+
+**Purpose:** Return third-party provider health as optional corroboration. An unavailable source is
+a successful response, not a tool failure, and must never stop diagnosis.
+
+**Input:**
+
+- `provider` (string, required).
+- `window` (object, optional).
+- `source` (string, optional) - requested status source.
+
+**Output fields:** `provider`, `status` (including `operational`, `degraded`, `outage`, and
+`unavailable`), `source`, `checked_at`, `reason` when unavailable, and `diagnostic_effect`.
+
+**Example call:**
+
+```json
+{"provider":"provider-p2","source":"provider-status-adapter"}
+```
+
+**Example response:**
+
+```json
+{"query_id":"q_external_status_25bd2e0ba013d3a3","as_of":"2026-08-29T10:15:00Z","provider":"provider-p2","status":"unavailable","source":"provider-status-adapter","checked_at":"2026-08-29T10:15:00Z","reason":"The provider status endpoint did not answer within the adapter timeout."}
+```
+
+## 10. `financial_impact`
+
+**Purpose:** Return deterministic business impact for an incident. Values are GMV-at-risk
+estimates, not platform-revenue claims.
+
+**Input:**
+
+- `incident_id` (string, required).
+- `window` (object, optional) - defaults to the incident window.
+
+**Output fields:** `incident_id`, `window`, `attempted_value`, `expected_approval_rate`,
+`actual_approval_rate`, `estimated_lost_approved_volume` (payments and amount), `gmv_at_risk`,
+`loss_per_hour`, and labelled `assumptions`.
+
+**Example call:**
+
+```json
+{"incident_id":"inc-2026-08-29-001"}
+```
+
+**Example response:**
+
+```json
+{"query_id":"q_financial_impact_f73da703f566fa22","as_of":"2026-08-29T10:15:00Z","incident_id":"inc-2026-08-29-001","attempted_value":{"amount":100000.0,"currency":"USD"},"expected_approval_rate":0.92,"actual_approval_rate":0.64,"estimated_lost_approved_volume":{"payments":280,"amount":28000.0,"currency":"USD"},"gmv_at_risk":{"amount":28000.0,"currency":"USD"},"loss_per_hour":{"amount":112000.0,"currency":"USD"}}
+```
+
+## Caller rules
+
+- The investigation agent may not compute a metric itself. If it needs a statistic this surface does
+  not expose, it requests that W2 add it here instead of deriving it from events or other results.
+- Every factual claim in an investigation result cites the `query_id` that produced it. Evidence
+  items use the exact query identifier, not a copied metric or an uncited narrative assertion.
+- External status is corroboration only. First-party observations remain usable when the external
+  source is unavailable or disagrees.

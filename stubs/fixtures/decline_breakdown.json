@@ -1,0 +1,55 @@
+{
+  "as_of": "2026-08-29T10:15:00Z",
+  "response": {
+    "cohort": {
+      "merchant_id": "merchant-a",
+      "provider": "provider-p2",
+      "payment_method": "card",
+      "card_network": "mastercard",
+      "country": "CO",
+      "issuing_bank": "bank-x"
+    },
+    "window": {
+      "start": "2026-08-29T10:00:00Z",
+      "end": "2026-08-29T10:15:00Z"
+    },
+    "normalised_denominator": "failed_attempts",
+    "reasons": [
+      {
+        "reason": "timeout",
+        "count": 505,
+        "share": 0.7112676056,
+        "baseline_share": 0.1,
+        "shift": 0.6112676056
+      },
+      {
+        "reason": "issuer_decline",
+        "count": 165,
+        "share": 0.2323943662,
+        "baseline_share": 0.6,
+        "shift": -0.3676056338
+      },
+      {
+        "reason": "insufficient_funds",
+        "count": 20,
+        "share": 0.0281690141,
+        "baseline_share": 0.2,
+        "shift": -0.1718309859
+      },
+      {
+        "reason": "other",
+        "count": 20,
+        "share": 0.0281690141,
+        "baseline_share": 0.1,
+        "shift": -0.0718309859
+      }
+    ],
+    "baseline": {
+      "window": {
+        "start": "2026-08-22T10:00:00Z",
+        "end": "2026-08-22T10:15:00Z"
+      },
+      "failed_attempts": 100
+    }
+  }
+}

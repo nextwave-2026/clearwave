@@ -1,0 +1,37 @@
+{
+  "as_of": "2026-08-29T10:15:00Z",
+  "response": {
+    "cohort": {
+      "merchant_id": "merchant-a",
+      "provider": "provider-p2",
+      "payment_method": "card",
+      "card_network": "mastercard",
+      "country": "CO",
+      "issuing_bank": "bank-x"
+    },
+    "window": {
+      "start": "2026-08-29T10:00:00Z",
+      "end": "2026-08-29T10:15:00Z"
+    },
+    "payments": 1000,
+    "attempts": 1350,
+    "retried_payments": 300,
+    "retry_depth": {
+      "max": 2,
+      "distribution": {
+        "0": 700,
+        "1": 250,
+        "2": 50
+      }
+    },
+    "attempts_per_payment": 1.35,
+    "retry_amplification_factor": 1.35,
+    "queue": {
+      "depth_start": 42,
+      "depth_end": 318,
+      "depth_peak": 352,
+      "delay_p50_ms": 9000,
+      "delay_p95_ms": 18000
+    }
+  }
+}

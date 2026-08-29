@@ -1,0 +1,40 @@
+{
+  "as_of": "2026-08-29T10:15:00Z",
+  "response": {
+    "merchant_id": "merchant-a",
+    "cohort_filter": {
+      "provider": "provider-p2",
+      "country": "CO",
+      "card_network": "mastercard"
+    },
+    "incidents": [
+      {
+        "incident_id": "inc-2026-08-10-004",
+        "onset": "2026-08-10T14:20:00Z",
+        "resolved_at": "2026-08-10T15:05:00Z",
+        "severity": "high",
+        "payment_approval_conversion": {
+          "expected": 0.91,
+          "actual": 0.78
+        },
+        "summary": "The same P2 and Colombia slice saw elevated timeouts; it resolved after provider-side recovery."
+      },
+      {
+        "incident_id": "inc-2026-08-18-002",
+        "onset": "2026-08-18T09:10:00Z",
+        "resolved_at": "2026-08-18T09:24:00Z",
+        "severity": "medium",
+        "payment_approval_conversion": {
+          "expected": 0.92,
+          "actual": 0.86
+        },
+        "summary": "A short P2 timeout burst affected the same merchant but had lower volume."
+      }
+    ],
+    "recurrence": {
+      "prior_matching_incidents": 2,
+      "lookback_days": 30,
+      "pattern": "provider-p2 and country CO"
+    }
+  }
+}

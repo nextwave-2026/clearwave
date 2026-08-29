@@ -1,0 +1,11 @@
+{
+  "as_of": "2026-08-29T10:15:00Z",
+  "response": {
+    "provider": "provider-p2",
+    "status": "unavailable",
+    "source": "provider-status-adapter",
+    "checked_at": "2026-08-29T10:15:00Z",
+    "reason": "The provider status endpoint did not answer within the adapter timeout.",
+    "diagnostic_effect": "No external corroboration is available; first-party payment and operational evidence remains usable."
+  }
+}

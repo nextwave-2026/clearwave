@@ -1,0 +1,29 @@
+{
+  "as_of": "2026-08-29T10:15:00Z",
+  "response": {
+    "dimension_a": "provider",
+    "dimension_b": "issuing_bank",
+    "window": {
+      "start": "2026-08-29T10:00:00Z",
+      "end": "2026-08-29T10:15:00Z"
+    },
+    "structurally_inseparable": true,
+    "criterion": "Every observed non-zero value of either dimension maps to exactly one value of the other dimension in this window.",
+    "cross_tabulation": {
+      "dimensions": ["provider", "issuing_bank"],
+      "rows": [
+        {"provider": "provider-p2", "issuing_bank": "bank-x", "payments": 1000, "attempts": 1350},
+        {"provider": "provider-p2", "issuing_bank": "bank-y", "payments": 0, "attempts": 0},
+        {"provider": "provider-p3", "issuing_bank": "bank-x", "payments": 0, "attempts": 0},
+        {"provider": "provider-p3", "issuing_bank": "bank-y", "payments": 600, "attempts": 620}
+      ]
+    },
+    "observed_mappings": {
+      "provider-p2": ["bank-x"],
+      "provider-p3": ["bank-y"],
+      "bank-x": ["provider-p2"],
+      "bank-y": ["provider-p3"]
+    },
+    "interpretation": "The data cannot discriminate a provider P2 cause from a Bank X cause."
+  }
+}
