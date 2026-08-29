@@ -22,6 +22,7 @@ from surfaces.escalation import (
     twilio_provider,
 )
 from surfaces.inject import fire_hidden_incident
+from surfaces.present import cohort_scope_label, merchant_health
 from surfaces.server import SurfacesApp, make_server
 from surfaces.store import connect, list_incidents
 
@@ -283,6 +284,88 @@ class SurfacesTests(unittest.TestCase):
         self.assertIn("simulated data produced by this project's simulator", page)
         self.assertIn("Nothing shown represents or implies a real incident", page)
 
+    def test_provider_wide_cohort_is_not_an_unknown_merchant(self):
+        incident = _incident(
+            "inc-provider",
+            "critical",
+            "2026-08-29T10:00:00Z",
+            affected_cohort={"provider": "provider-p2"},
+        )
+        self._seed(incident)
+        row = self.app.merchants()["merchants"][0]
+        self.assertIsNone(row["merchant_id"])
+        self.assertNotEqual(row["merchant_id"], "unknown")
+        self.assertEqual(row["scope_label"], "Provider P2")
+        self.assertNotIn("unknown", row["scope_label"].lower())
+        overview = self.app.overview()["merchant_health"][0]
+        self.assertIsNone(overview["merchant_id"])
+        self.assertEqual(overview["scope_label"], "Provider P2")
+        payload = escalate(incident)[0]["payload"]
+        self.assertIsNone(payload["merchant_id"])
+        self.assertEqual(payload["scope_label"], "Provider P2")
+        rendered = json.dumps(slack_blocks(payload))
+        self.assertNotIn("Merchant unknown", rendered)
+        self.assertIn("Provider P2", rendered)
+        detail = self.app.detail("inc-provider")
+        call_payload = detail["escalation"][0]["payload"]
+        self.assertIsNone(call_payload["merchant_id"])
+        self.assertEqual(call_payload["scope_label"], "Provider P2")
+
+    def test_merchant_scoped_health_keeps_the_named_merchant(self):
+        self._seed(_incident("inc-a", "high", "2026-08-29T10:00:00Z"))
+        row = self.app.merchants()["merchants"][0]
+        self.assertEqual(row["merchant_id"], "merchant-a")
+        self.assertEqual(row["highest_severity"], "high")
+        self.assertEqual(row["active_incident_count"], 1)
+        payload = escalate(_incident("inc-a", "high", "2026-08-29T10:00:00Z"))[0]["payload"]
+        self.assertEqual(payload["merchant_id"], "merchant-a")
+
+    def test_non_merchant_cohorts_never_invent_a_merchant_identity(self):
+        cases = [
+            ({"provider": "provider-p2"}, "Provider P2"),
+            ({"country": "CO"}, "Country CO"),
+            ({"payment_method": "card"}, "Payment method card"),
+            ({"issuing_bank": "bank-x"}, "Issuing bank bank-x"),
+            ({}, "Platform-wide"),
+        ]
+        for cohort, label in cases:
+            with self.subTest(cohort=cohort):
+                incident = _incident(
+                    "inc-scope",
+                    "critical",
+                    "2026-08-29T10:00:00Z",
+                    affected_cohort=cohort,
+                )
+                rows = merchant_health([incident])
+                self.assertEqual(len(rows), 1)
+                self.assertIsNone(rows[0]["merchant_id"])
+                self.assertEqual(rows[0]["scope_label"], label)
+                self.assertNotIn("unknown", rows[0]["scope_label"].lower())
+                self.assertEqual(cohort_scope_label(cohort), label)
+                payload = escalate(incident)[0]["payload"]
+                self.assertIsNone(payload["merchant_id"])
+                self.assertEqual(payload["scope_label"], label)
+                self.assertNotIn("Merchant unknown", json.dumps(slack_blocks(payload)))
+
+    def test_merchant_and_provider_scopes_are_not_collapsed(self):
+        rows = merchant_health(
+            [
+                _incident("inc-a", "high", "2026-08-29T10:00:00Z"),
+                _incident(
+                    "inc-p2",
+                    "critical",
+                    "2026-08-29T10:00:00Z",
+                    affected_cohort={"provider": "provider-p2"},
+                ),
+            ]
+        )
+        by_id = {row["merchant_id"]: row for row in rows}
+        self.assertEqual(set(by_id), {"merchant-a", None})
+        self.assertEqual(by_id["merchant-a"]["incident_ids"], ["inc-a"])
+        self.assertEqual(by_id[None]["scope_label"], "Provider P2")
+        self.assertEqual(by_id[None]["incident_ids"], ["inc-p2"])
+        self.assertNotIn("unknown", [row["merchant_id"] for row in rows])
+
 
 class SlackBlockKitTests(unittest.TestCase):
     def test_severity_and_confidence_render_in_separate_blocks(self):
@@ -497,6 +580,12 @@ class StaticContractTests(unittest.TestCase):
             self.assertNotIn("http://", text)
             self.assertNotIn("cdn.", text)
             self.assertNotIn("fonts.googleapis", text)
+
+    def test_dashboard_does_not_render_a_missing_merchant_as_unknown(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn('payload.merchant_id || "unknown"', js)
+        self.assertIn("scope_label", js)
+        self.assertIn("incidentScope", js)
 
 
 if __name__ == "__main__":
