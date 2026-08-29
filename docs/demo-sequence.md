@@ -10,6 +10,10 @@ Orientation for a live Control Tower demo. This file is not a second product bas
 
 If this file and the PRD disagree, the PRD governs. Correct the disagreement in `DECISIONS.md`, not here.
 
+## Simulated demo data
+
+All merchants, banks, payments, incidents and outages shown are simulated data produced by this project's simulator for demonstration. Nothing shown represents or implies a real incident, outage, or service problem at any named company. Real company names are used only to make the demonstration recognisable and realistic.
+
 ## What the product is
 
 A payment-operations Control Tower for Technical Account Managers. Conversion can silently degrade across providers, issuers, methods, countries, retries, application and infrastructure. The job is not only to notice that conversion dropped. It is to answer where the degradation is, how much money it is costing, what evidence supports the diagnosis, how confident we are, and what the TAM should investigate or do next. The system diagnoses and recommends. It must not automatically remediate production systems. Authoritative wording: [`docs/prd.md`](prd.md) section 1.

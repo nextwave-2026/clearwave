@@ -280,6 +280,8 @@ class SurfacesTests(unittest.TestCase):
             page = response.read().decode("utf-8")
         self.assertIn("Control Tower", page)
         self.assertIn("Fire hidden incident", page)
+        self.assertIn("simulated data produced by this project's simulator", page)
+        self.assertIn("Nothing shown represents or implies a real incident", page)
 
 
 class SlackBlockKitTests(unittest.TestCase):
