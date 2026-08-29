@@ -38,9 +38,9 @@ file is NOT union-merged, so it can genuinely conflict. A conflict here means an
 - **Last changed:** 2026-08-29T19:43Z
 
 - **Boundary name:** C5 Notification and escalation payload
-- **Owner:** W4 - Surfaces and Escalation
-- **Current shape:** Contract is named and owned but not yet specified. Specifying it is the gate on opening parallel work.
-- **Last changed:** 2026-08-29T17:00Z
+- **Owner:** W4 - Surfaces and Escalation (`juank`)
+- **Current shape:** Specified in full in `docs/contracts/notification-escalation.md`, which is the single definition. Built by W4 from one C3 record and, when available, the latest C4 result; it has no consumers inside the system and invents no figure. Carries the incident identity and lifecycle state, affected cohort, the measured change, financial impact, severity from C3, and diagnostic confidence, leading hypothesis and competing explanations from C4 - severity and diagnostic confidence stay separate fields and are never blended. The severity-to-channel binding is `low`/`medium` to dashboard, `high` adds Slack, `critical` adds the phone call, implemented in `surfaces/escalation.py`. Every channel is fire-and-forget with a recorded outcome: a failing channel never blocks the dashboard and never fails an incident.
+- **Last changed:** 2026-08-29T23:23Z
 
 - **Boundary name:** C6 Hidden ground truth and evaluator verdict
 - **Owner:** W1 - Simulated World and Ground Truth (`raul`); evaluator: `derek` (integration)
