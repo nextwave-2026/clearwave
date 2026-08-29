@@ -116,6 +116,8 @@ def assert_prompt_safe(prompt: str) -> None:
     for key in _SENSITIVE_KEYS:
         assert f'"{key}"' not in lowered, f"sensitive key {key!r} entered investigation prompt"
         assert f"{key}:" not in lowered, f"sensitive key {key!r} entered investigation prompt"
+    for phrase in ("scenario identifier", "hidden truth", "ground truth", "evaluator"):
+        assert phrase not in lowered, f"quarantined material {phrase!r} entered investigation prompt"
     assert "evaluator/" not in lowered
     assert "evaluator\\" not in lowered
 
@@ -134,7 +136,7 @@ def _domain_context(files: Iterable[Path], candidates: Any) -> str:
     chunks: list[str] = []
     for path in files:
         name = path.name.lower()
-        if any(token in name for token in ("scenario", "truth", "evaluator")):
+        if name == "readme.md" or any(token in name for token in ("scenario", "truth", "evaluator")):
             continue
         try:
             text = path.read_text(encoding="utf-8")

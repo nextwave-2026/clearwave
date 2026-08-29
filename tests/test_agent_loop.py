@@ -15,6 +15,8 @@ from investigation.gateway import EvidenceGateway
 from investigation.ledger import HypothesisLedger, LedgerError
 from investigation.prefilter import prefilter
 from investigation.prompt import assemble_prompt
+from investigation.runner import InvestigationRunner
+from investigation.store import connect, insert_incident
 
 
 WINDOW = {"start": "2026-08-29T10:00:00Z", "end": "2026-08-29T10:15:00Z"}
@@ -182,6 +184,31 @@ class AgentLoopTests(unittest.TestCase):
         self.assertNotIn("provider-secret", prompt)
         self.assertNotIn("hidden_truth", prompt)
         self.assertNotIn("evaluator", prompt.lower())
+
+
+class RunnerTests(unittest.TestCase):
+    def test_runner_claims_persists_and_completes_incident(self):
+        connection = connect(":memory:")
+        self.addCleanup(connection.close)
+        insert_incident(connection, INCIDENT)
+
+        class Agent:
+            def investigate(self, incident):
+                return {"incident_id": incident["incident_id"], "outcome": "agent_unavailable"}
+
+        runner = InvestigationRunner(connection, Agent())
+        self.addCleanup(runner.close)
+        runs = runner.run_once()
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0].outcome, "agent_unavailable")
+        self.assertEqual(
+            connection.execute("SELECT lifecycle_state FROM incident").fetchone()[0],
+            "diagnosed",
+        )
+        self.assertEqual(
+            connection.execute("SELECT outcome FROM investigation_result").fetchone()[0],
+            "agent_unavailable",
+        )
 
 
 class LedgerTests(unittest.TestCase):

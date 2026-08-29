@@ -117,6 +117,14 @@ class HypothesisLedger:
         )
         if candidate.hypothesis in self._entries:
             raise LedgerError(f"duplicate hypothesis: {candidate.hypothesis}")
+        if candidate.status == "contradicted":
+            if not candidate.citations or not any(
+                self._citation_contradicts(candidate.hypothesis, query_id)
+                for query_id in candidate.citations
+            ):
+                raise LedgerError(
+                    f"cannot seed contradicted hypothesis {candidate.hypothesis!r} without a contradicting citation"
+                )
         self._entries[candidate.hypothesis] = candidate
         return candidate
 
