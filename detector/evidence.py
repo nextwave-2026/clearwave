@@ -567,13 +567,16 @@ def _operational_metrics(connection: sqlite3.Connection, request: dict[str, Any]
                 f"timeout rate reaches {config.OPERATIONAL_DEGRADED_RATE}, unobserved with no attempts"
             ),
         },
-        "runtime_health": {
-            "status": "unobserved",
-            "reason": (
-                "the canonical ingestion event carries no runtime health signal, so W2 reports "
-                "none rather than inferring one"
-            ),
-        },
+        # Runtime health is the one thing attempts cannot answer. It comes from
+        # W1's ops.telemetry samples when the consumer has any, and stays an
+        # honest `unobserved` when it does not - which is what the file-based
+        # demo path reports, unchanged.
+        "runtime_health": metrics.runtime_health(
+            connection,
+            [filters["service_id"]] if filters.get("service_id") else measured["services"],
+            start,
+            end,
+        ),
         "deployment": {
             "service": measured["services"][0] if len(measured["services"]) == 1 else None,
             "deployment_id": (

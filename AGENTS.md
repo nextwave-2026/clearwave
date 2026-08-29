@@ -77,6 +77,11 @@ needs network access.
 **If you are about to add a dependency, check its licence first.** Reaching for a convenient AGPL
 library late at night is the realistic way this goes wrong.
 
+Regenerate with `python3 -S scripts/licences.py`, not a bare `make licences`. The generator reads licence
+metadata from whatever interpreter runs it, so a machine with packages installed in the system Python emits
+transitive rows CI's clean interpreter will not, and `scripts/ci/licences_current.sh` then fails on an
+inventory that looked right locally.
+
 ## Pre-existing intellectual property - do not break this
 
 Part of this repository was authored **before the event** in a separate repository
@@ -103,6 +108,10 @@ SQLite store, located by `CLEARWAVE_DB` and defaulting to `state/clearwave.db`. 
 read that same file or the system gives two answers to one question. `python3 -m detector seed &&
 python3 -m detector detect` fills a store; an empty one answers with zeros rather than failing. The
 behaviour is specified in `docs/contracts/evidence-tools.md`.
+
+W2 also consumes W1's three live Kafka topics into that same store (`python3 -m detector consume --detect`).
+The live and file-based paths share one normalisation and one store; the file-based path imports no Kafka
+client and is the broker-free demo fallback. Operator detail: `docs/live-ingestion.md`.
 
 ## Working conventions
 

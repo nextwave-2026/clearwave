@@ -244,6 +244,27 @@ erDiagram
         integer rowid_alias PK
         text    reason
         text    payload
+        text    source
+    }
+    TELEMETRY_SAMPLE {
+        text    event_id PK
+        integer sample_epoch
+        text    service_id
+        text    deployment_id
+        integer healthy
+        real    queue_depth
+        real    queue_delay_p95_ms
+        real    cpu_pct
+        real    error_rate
+    }
+    PAYMENT_CLOSED {
+        text    event_id PK
+        text    payment_id
+        integer closed_epoch
+        text    outcome
+        integer total_attempts
+        text    merchant_id
+        real    amount_usd
     }
     ATTEMPT ||--o{ INCIDENT : "localises to a cohort of"
 ```
@@ -284,26 +305,51 @@ cohort and the money are still correct on screen.
 | replaying the same events in a different order gives an identical incident | determinism is the basis of every other claim |
 | both known source shapes normalise to the same canonical row | nobody who built to either has to redo it |
 | an unregistered shape, currency or decline reason is refused | a visible rejection beats a silently wrong count |
+| every decline reason W1 can emit maps into the closed vocabulary | drift between the two is silent - the attempts just vanish from the counts |
+| a redelivered event is counted once | at-least-once delivery must not become at-least-once counting |
+| Kafka offsets advance only over rows another reader can already see | a crash must replay a batch, never lose one |
+| the whole consumer runs against a fake source | CI stays offline, and the broker is never a test dependency |
+
+## Where the events come from
+
+Two front doors, on purpose, onto one normalisation and one store.
+
+```mermaid
+flowchart LR
+    Kafka["W1's topics<br/>payments.attempts<br/>ops.telemetry<br/>payments.closed"]
+    File["a JSON file<br/>or the seeded generator"]
+    Src["Source seam<br/>KafkaSource | ReplaySource"]
+    Norm["one normalisation path<br/>mapper registry + C1b"]
+    DB[("SQLite")]
+    DL[["dead_letter<br/>reason + source"]]
+
+    Kafka --> Src --> Norm
+    File --> Norm
+    Norm -- valid --> DB
+    Norm -- refused --> DL
+```
+
+`python3 -m detector consume --detect` is live traffic to a stored C3 record in one command.
+`python3 -m detector seed && python3 -m detector detect` is the same demonstration with no broker
+in the room, and it imports no Kafka client at any point - which is what makes it a real fallback
+rather than a promise. Offsets advance only after the store write is durable, and every event table
+is keyed on `event_id`, so at-least-once delivery is counted exactly once. The operator detail is in
+[`docs/live-ingestion.md`](live-ingestion.md).
 
 ## Current state and what is next
 
-Landed: the canonical model and its mapper registry, the SQLite store, measurement, the baseline,
-detection, localisation, impact, severity, the C3 record, and a CLI.
+Landed: the canonical model and its mapper registry, live ingestion of all three C1 topics, the
+SQLite store, measurement, the baseline, detection, localisation, impact, severity, the C3 record,
+the eleven C2 tools wired to real measurement, and a CLI.
 
 Next, in order:
 
-1. Wire the ten published C2 tools to real measurement in place of their fixtures, keeping the
-   stdin/stdout protocol and the `query_id` algorithm exactly as published.
-2. Agree and implement the incident trigger. The C3 record's shape is specified, but nothing yet
-   defines how an incident reaches investigation - see the open item in `STATUS.md`.
-3. Replace the trailing-window baseline with the contextual hour-of-week profile once replayable
-   backfill history exists.
+1. Replace the trailing-window baseline with the contextual hour-of-week profile once replayable
+   backfill history exists. This is the one thing W2 concretely needs from W1.
+2. Publish payment terminality from `payments.closed`, which is consumed and stored but feeds no
+   measurement yet - see the decision and its reasoning in `DECISIONS.md`.
 
-Two open seams, both raised in `STATUS.md`:
+One open seam, raised in `STATUS.md`:
 
-- **C2 has no time-series tool.** No published tool returns a metric over a series of buckets, yet
-  C3 requires an `onset`, severity needs a trajectory, and the demo has to answer "since when".
-  `detector/metrics.timeseries` implements it and is tested; whether it becomes an eleventh tool or
-  folds into `cohort_metrics` is a contract decision.
-- **Nothing defines what starts an investigation.** The agent runtime is decided, its trigger is
-  not.
+- **A high-value transaction identifier for C2 and C3.** W4 needs the single largest payment behind
+  an incident so a TAM can look it up; everything published today is cohort-level aggregate.
