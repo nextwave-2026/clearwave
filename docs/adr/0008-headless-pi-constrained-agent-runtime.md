@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by ADR 0013
 
 ## Context
 
@@ -21,4 +21,4 @@ The documented fallback is a direct model-API tool-calling loop if Pi proves unr
 
 ## Consequences
 
-The agent cannot access raw events, local files, or arbitrary commands. Adapter validation, timeout handling, and gateway citations remain mandatory. The fallback preserves the boundary while removing dependence on Pi reliability.
+The agent cannot access raw events, local files, or arbitrary commands. Adapter validation, timeout handling, and gateway citations remain mandatory. The fallback preserves the boundary while removing dependence on Pi reliability. ADR 0013 supersedes this runtime choice because the direct loop better fits L4's bounded design.

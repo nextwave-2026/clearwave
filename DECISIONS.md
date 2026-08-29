@@ -94,3 +94,6 @@ another contributor pushed first, run `git pull --no-rebase && git push`; union 
   -> other side: W2 must durably write every C3 record with `lifecycle_state: detected`; that state is the sole handoff signal, so W2 does not call L4
 - 2026-08-29T19:43Z  derek  C2 proposal: add a `metric_series` evidence tool for one named metric and cohort over ordered event-time buckets behind the lateness watermark, because onset, severity trajectory and L4 narrative need a consistent trend
   -> other side: this is a proposal awaiting W2's acceptance; W2 owns C2 and may accept or reject it
+
+- 2026-08-29T19:54Z  derek  investigation: L4 agent runtime is now a hand-rolled Python loop over the OpenAI Responses API, superseding the earlier Pi decision; Pi required a TypeScript tool bridge around Python subprocesses, and its continue-until-complete design opposed our bounded investigation
+  -> other side: the earlier Pi entry is void; L4 will carry exactly two third-party dependencies, and no second language runtime enters the demo path
