@@ -39,3 +39,4 @@ Format: one line per entry.
 - 2026-08-29T18:09Z  derek  baseline PRD published at \; ownership boundaries and contract owners are documented in \, and PR #4 is open: https://github.com/nextwave-2026/clearwave/pull/4
 - 2026-08-29T18:09Z  derek  stack decision and person-to-workstream assignment are now the two blockers to starting parallel implementation; the contracts and integration gate are ready
 - 2026-08-29T18:09Z  derek  baseline PRD published at `docs/prd.md`; ownership boundaries and contract owners are documented in `docs/ownership.md`, and PR #4 is open: https://github.com/nextwave-2026/clearwave/pull/4
+- 2026-08-29T18:09Z  derek  done: PR https://github.com/nextwave-2026/clearwave/pull/4
