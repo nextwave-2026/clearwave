@@ -39,3 +39,7 @@ the other side pushed first, run `git pull --no-rebase && git push`; union merge
   -> other side: preserve independent severity and diagnostic confidence in every contract and surface
 - 2026-08-29T18:09Z  derek  person-to-workstream assignment deliberately NOT decided and needs a human call
   -> other side: do not infer assignments from backgrounds or begin parallel ownership claims
+- 2026-08-29T18:09Z  derek  baseline PRD accepted and published at `docs/prd.md`; it governs product direction
+  -> other side: use `docs/prd.md` as the product authority and correct disagreements by appending here
+- 2026-08-29T18:09Z  derek  build divided into four workstreams W1-W4 with contract ownership in `docs/ownership.md`
+  -> other side: keep workstream boundaries and ownership legible from the repository
