@@ -19,7 +19,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
 
-from . import schema
+from . import mappers, schema
 
 DEFAULT_DB = Path("state/clearwave.db")
 
@@ -97,8 +97,8 @@ def ingest(connection: sqlite3.Connection, events: Iterable[dict[str, Any]]) -> 
     columns = None
     for raw in events:
         try:
-            row = schema.normalise(raw)
-        except schema.InvalidEvent as exc:
+            row = schema.normalise(mappers.to_canonical(raw))
+        except (schema.InvalidEvent, mappers.UnknownShape) as exc:
             connection.execute(
                 "INSERT INTO dead_letter (reason, payload) VALUES (?, ?)",
                 (str(exc), json.dumps(raw, sort_keys=True, default=str)),
