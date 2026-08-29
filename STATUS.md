@@ -36,3 +36,5 @@ Format: one line per entry.
 - 2026-08-29T16:52Z  derek  Team grew to four: `juank` (GitHub `juank115`) and `raul` (GitHub `raulhiguerac`) joined `derek` and `andres`. Use those four handles for attribution.
 - 2026-08-29T16:52Z  derek  Repository documentation brought in line with the chosen challenge (`docs/challenge.md`, `README.md`, `AGENTS.md`). Read those before building.
 - 2026-08-29T16:52Z  derek  Architecture and stack are still undecided. Next thing that needs a human call. Do not start building components before that decision lands.
+- 2026-08-29T18:09Z  derek  baseline PRD published at \; ownership boundaries and contract owners are documented in \, and PR #4 is open: https://github.com/nextwave-2026/clearwave/pull/4
+- 2026-08-29T18:09Z  derek  stack decision and person-to-workstream assignment are now the two blockers to starting parallel implementation; the contracts and integration gate are ready

@@ -29,3 +29,13 @@ the other side pushed first, run `git pull --no-rebase && git push`; union merge
   -> other side: every coordination entry must be attributed with the writer's handle (`derek`, `andres`, `juank`, or `raul`); the "two sides" model in older entries now means four contributors who may be on separate machines
 - 2026-08-29T16:52Z  derek  stack and architecture remain deliberately open
   -> other side: nobody adds a package manifest, lockfile, Dockerfile, or application scaffold until a human decides the stack, and that decision gets its own entry here when it is made
+- 2026-08-29T18:09Z  derek  baseline PRD accepted and published at \; it governs product direction
+  -> other side: use \ as the product authority and correct disagreements by appending here
+- 2026-08-29T18:09Z  derek  build divided into four workstreams W1-W4 with contract ownership in \
+  -> other side: keep workstream boundaries and ownership legible from the repository
+- 2026-08-29T18:09Z  derek  six contracts C1-C6 each have exactly one owning workstream; specifying C1-C4 is the gate on parallel work
+  -> other side: do not open parallel implementation before the C1-C4 interface gate and a running stubbed path
+- 2026-08-29T18:09Z  derek  severity is owned by the detection plane and diagnostic confidence by the investigation agent; they never collapse into one score
+  -> other side: preserve independent severity and diagnostic confidence in every contract and surface
+- 2026-08-29T18:09Z  derek  person-to-workstream assignment deliberately NOT decided and needs a human call
+  -> other side: do not infer assignments from backgrounds or begin parallel ownership claims
