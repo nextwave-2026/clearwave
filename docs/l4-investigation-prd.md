@@ -69,9 +69,9 @@ It holds no domain logic and makes no judgements. External corroboration is the 
 
 ### Agent adapter
 
-**Single responsibility:** build the investigation prompt, expose only gateway-backed tools to the headless agent, validate returned JSON, retry invalid output once, and produce the deterministic degrade result when necessary.
+**Single responsibility:** build the investigation prompt, expose only gateway-backed tools to the hand-rolled Python loop over the OpenAI Responses API, validate returned JSON, retry invalid output once, and produce the deterministic degrade result when necessary (ADR 0013).
 
-It computes nothing. The headless agent has no built-in shell, file-read, edit, or write tools and cannot access raw events or the evaluator.
+It computes nothing. The loop has no access to raw events or the evaluator and can call evidence only through the gateway.
 
 The evaluator is deliberately **outside** this runtime path and has no read path into it. It runs after the fact against the hidden truth and a produced diagnosis. Making an evaluator reachable from the diagnostic path would let ground truth leak into diagnosis and would turn the demonstration into a scripted result.
 
@@ -154,7 +154,7 @@ flowchart LR
         IncidentStore[(Relational SQLite incident store)]
         Runner[Investigation runner<br/>claim, lifecycle, timeout, concurrency]
         Adapter[Agent adapter<br/>prompt, tools, validation, retry, degrade]
-        Agent[Headless pi-coding-agent<br/>JSON print mode]
+        Agent[Hand-rolled Python loop<br/>OpenAI Responses API]
         Gateway[Evidence gateway<br/>sole tool caller and query-id authority]
         Trail[(Product evidence trail)]
         Validate[Validate C4 JSON]
