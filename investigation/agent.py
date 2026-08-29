@@ -14,7 +14,13 @@ from pydantic import ValidationError
 
 from .contracts import InvestigationResult, result_dict
 from .degrade import degrade_result
-from .env import openai_client_kwargs, openai_model, redact_secrets
+from .env import (
+    openai_client_kwargs,
+    openai_max_output_tokens,
+    openai_model,
+    openai_reasoning_effort,
+    redact_secrets,
+)
 from .gateway import ALLOWED_TOOLS, EvidenceGateway
 from .ledger import HypothesisLedger
 from .prefilter import prefilter
@@ -22,6 +28,7 @@ from .prompt import SYSTEM_PROMPT, assemble_prompt, assert_prompt_safe
 from .trail import EvidenceTrail
 
 DEFAULT_MODEL = "gpt-4.1-mini"
+DEFAULT_MAX_OUTPUT_TOKENS = 6000
 DEFAULT_MAX_TURNS = 6
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
@@ -112,6 +119,9 @@ class InvestigationAgent:
             raise ValueError("timeout_seconds must be positive")
         self.client = client
         self.model = model or openai_model(DEFAULT_MODEL)
+        self.max_output_tokens = openai_max_output_tokens(DEFAULT_MAX_OUTPUT_TOKENS)
+        self.reasoning_effort = openai_reasoning_effort()
+        self._reasoning_supported = _reasoning_support(self.model)
         self.max_turns = int(max_turns)
         self.query_budget = int(query_budget)
         self.timeout_seconds = float(timeout_seconds)
@@ -358,8 +368,10 @@ class InvestigationAgent:
             "model": self.model,
             "instructions": SYSTEM_PROMPT,
             "input": conversation,
-            "max_output_tokens": 2000,
+            "max_output_tokens": self.max_output_tokens,
         }
+        if self.reasoning_effort and self._reasoning_supported is not False:
+            kwargs["reasoning"] = {"effort": self.reasoning_effort}
         if with_tools:
             kwargs["tools"] = TOOL_DEFINITIONS
             kwargs["parallel_tool_calls"] = False
@@ -376,10 +388,20 @@ class InvestigationAgent:
         create = getattr(responses, "create", None)
         if not callable(create):
             raise TypeError("injected client must expose responses.create")
-        return self._bounded(
-            lambda: create(**kwargs),
-            self._remaining(started_clock),
-        )
+        try:
+            return self._bounded(
+                lambda: create(**kwargs),
+                self._remaining(started_clock),
+            )
+        except Exception as exc:
+            if "reasoning" not in kwargs or not _is_reasoning_unsupported_error(exc):
+                raise
+            self._reasoning_supported = False
+            kwargs.pop("reasoning")
+            return self._bounded(
+                lambda: create(**kwargs),
+                self._remaining(started_clock),
+            )
 
     def _bounded(self, callback: Any, timeout: float) -> Any:
         if timeout <= 0:
@@ -460,6 +482,22 @@ def _strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
                 if isinstance(item, dict):
                     _strict_schema(item)
     return schema
+
+
+def _reasoning_support(model: str) -> bool | None:
+    """Know the repository's default is non-reasoning; probe other models."""
+    if model == DEFAULT_MODEL:
+        return False
+    return None
+
+
+def _is_reasoning_unsupported_error(error: BaseException) -> bool:
+    """Recognise an API rejection of the optional reasoning parameter."""
+    message = str(error).lower()
+    return "reasoning" in message and any(
+        marker in message
+        for marker in ("unsupported", "not supported", "unknown", "unrecognized", "invalid", "not allowed")
+    )
 
 
 def _function_calls(response: Any) -> list[dict[str, Any]]:
@@ -602,6 +640,7 @@ def _utc_now() -> str:
 
 
 __all__ = [
+    "DEFAULT_MAX_OUTPUT_TOKENS",
     "DEFAULT_MAX_TURNS",
     "DEFAULT_MODEL",
     "DEFAULT_TIMEOUT_SECONDS",

@@ -15,6 +15,8 @@ from investigation.env import (
     api_key_present,
     load_dotenv,
     openai_client_kwargs,
+    openai_max_output_tokens,
+    openai_reasoning_effort,
     parse_env_file,
     redact_secrets,
 )
@@ -59,7 +61,9 @@ class LoadDotenvTests(unittest.TestCase):
         self.path.write_text(
             "OPENAI_API_KEY=from-file\n"
             "OPENAI_MODEL=gpt-from-file\n"
-            "OPENAI_BASE_URL=https://example.invalid/v1\n",
+            "OPENAI_BASE_URL=https://example.invalid/v1\n"
+            "OPENAI_REASONING_EFFORT=medium\n"
+            "OPENAI_MAX_OUTPUT_TOKENS=7000\n",
             encoding="utf-8",
         )
 
@@ -70,6 +74,8 @@ class LoadDotenvTests(unittest.TestCase):
         self.assertEqual(environ["OPENAI_API_KEY"], "from-file")
         self.assertEqual(environ["OPENAI_MODEL"], "gpt-from-file")
         self.assertEqual(environ["OPENAI_BASE_URL"], "https://example.invalid/v1")
+        self.assertEqual(environ["OPENAI_REASONING_EFFORT"], "medium")
+        self.assertEqual(environ["OPENAI_MAX_OUTPUT_TOKENS"], "7000")
 
     def test_environment_wins_over_dotenv(self):
         environ = {"OPENAI_API_KEY": "from-env"}
@@ -90,6 +96,23 @@ class LoadDotenvTests(unittest.TestCase):
         )
         self.assertTrue(api_key_present())
         self.assertEqual(openai_client_kwargs()["api_key"], "from-env")
+
+
+class OpenAIOptionTests(unittest.TestCase):
+    def test_reasoning_effort_is_optional_and_output_ceiling_is_positive(self):
+        with mock.patch.dict(os.environ, {"OPENAI_REASONING_EFFORT": " medium ", "OPENAI_MAX_OUTPUT_TOKENS": "7000"}):
+            self.assertEqual(openai_reasoning_effort(), "medium")
+            self.assertEqual(openai_max_output_tokens(6000), 7000)
+
+    def test_empty_options_use_defaults(self):
+        with mock.patch.dict(os.environ, {"OPENAI_REASONING_EFFORT": "", "OPENAI_MAX_OUTPUT_TOKENS": ""}):
+            self.assertIsNone(openai_reasoning_effort())
+            self.assertEqual(openai_max_output_tokens(6000), 6000)
+
+    def test_invalid_output_ceiling_is_rejected(self):
+        with mock.patch.dict(os.environ, {"OPENAI_MAX_OUTPUT_TOKENS": "0"}):
+            with self.assertRaisesRegex(ValueError, "OPENAI_MAX_OUTPUT_TOKENS"):
+                openai_max_output_tokens(6000)
 
 
 class MissingKeyTests(unittest.TestCase):

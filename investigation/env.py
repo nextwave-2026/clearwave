@@ -1,9 +1,9 @@
 """Load OpenAI settings from the environment, with an optional root .env file.
 
-The investigation agent reads ``OPENAI_API_KEY``, ``OPENAI_BASE_URL``, and
-``OPENAI_MODEL`` from the process environment only. The CLI may copy values
-from a gitignored ``.env`` into that environment first. Existing environment
-variables always win. The key is never returned in logs or error text.
+The investigation agent reads its OpenAI settings from the process environment
+only. The CLI may copy values from a gitignored ``.env`` into that environment
+first. Existing environment variables always win. The key is never returned in
+logs or error text.
 """
 
 from __future__ import annotations
@@ -89,6 +89,26 @@ def openai_model(default: str) -> str:
     return os.environ.get("OPENAI_MODEL") or default
 
 
+def openai_reasoning_effort() -> str | None:
+    """Return the optional Responses API reasoning effort."""
+    value = os.environ.get("OPENAI_REASONING_EFFORT", "").strip()
+    return value or None
+
+
+def openai_max_output_tokens(default: int) -> int:
+    """Return a positive configurable output ceiling, or the supplied default."""
+    value = os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "").strip()
+    if not value:
+        return default
+    try:
+        ceiling = int(value)
+    except ValueError as exc:
+        raise ValueError("OPENAI_MAX_OUTPUT_TOKENS must be a positive integer") from exc
+    if ceiling <= 0:
+        raise ValueError("OPENAI_MAX_OUTPUT_TOKENS must be a positive integer")
+    return ceiling
+
+
 def redact_secrets(text: str) -> str:
     """Replace any live API key with a fixed placeholder, never a key fragment."""
     key = os.environ.get("OPENAI_API_KEY") or ""
@@ -118,6 +138,8 @@ __all__ = [
     "missing_key_message",
     "openai_client_kwargs",
     "openai_model",
+    "openai_reasoning_effort",
+    "openai_max_output_tokens",
     "parse_env_file",
     "redact_secrets",
 ]
