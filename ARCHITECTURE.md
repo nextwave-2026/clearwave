@@ -83,3 +83,5 @@ Dashboard, Slack and phone escalation consume the incident and investigation sur
 The judge trigger reaches W1's incident injection point, while hidden ground truth remains quarantined from detection and investigation.
 Only the evaluator receives hidden ground truth and compares it with the diagnosis after the fact.
 SQLite is the selected persistence product for this diagram.
+
+The detection plane inside W2 is documented in detail, with its own diagrams and the decisions behind it, in [`docs/detection-plane.md`](docs/detection-plane.md).
