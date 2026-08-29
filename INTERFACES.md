@@ -4,7 +4,7 @@ Edit this file in place to record the current state of each interface boundary. 
 
 **Commit this file straight to `main`** - no branch, no pull request. Unlike the append-only logs this
 file is NOT union-merged, so it can genuinely conflict. A conflict here means both sides are changing
-same boundary at once: agree on the shape, then commit the agreed version.
+the same boundary at once: agree on the shape, then commit the agreed version.
 
 - **Boundary name:** C1 Payment attempt event
 - **Owner:** W1 - Simulated World and Ground Truth
