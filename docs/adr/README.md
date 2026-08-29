@@ -13,11 +13,12 @@ The layer sequence is L1 merchant emission, L2 ingestion and normalisation, L3 d
 - [0005 - Confounding detection is deterministic](0005-confounding-detection-is-deterministic.md)
 - [0006 - Evidence gateway owns query identity and calls](0006-evidence-gateway-owns-query-identity-and-calls.md)
 - [0007 - Ruled-out hypotheses require contradiction](0007-ruled-out-hypotheses-require-contradiction.md)
-- [0008 - Headless Pi is the constrained agent runtime](0008-headless-pi-constrained-agent-runtime.md)
+- [0008 - Headless Pi is the constrained agent runtime](0008-headless-pi-constrained-agent-runtime.md) - superseded by ADR 0013
 - [0009 - Investigations are bounded](0009-investigations-are-bounded.md)
 - [0010 - Every investigation emits a result](0010-every-investigation-emits-a-result.md)
 - [0011 - One versioned run per incident](0011-one-versioned-run-per-incident.md)
 - [0012 - Scenario identifiers never reach L4](0012-scenario-identifiers-never-reach-l4.md)
+- [0013 - Hand-rolled OpenAI loop is the constrained agent runtime](0013-hand-rolled-openai-loop-agent-runtime.md)
 
 ## L2 and L3 Detection plane records - `andres`
 

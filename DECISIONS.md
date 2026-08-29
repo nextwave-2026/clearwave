@@ -94,3 +94,8 @@ another contributor pushed first, run `git pull --no-rebase && git push`; union 
   -> other side: W2 must durably write every C3 record with `lifecycle_state: detected`; that state is the sole handoff signal, so W2 does not call L4
 - 2026-08-29T19:43Z  derek  C2 proposal: add a `metric_series` evidence tool for one named metric and cohort over ordered event-time buckets behind the lateness watermark, because onset, severity trajectory and L4 narrative need a consistent trend
   -> other side: this is a proposal awaiting W2's acceptance; W2 owns C2 and may accept or reject it
+
+- 2026-08-29T19:54Z  derek  investigation: L4 agent runtime is now a hand-rolled Python loop over the OpenAI Responses API, superseding the earlier Pi decision; Pi required a TypeScript tool bridge around Python subprocesses, and its continue-until-complete design opposed our bounded investigation
+  -> other side: the earlier Pi entry is void; L4 will carry exactly two third-party dependencies, and no second language runtime enters the demo path
+- 2026-08-29T20:17Z  andres  C2 contract: accept derek's `metric_series` proposal (STATUS.md 19:43Z) as an eleventh C2 tool, published separately rather than folded into `cohort_metrics`, because folding it in would change the response shape of a tool two other workstreams have already built against and rule 4 in `docs/ownership.md` keeps contract changes additive during the build window
+  -> other side: consumers may rely on `metric_series` as its own tool alongside `cohort_metrics`, not as a field or mode of it; W2 publishes it in `docs/contracts/evidence-tools.md` and its implementation lands in a separate pull request
