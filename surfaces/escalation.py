@@ -31,6 +31,10 @@ TWILIO_FROM_ENV = "CLEARWAVE_TWILIO_FROM_NUMBER"
 TWILIO_TO_ENV = "CLEARWAVE_TWILIO_TO_NUMBER"
 TWILIO_ENV_VARS = (TWILIO_ACCOUNT_SID_ENV, TWILIO_AUTH_TOKEN_ENV, TWILIO_FROM_ENV, TWILIO_TO_ENV)
 
+SEVERITY_EMOJI = {"low": "⚪", "medium": "🟡", "high": "🟠", "critical": "🔴"}
+SEVERITY_COLOR = {"low": "#94A3B8", "medium": "#EAB308", "high": "#F97316", "critical": "#DC2626"}
+BRAND_ACCENT = "🟣"
+
 CHANNELS_BY_SEVERITY = {
     "low": ("dashboard",),
     "medium": ("dashboard",),
@@ -111,14 +115,25 @@ def notify_slack(
         return _record("slack", "failed", payload, detail=str(exc))
 
 
+def humanize_id(value: str) -> str:
+    """merchant-a -> Merchant A, provider-p2 -> Provider P2. Formatting only, no new data."""
+    words = []
+    for part in str(value).split("-"):
+        words.append(part.upper() if len(part) <= 3 and any(c.isdigit() for c in part) else part.capitalize())
+    return " ".join(words)
+
+
 def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Render one Block Kit message. Every figure is read from payload, never computed.
 
     Severity and diagnostic confidence are kept in separate blocks on purpose
     (PRD section 11): a CRITICAL incident with LOW confidence must not read as
-    one collapsed score.
+    one collapsed score. The severity colour bar lives on the attachment, not
+    the confidence text, so the two never share one visual channel either.
     """
-    severity = str(payload.get("severity") or "").upper() or "UNKNOWN"
+    severity = str(payload.get("severity") or "").lower()
+    severity_label = severity.upper() or "UNKNOWN"
+    sev_icon = SEVERITY_EMOJI.get(severity, "⚪")
     incident_id = str(payload.get("incident_id") or "unknown")
     change = payload.get("change") if isinstance(payload.get("change"), Mapping) else {}
     financial = (
@@ -141,63 +156,100 @@ def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(payload.get("recommended_next_action"), Mapping)
         else {}
     )
+    citations = payload.get("citations") if isinstance(payload.get("citations"), Mapping) else {}
 
     metric = change.get("metric")
-    metric_label = str(metric).replace("_", " ") if metric else None
+    metric_label = str(metric).replace("_", " ").title() if metric else None
     expected, actual = change.get("expected"), change.get("actual")
     cohort_label = " / ".join(str(value) for value in cohort.values() if value)
+    merchant = humanize_id(cohort.get("merchant_id")) if cohort.get("merchant_id") else None
 
-    blocks: list[dict[str, Any]] = [
-        {"type": "header", "text": {"type": "plain_text", "text": f"{severity} - {incident_id}"}}
+    body: list[dict[str, Any]] = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f"{sev_icon} {severity_label}" + (f" · {merchant}" if merchant else ""),
+                "emoji": True,
+            },
+        },
+        {
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"Incident `#{incident_id}`"},
+                {"type": "mrkdwn", "text": f"Lifecycle: *{payload.get('lifecycle_state') or 'unknown'}*"},
+            ],
+        },
     ]
 
-    summary = f"{severity}: {incident_id}"
+    summary = f"{severity_label}: {incident_id}"
     if metric_label and expected is not None and actual is not None:
-        change_text = f"*{metric_label}* fell *{_pct(expected)} -> {_pct(actual)}*"
+        change_text = f"*{metric_label}*\n{_pct(expected)}  ➜  *{_pct(actual)}*"
         if cohort_label:
-            change_text += f"\nCohort: `{cohort_label}`"
-        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": change_text}})
-        summary = f"{severity}: {metric_label} {_pct(expected)} -> {_pct(actual)}"
+            change_text += f"\n:round_pushpin: `{cohort_label}`"
+        body.append({"type": "section", "text": {"type": "mrkdwn", "text": change_text}})
+        body.append({"type": "divider"})
+        summary = f"{sev_icon} {severity_label}: {metric_label} {_pct(expected)} -> {_pct(actual)}"
         if cohort_label:
             summary += f" in {cohort_label}"
 
     fields = []
     if isinstance(financial.get("gmv_at_risk"), Mapping):
-        fields.append({"type": "mrkdwn", "text": f"*GMV at risk*\n{_money(financial['gmv_at_risk'])}"})
+        fields.append({"type": "mrkdwn", "text": f":moneybag: *GMV at risk*\n{_money(financial['gmv_at_risk'])}"})
     if isinstance(financial.get("loss_per_hour"), Mapping):
-        fields.append({"type": "mrkdwn", "text": f"*Loss rate*\n{_money(financial['loss_per_hour'])}/h"})
+        fields.append(
+            {"type": "mrkdwn", "text": f":chart_with_downwards_trend: *Loss rate*\n{_money(financial['loss_per_hour'])}/h"}
+        )
     if payload.get("onset"):
-        fields.append({"type": "mrkdwn", "text": f"*Onset*\n{payload['onset']}"})
+        fields.append({"type": "mrkdwn", "text": f":clock3: *Onset (UTC)*\n{payload['onset']}"})
     if fields:
-        blocks.append({"type": "section", "fields": fields})
+        body.append({"type": "section", "fields": fields})
+        body.append({"type": "divider"})
 
     hypothesis_statement = hypothesis.get("statement")
     if hypothesis_statement:
-        confidence_suffix = f" ({confidence} confidence)" if confidence else ""
-        text = f"*Leading hypothesis*{confidence_suffix}\n{hypothesis_statement}"
-        not_ruled_out = "\n".join(
-            f"- {item.get('explanation')}"
-            for item in competing
-            if isinstance(item, Mapping) and item.get("explanation")
+        confidence_suffix = f" — _{confidence} confidence_" if confidence else ""
+        text = f":mag: *Possible cause*{confidence_suffix}\n{hypothesis_statement}"
+        body.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
+
+    not_ruled_out = "\n".join(
+        f"• {item.get('explanation')}"
+        for item in competing
+        if isinstance(item, Mapping) and item.get("explanation")
+    )
+    if not_ruled_out:
+        body.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f":grey_question: *Not ruled out*\n{not_ruled_out}"},
+            }
         )
-        if not_ruled_out:
-            text += f"\n\n*Not ruled out*\n{not_ruled_out}"
-        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
 
     action_text = action.get("action")
     if action_text:
         urgency = action.get("urgency")
-        label = f"Recommended ({urgency})" if urgency else "Recommended"
-        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*{label}*\n{action_text}"}})
+        label = f"Recommended · {urgency}" if urgency else "Recommended"
+        body.append({"type": "section", "text": {"type": "mrkdwn", "text": f":dart: *{label}*\n{action_text}"}})
 
-    blocks.append(
+    if action_text or hypothesis_statement:
+        body.append({"type": "divider"})
+
+    # Reader-facing: which sources were checked, not the raw query_id hashes -
+    # those are audit detail for the dashboard's evidence trail, not a Slack
+    # alert meant for a fast scan. The full citation still lives in
+    # payload["citations"] for whoever needs to trace a claim.
+    if citations:
+        sources = ", ".join(tool.replace("_", " ") for tool in citations)
+        body.append(
+            {"type": "context", "elements": [{"type": "mrkdwn", "text": f":microscope: Verified against: {sources}"}]}
+        )
+    body.append(
         {
-            "type": "actions",
+            "type": "context",
             "elements": [
                 {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Open incident"},
-                    "value": incident_id,
+                    "type": "mrkdwn",
+                    "text": "✅ Every figure above comes straight from live payment data — nothing estimated or guessed",
                 }
             ],
         }
@@ -206,7 +258,13 @@ def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "channel": os.environ.get(SLACK_CHANNEL_ENV) or DEFAULT_SLACK_CHANNEL,
         "text": summary,
-        "blocks": blocks,
+        "blocks": [
+            {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": f"{BRAND_ACCENT} *Clearwave Control Tower*  ·  Payment Operations Alert"}],
+            }
+        ],
+        "attachments": [{"color": SEVERITY_COLOR.get(severity, "#94A3B8"), "blocks": body}],
     }
 
 
@@ -315,6 +373,7 @@ def _payload(incident: Mapping[str, Any], result: Mapping[str, Any] | None) -> d
     cohort = incident.get("affected_cohort") or {}
     action = confidence = hypothesis = None
     competing: list[Any] = []
+    citations: dict[str, str] = {}
     if isinstance(result, Mapping):
         nested = result.get("result") if isinstance(result.get("result"), Mapping) else result
         if isinstance(nested, Mapping):
@@ -322,6 +381,7 @@ def _payload(incident: Mapping[str, Any], result: Mapping[str, Any] | None) -> d
             confidence = nested.get("diagnostic_confidence")
             hypothesis = nested.get("leading_hypothesis")
             competing = list(nested.get("competing_explanations") or [])
+        citations = _citations_from_trail(result.get("trail"))
     return {
         "incident_id": incident.get("incident_id"),
         "severity": incident.get("severity"),
@@ -335,7 +395,27 @@ def _payload(incident: Mapping[str, Any], result: Mapping[str, Any] | None) -> d
         "leading_hypothesis": hypothesis,
         "competing_explanations": competing,
         "recommended_next_action": action,
+        "citations": citations,
     }
+
+
+def _citations_from_trail(trail: Any) -> dict[str, str]:
+    """Reduce the evidence trail to one query_id per tool, first occurrence wins.
+
+    Sourced from the persisted trail (investigation/store.py:read_result), not
+    re-derived from the narrative, so "verified against" always reflects every
+    tool actually queried - not just the ones the narrative happened to cite.
+    """
+    citations: dict[str, str] = {}
+    if not isinstance(trail, list):
+        return citations
+    for entry in trail:
+        if not isinstance(entry, Mapping):
+            continue
+        tool, query_id = entry.get("tool"), entry.get("query_id")
+        if tool and query_id and tool not in citations:
+            citations[str(tool)] = f"{tool}:{query_id}"
+    return citations
 
 
 def _record(

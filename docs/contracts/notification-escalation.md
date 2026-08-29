@@ -63,6 +63,10 @@ The payload every channel receives (`surfaces/escalation.py:_payload`):
   "recommended_next_action": {
     "action": "Investigate Provider P2 and collect a discriminatory provider/issuer comparison before broad rerouting.",
     "urgency": "now"
+  },
+  "citations": {
+    "decline_breakdown": "decline_breakdown:q_decline_breakdown_ad769ee712ede28a",
+    "operational_metrics": "operational_metrics:q_operational_metrics_fac6f51dc84e1668"
   }
 }
 ```
@@ -76,6 +80,11 @@ The payload every channel receives (`surfaces/escalation.py:_payload`):
   dashboard, Slack and phone channels can render something honest without a narrative.
 - `severity` and `diagnostic_confidence` are never combined into one score or badge. This mirrors
   the C3/C4 split and PRD section 11.
+- `citations` maps each evidence tool actually queried to `tool:query_id`, reduced from the
+  investigation's persisted evidence trail (`investigation/store.py:read_result`'s `trail`, one
+  entry per tool, first occurrence wins). It reflects every tool queried during the investigation,
+  not only the ones the narrative happened to cite - `surfaces/escalation.py:_citations_from_trail`.
+  Empty when no investigation result (with a trail) is available yet.
 
 ## Escalation event record
 
@@ -106,8 +115,15 @@ One record per channel per incident, persisted by `surfaces/store.py` in the sha
 
 - **Slack** (`surfaces/escalation.py:notify_slack`, `slack_blocks`): posts a Block Kit message to
   an Incoming Webhook URL read from `CLEARWAVE_SLACK_WEBHOOK_URL` (channel name from
-  `CLEARWAVE_SLACK_CHANNEL`, defaulting to `#control-tower`). Severity and diagnostic confidence
-  render in separate blocks on purpose. No Slack SDK dependency - one `urllib` POST.
+  `CLEARWAVE_SLACK_CHANNEL`, defaulting to `#control-tower`). The message is one `attachments` entry
+  colour-coded by severity (`SEVERITY_COLOR`) wrapping the actual blocks, with a plain brand context
+  block outside the attachment; severity and diagnostic confidence render in separate blocks on
+  purpose, and merchant/provider identifiers are humanised for readability
+  (`surfaces/escalation.py:humanize_id`, e.g. `merchant-a` -> `Merchant A`) without changing the
+  underlying value. When `citations` is non-empty, a trailing context block lists the tool names
+  queried ("Verified against: ..."), so a reader can see the claim was checked without needing the
+  raw `query_id`s - those stay in `payload["citations"]` for the dashboard's evidence trail. No
+  Slack SDK dependency - one `urllib` POST.
 - **Phone** (`surfaces/escalation.py:twilio_provider`, `twiml_for`): places one Twilio
   Programmable Voice call via `urllib` against the Calls REST resource, authenticated with HTTP
   Basic Auth from `CLEARWAVE_TWILIO_ACCOUNT_SID` / `CLEARWAVE_TWILIO_AUTH_TOKEN` /

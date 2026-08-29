@@ -309,19 +309,41 @@ class SlackBlockKitTests(unittest.TestCase):
         self.assertIn("inc-2026-08-29-001", rendered)
         self.assertIn("28,000", rendered)
         self.assertIn("112,000", rendered)
-        severity_block = next(b for b in message["blocks"] if b["type"] == "header")
-        hypothesis_block = next(
-            b for b in message["blocks"] if "Leading hypothesis" in json.dumps(b)
-        )
+        self.assertIn("Merchant A", rendered)
+        body = message["attachments"][0]["blocks"]
+        self.assertEqual(message["attachments"][0]["color"], "#DC2626")
+        severity_block = next(b for b in body if b["type"] == "header")
+        hypothesis_block = next(b for b in body if "Possible cause" in json.dumps(b))
+        not_ruled_out_block = next(b for b in body if "Not ruled out" in json.dumps(b))
         self.assertIn("CRITICAL", severity_block["text"]["text"])
         self.assertNotIn("medium", severity_block["text"]["text"])
         self.assertIn("medium confidence", hypothesis_block["text"]["text"])
-        self.assertIn("Bank X over-decline", hypothesis_block["text"]["text"])
+        self.assertNotIn("Bank X over-decline", hypothesis_block["text"]["text"])
+        self.assertIn("Bank X over-decline", not_ruled_out_block["text"]["text"])
+
+    def test_citations_render_as_verified_against_sources(self):
+        payload = {
+            "incident_id": "inc-x",
+            "severity": "high",
+            "citations": {
+                "decline_breakdown": "decline_breakdown:q_decline_breakdown_1",
+                "operational_metrics": "operational_metrics:q_operational_metrics_1",
+            },
+        }
+        rendered = json.dumps(slack_blocks(payload))
+        self.assertIn("Verified against", rendered)
+        self.assertIn("decline breakdown", rendered)
+        self.assertIn("operational metrics", rendered)
+
+    def test_no_citations_omits_verified_against_line(self):
+        rendered = json.dumps(slack_blocks({"incident_id": "inc-x", "severity": "low"}))
+        self.assertNotIn("Verified against", rendered)
 
     def test_sparse_payload_never_raises(self):
         message = slack_blocks({"incident_id": "inc-x"})
         self.assertEqual(message["channel"], "#control-tower")
-        self.assertTrue(any(b["type"] == "header" for b in message["blocks"]))
+        body = message["attachments"][0]["blocks"]
+        self.assertTrue(any(b["type"] == "header" for b in body))
 
     def test_notify_slack_posts_block_kit_when_configured(self):
         captured = {}
