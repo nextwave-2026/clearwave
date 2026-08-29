@@ -284,7 +284,10 @@ estimates, not platform-revenue claims.
 **Input:**
 
 - `incident_id` (string, required).
-- `window` (object, optional) - defaults to the incident window.
+- `window` (object, optional) - defaults to the incident's exact persisted detection window,
+  the half-open interval used to compute its C3 `financial_impact`. It does not default to the
+  incident's onset-to-last-observed episode interval; callers must provide that interval
+  explicitly when they want episode totals.
 
 **Output fields:** `incident_id`, `window`, `attempted_value`, `expected_approval_rate`,
 `actual_approval_rate`, `estimated_lost_approved_volume` (payments and amount), `gmv_at_risk`,
