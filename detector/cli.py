@@ -16,12 +16,37 @@ from . import config, detect, store
 
 
 def _load_events(path: Path) -> list[dict[str, Any]]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    """Read events from a JSON array, an ``{"events": [...]}`` envelope, JSON
+    Lines, or a single event object.
+
+    All four turn up in practice: a batch export, the vertical slice's fixture,
+    a stream dump, and a single hand-written sample. Refusing any of them just
+    makes somebody reformat a file to prove a point.
+    """
+    text = path.read_text(encoding="utf-8")
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        events = []
+        for number, line in enumerate(text.splitlines(), start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise SystemExit(f"{path}:{number}: not valid JSON ({exc.msg})") from exc
+        if events:
+            return events
+        raise SystemExit(f"{path}: not valid JSON and not JSON Lines")
+
     if isinstance(payload, list):
         return payload
-    if isinstance(payload, dict) and isinstance(payload.get("events"), list):
-        return payload["events"]
-    raise SystemExit("event file must be a JSON array or an object with an 'events' array")
+    if isinstance(payload, dict):
+        if isinstance(payload.get("events"), list):
+            return payload["events"]
+        return [payload]
+    raise SystemExit(f"{path}: expected a JSON object, an array, or an events envelope")
 
 
 def main(argv: list[str] | None = None) -> int:

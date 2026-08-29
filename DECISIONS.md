@@ -104,3 +104,7 @@ another contributor pushed first, run `git pull --no-rebase && git push`; union 
   -> other side: no team-wide prohibition lifts from this; W1's package manifest (`worker/requirements.txt`) and scaffold are scoped to W1's own tree only
 - 2026-08-29T18:39Z  raul  transport: simulator-to-detector uses real Kafka with Schema Registry (not a simplified in-process alternative), resolving the open item in `docs/ownership.md`. Rationale (raul's words): "kafka por que es el estandar para una cola de mensajes y comunicación entre ms"
   -> other side: W2 (andres) consumes C1 events from Kafka via the schema registered in Schema Registry, not from an in-process call or a simplified queue; the running Kafka + Schema Registry from the devcontainer is the real transport, not a stand-in
+- 2026-08-29T20:22Z  derek  external_status ownership: W3 (`derek`) implements `external_status`; it remains published as a C2 tool and ADR 0003 governs its shared gateway interface, not implementation ownership
+  -> other side: W2 leaves `external_status` on its fixture and builds the other nine; C2 is an interface contract, not an implementation roster, so implementation ownership follows the data source
+- 2026-08-29T20:22Z  derek  metric_series: acknowledged and accepted as an eleventh C2 tool rather than folded into `cohort_metrics`
+  -> other side: W2 publishes and implements `metric_series`; W3 consumes it for onset and trajectory in the investigation narrative

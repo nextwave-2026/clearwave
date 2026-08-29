@@ -1,0 +1,36 @@
+{
+  "schema": "clearwave.attempt.v1",
+  "event_id": "evt_01J8QF7N3K9X2M4P6R8T0V2W4Y",
+  "emitted_at": "2026-08-30T04:12:07.412Z",
+
+  "payment_id": "pay_8f21c",
+  "attempt_id": "att_8f21c_3",
+  "attempt_number": 3,
+  "is_retry": true,
+  "previous_attempt_id": "att_8f21c_2",
+
+  "attempt_ts": "2026-08-30T04:12:07.109Z",
+
+  "merchant_id": "mrc_lumina",
+  "provider": "P2",
+  "provider_connection": "P2-CO-acct1",
+  "payment_method": "card",
+  "card_network": "mastercard",
+  "country": "CO",
+  "issuing_bank": "bank_bancolombia",
+  "bin": "455631",
+
+  "status": "declined",
+  "decline_reason": "do_not_honor",
+  "provider_raw_code": "05",
+
+  "amount_minor": 1899000,
+  "currency": "COP",
+
+  "latency_ms": 8410,
+  "timed_out": false,
+  "http_status": 200,
+  "queue_delay_ms": 1200,
+  "service_id": "router-7c",
+  "deployment_id": "router@2026.08.30-r4"
+}

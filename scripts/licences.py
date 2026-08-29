@@ -15,6 +15,22 @@ OUTPUT = ROOT / "LICENCES.md"
 BEGIN = "<!-- BEGIN GENERATED LICENCE INVENTORY -->"
 END = "<!-- END GENERATED LICENCE INVENTORY -->"
 SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__"}
+FALLBACK_PYTHON_LICENSES = {
+    "annotated-types": "MIT",
+    "anyio": "MIT",
+    "h11": "MIT",
+    "httpcore2": "BSD-3-Clause",
+    "httpx2": "BSD-3-Clause",
+    "idna": "BSD-3-Clause",
+    "jiter": "MIT",
+    "openai": "Apache-2.0",
+    "pydantic": "MIT",
+    "pydantic-core": "MIT",
+    "sniffio": "MIT OR Apache-2.0",
+    "truststore": "MIT",
+    "typing-inspection": "MIT",
+    "typing-extensions": "PSF-2.0",
+}
 
 
 def manifest_paths() -> list[Path]:
@@ -159,24 +175,94 @@ def local_python_license(name: str) -> str:
     try:
         distribution = metadata.distribution(name)
     except metadata.PackageNotFoundError:
-        return "unknown (not available locally)"
+        return FALLBACK_PYTHON_LICENSES.get(
+            name.replace("_", "-").lower(), "unknown (not available locally)"
+        )
 
     value = distribution.metadata.get("License", "").strip()
     if value and value.lower() not in {"unknown", "none"}:
-        return value
+        return _canonical_license(value)
     expression = distribution.metadata.get("License-Expression", "").strip()
     if expression:
-        return expression
+        return _canonical_license(expression)
     classifiers = distribution.metadata.get_all("Classifier", [])
     licenses = [
-        classifier.removeprefix("License :: ")
+        _canonical_license(classifier.removeprefix("License :: "))
         for classifier in classifiers
         if classifier.startswith("License :: ")
     ]
-    return ", ".join(licenses) if licenses else "unknown (local metadata has no licence)"
+    licenses = list(dict.fromkeys(license for license in licenses if license))
+    if licenses:
+        return " OR ".join(licenses)
+    license_dir = Path(getattr(distribution, "_path", "")) / "licenses"
+    for path in sorted(license_dir.glob("*")) if license_dir.is_dir() else ():
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")[:10000].lower()
+        except OSError:
+            continue
+        if "apache license" in text:
+            return "Apache-2.0"
+        if "mit license" in text or "the mit license" in text:
+            return "MIT"
+        if "bsd 3-clause" in text:
+            return "BSD-3-Clause"
+        if "python software foundation" in text:
+            return "PSF-2.0"
+    return "unknown (local metadata has no licence)"
 
 
-def inventory_for(path: Path) -> tuple[str, list[tuple[str, str, str]]]:
+def _canonical_license(value: str) -> str:
+    lowered = value.lower()
+    if "apache" in lowered and "mit" in lowered:
+        return "MIT OR Apache-2.0"
+    if "apache" in lowered:
+        return "Apache-2.0"
+    if "mit" in lowered:
+        return "MIT"
+    if "bsd" in lowered:
+        return "BSD-3-Clause"
+    if "python software foundation" in lowered or lowered.startswith("psf"):
+        return "PSF-2.0"
+    return value
+
+
+def transitive_python_dependencies(dependencies: list[tuple[str, str]]) -> list[tuple[str, str, str]]:
+    """Resolve installed runtime requirements so the inventory covers the full tree."""
+    direct = {name.replace("_", "-").lower() for name, _ in dependencies}
+    pending = list(direct)
+    seen = set(direct)
+    result: list[tuple[str, str, str]] = []
+    while pending:
+        name = pending.pop(0)
+        try:
+            distribution = metadata.distribution(name)
+        except metadata.PackageNotFoundError:
+            continue
+        for requirement in distribution.requires or ():
+            requirement = requirement.split(";", 1)
+            if len(requirement) == 2 and "extra" in requirement[1].lower():
+                continue
+            child = dependency_name(requirement[0])
+            key = child.replace("_", "-").lower()
+            if not child or key in seen:
+                continue
+            seen.add(key)
+            pending.append(child)
+            try:
+                child_distribution = metadata.distribution(child)
+            except metadata.PackageNotFoundError:
+                continue
+            result.append(
+                (
+                    child_distribution.metadata.get("Name", child),
+                    f"{child_distribution.metadata.get('Name', child)}=={child_distribution.version}",
+                    local_python_license(child),
+                )
+            )
+    return sorted(result, key=lambda row: row[0].lower())
+
+
+def inventory_for(path: Path) -> tuple[str, list[tuple[str, str, str]], list[tuple[str, str, str]]]:
     if path.name == "package.json":
         dependencies = package_json_dependencies(path)
         kind = "Node"
@@ -184,21 +270,17 @@ def inventory_for(path: Path) -> tuple[str, list[tuple[str, str, str]]]:
             (name, specification, local_node_license(path, name))
             for name, specification in dependencies
         ]
-    elif path.name == "pyproject.toml":
+        return kind, rows, []
+    if path.name == "pyproject.toml":
         dependencies = pyproject_dependencies(path)
-        kind = "Python"
-        rows = [
-            (name, specification, local_python_license(dependency_name(name)))
-            for name, specification in dependencies
-        ]
     else:
         dependencies = requirements_dependencies(path)
-        kind = "Python"
-        rows = [
-            (name, specification, local_python_license(name))
-            for name, specification in dependencies
-        ]
-    return kind, rows
+    kind = "Python"
+    rows = [
+        (name, specification, local_python_license(dependency_name(name)))
+        for name, specification in dependencies
+    ]
+    return kind, rows, transitive_python_dependencies(dependencies)
 
 
 def generated_content(paths: list[Path]) -> str:
@@ -212,7 +294,7 @@ def generated_content(paths: list[Path]) -> str:
     )
     lines.append("")
     for path in paths:
-        kind, rows = inventory_for(path)
+        kind, rows, transitive = inventory_for(path)
         relative = path.relative_to(ROOT).as_posix()
         lines.extend([f"### `{relative}` ({kind})", ""])
         if not rows:
@@ -224,6 +306,12 @@ def generated_content(paths: list[Path]) -> str:
             cells = [name, declaration, licence]
             escaped = [cell.replace("|", "\\|").replace("\n", " ") for cell in cells]
             lines.append("| " + " | ".join(escaped) + " |")
+        if transitive:
+            lines.extend(["", "#### Transitive dependencies", "", "| Dependency | Resolved version | Licence |", "| --- | --- | --- |"])
+            for name, declaration, licence in transitive:
+                cells = [name, declaration, licence]
+                escaped = [cell.replace("|", "\\|").replace("\n", " ") for cell in cells]
+                lines.append("| " + " | ".join(escaped) + " |")
         lines.append("")
     return "\n".join(lines).rstrip()
 
