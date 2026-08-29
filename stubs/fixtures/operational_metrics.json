@@ -1,0 +1,38 @@
+{
+  "as_of": "2026-08-29T10:15:00Z",
+  "response": {
+    "target": {
+      "kind": "cohort",
+      "merchant_id": "merchant-a",
+      "provider": "provider-p2",
+      "country": "CO",
+      "card_network": "mastercard"
+    },
+    "window": {
+      "start": "2026-08-29T10:00:00Z",
+      "end": "2026-08-29T10:15:00Z"
+    },
+    "latency_ms": {
+      "p50": 420,
+      "p95": 1800,
+      "p99": 4200
+    },
+    "error_rate": 0.018,
+    "timeout_rate": 0.35,
+    "service_health": {
+      "status": "degraded",
+      "failed_health_checks": 3,
+      "checked_at": "2026-08-29T10:15:00Z"
+    },
+    "runtime_health": {
+      "status": "healthy",
+      "cpu_percent": 61.0,
+      "memory_percent": 68.0
+    },
+    "deployment": {
+      "service": "payment-router",
+      "deployment_id": "deploy-2026-08-29.3",
+      "deployed_at": "2026-08-29T09:52:00Z"
+    }
+  }
+}

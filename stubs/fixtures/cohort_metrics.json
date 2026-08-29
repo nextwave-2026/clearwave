@@ -1,0 +1,70 @@
+{
+  "as_of": "2026-08-29T10:15:00Z",
+  "response": {
+    "cohort": {
+      "merchant_id": "merchant-a",
+      "provider": "provider-p2",
+      "payment_method": "card",
+      "card_network": "mastercard",
+      "country": "CO",
+      "issuing_bank": "bank-x"
+    },
+    "window": {
+      "start": "2026-08-29T10:00:00Z",
+      "end": "2026-08-29T10:15:00Z"
+    },
+    "payment_metrics": {
+      "attempted_payments": 1000,
+      "approved_payments": 640,
+      "approval_conversion": 0.64,
+      "expected_approval_conversion": 0.92,
+      "expected_approved_payments": 920
+    },
+    "attempt_metrics": {
+      "attempts": 1350,
+      "approved_attempts": 640,
+      "approval_conversion": 0.4740740741,
+      "failed_attempts": 710
+    },
+    "volume": {
+      "attempted": {
+        "amount": 100000.0,
+        "currency": "USD"
+      },
+      "approved": {
+        "amount": 64000.0,
+        "currency": "USD"
+      }
+    },
+    "decline_mix": [
+      {
+        "reason": "timeout",
+        "count": 505,
+        "share": 0.7112676056
+      },
+      {
+        "reason": "issuer_decline",
+        "count": 165,
+        "share": 0.2323943662
+      },
+      {
+        "reason": "insufficient_funds",
+        "count": 20,
+        "share": 0.0281690141
+      },
+      {
+        "reason": "other",
+        "count": 20,
+        "share": 0.0281690141
+      }
+    ],
+    "baseline": {
+      "window": {
+        "start": "2026-08-22T10:00:00Z",
+        "end": "2026-08-22T10:15:00Z"
+      },
+      "payment_approval_conversion": 0.92,
+      "attempt_approval_conversion": 0.9
+    }
+  }
+}

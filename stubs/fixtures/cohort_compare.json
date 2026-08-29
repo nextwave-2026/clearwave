@@ -1,0 +1,126 @@
+{
+  "as_of": "2026-08-29T10:15:00Z",
+  "response": {
+    "target": {
+      "label": "affected cohort",
+      "cohort": {
+        "merchant_id": "merchant-a",
+        "provider": "provider-p2",
+        "payment_method": "card",
+        "card_network": "mastercard",
+        "country": "CO",
+        "issuing_bank": "bank-x"
+      },
+      "payment_metrics": {
+        "attempted_payments": 1000,
+        "approved_payments": 640,
+        "approval_conversion": 0.64
+      },
+      "attempt_metrics": {
+        "attempts": 1350,
+        "approved_attempts": 640,
+        "approval_conversion": 0.4740740741
+      },
+      "volume": {
+        "attempted": {
+          "amount": 100000.0,
+          "currency": "USD"
+        },
+        "approved": {
+          "amount": 64000.0,
+          "currency": "USD"
+        }
+      }
+    },
+    "siblings": [
+      {
+        "label": "same merchant, provider P3 sibling",
+        "cohort": {
+          "merchant_id": "merchant-a",
+          "provider": "provider-p3",
+          "payment_method": "card",
+          "card_network": "mastercard",
+          "country": "CO",
+          "issuing_bank": "bank-y"
+        },
+        "payment_metrics": {
+          "attempted_payments": 600,
+          "approved_payments": 558,
+          "approval_conversion": 0.93
+        },
+        "attempt_metrics": {
+          "attempts": 620,
+          "approved_attempts": 558,
+          "approval_conversion": 0.9
+        },
+        "volume": {
+          "attempted": {
+            "amount": 60000.0,
+            "currency": "USD"
+          },
+          "approved": {
+            "amount": 55800.0,
+            "currency": "USD"
+          }
+        }
+      },
+      {
+        "label": "same merchant, country sibling",
+        "cohort": {
+          "merchant_id": "merchant-a",
+          "provider": "provider-p3",
+          "payment_method": "card",
+          "card_network": "visa",
+          "country": "MX",
+          "issuing_bank": "bank-z"
+        },
+        "payment_metrics": {
+          "attempted_payments": 1000,
+          "approved_payments": 920,
+          "approval_conversion": 0.92
+        },
+        "attempt_metrics": {
+          "attempts": 1020,
+          "approved_attempts": 920,
+          "approval_conversion": 0.902
+        },
+        "volume": {
+          "attempted": {
+            "amount": 100000.0,
+            "currency": "USD"
+          },
+          "approved": {
+            "amount": 92000.0,
+            "currency": "USD"
+          }
+        }
+      }
+    ],
+    "parent": {
+      "label": "merchant A across all dimensions",
+      "cohort": {
+        "merchant_id": "merchant-a"
+      },
+      "payment_metrics": {
+        "attempted_payments": 5000,
+        "approved_payments": 4300,
+        "approval_conversion": 0.86
+      },
+      "attempt_metrics": {
+        "attempts": 5350,
+        "approved_attempts": 4300,
+        "approval_conversion": 0.8037383178
+      },
+      "volume": {
+        "attempted": {
+          "amount": 500000.0,
+          "currency": "USD"
+        },
+        "approved": {
+          "amount": 430000.0,
+          "currency": "USD"
+        }
+      }
+    }
+  }
+}

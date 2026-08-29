@@ -1,0 +1,80 @@
+{
+  "as_of": "2026-08-29T10:15:00Z",
+  "response": {
+    "incident_id": "inc-2026-08-29-001",
+    "levels": [
+      {
+        "level": "merchant",
+        "cohort": {
+          "merchant_id": "merchant-a"
+        },
+        "metrics": {
+          "attempted_payments": 5000,
+          "approved_payments": 4300,
+          "payment_approval_conversion": 0.86
+        },
+        "reason": "Merchant A is the only merchant with a material shift in the observed window."
+      },
+      {
+        "level": "provider",
+        "cohort": {
+          "merchant_id": "merchant-a",
+          "provider": "provider-p2"
+        },
+        "metrics": {
+          "attempted_payments": 1000,
+          "approved_payments": 640,
+          "payment_approval_conversion": 0.64
+        },
+        "reason": "Provider P2 isolates the shift; the Provider P3 sibling remains at 93%."
+      },
+      {
+        "level": "country",
+        "cohort": {
+          "merchant_id": "merchant-a",
+          "provider": "provider-p2",
+          "country": "CO"
+        },
+        "metrics": {
+          "attempted_payments": 1000,
+          "approved_payments": 640,
+          "payment_approval_conversion": 0.64
+        },
+        "reason": "The observed P2 shift is confined to Colombia in this window."
+      },
+      {
+        "level": "card_network",
+        "cohort": {
+          "merchant_id": "merchant-a",
+          "provider": "provider-p2",
+          "country": "CO",
+          "card_network": "mastercard"
+        },
+        "metrics": {
+          "attempted_payments": 1000,
+          "approved_payments": 640,
+          "payment_approval_conversion": 0.64
+        },
+        "reason": "Mastercard carries the complete affected slice; the country-level sibling is healthy."
+      },
+      {
+        "level": "issuing_bank",
+        "cohort": {
+          "merchant_id": "merchant-a",
+          "provider": "provider-p2",
+          "country": "CO",
+          "card_network": "mastercard",
+          "issuing_bank": "bank-x"
+        },
+        "metrics": {
+          "attempted_payments": 1000,
+          "approved_payments": 640,
+          "payment_approval_conversion": 0.64
+        },
+        "reason": "Bank X is the only issuer observed on P2 in this slice, so issuer and provider cannot be separated."
+      }
+    ],
+    "stopped_at": "provider_vs_issuing_bank",
+    "stop_reason": "The available observation window has no Provider P2 traffic from another issuer and no Bank X traffic through another provider. Further localisation would overstate what the evidence supports."
+  }
+}

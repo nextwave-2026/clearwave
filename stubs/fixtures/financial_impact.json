@@ -1,0 +1,37 @@
+{
+  "as_of": "2026-08-29T10:15:00Z",
+  "response": {
+    "incident_id": "inc-2026-08-29-001",
+    "window": {
+      "start": "2026-08-29T10:00:00Z",
+      "end": "2026-08-29T10:15:00Z",
+      "duration_seconds": 900
+    },
+    "attempted_value": {
+      "amount": 100000.0,
+      "currency": "USD"
+    },
+    "expected_approval_rate": 0.92,
+    "actual_approval_rate": 0.64,
+    "expected_approved_payments": 920,
+    "actual_approved_payments": 640,
+    "estimated_lost_approved_volume": {
+      "payments": 280,
+      "amount": 28000.0,
+      "currency": "USD"
+    },
+    "gmv_at_risk": {
+      "amount": 28000.0,
+      "currency": "USD"
+    },
+    "loss_per_hour": {
+      "amount": 112000.0,
+      "currency": "USD"
+    },
+    "assumptions": [
+      "Expected approved payments use the 92% payment-level baseline.",
+      "Estimated lost approved volume is expected minus actual approved payment value at the observed $100 average payment value.",
+      "GMV at risk is not platform revenue loss."
+    ]
+  }
+}
