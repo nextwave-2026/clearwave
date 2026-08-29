@@ -4,14 +4,14 @@ The team is four people on independent machines with no shared supervisor, so ow
 
 ## The four workstreams
 
-These are **workstreams, not people**. Which person takes which workstream is an open decision recorded at the end of this document, not settled here.
+These are workstreams first and owners second. The assignment below is settled, but a workstream may be worked by more than one person and a person may hold more than one. A contract still has exactly one owning workstream regardless.
 
-| Workstream | PRD scope | Phase |
-|---|---|---|
-| W1 - Simulated World and Ground Truth | PRD sections 5, 7, 8, 9, 20, 26, 27 | 1 |
-| W2 - Detection Plane | PRD section 3 Product A, 10, 11, 12, 14, 18 | 2 and 3 |
-| W3 - Investigation Agent | PRD section 3 Product B, 13, 15, 16, 17, 22, 23 | 4 |
-| W4 - Surfaces and Escalation | PRD sections 19, 24, 25 | 5 and 6 |
+| Workstream | Owner | PRD scope | Phase |
+|---|---|---|---|
+| W1 - Simulated World and Ground Truth | `raul` | PRD sections 5, 7, 8, 9, 20, 26, 27 | 1 |
+| W2 - Detection Plane | `andres` | PRD section 3 Product A, 10, 11, 12, 14, 18 | 2 and 3 |
+| W3 - Investigation Agent | `derek` | PRD section 3 Product B, 13, 15, 16, 17, 22, 23 | 4 |
+| W4 - Surfaces and Escalation | `juank` | PRD sections 19, 24, 25 | 5 and 6 |
 
 ### W1 - Simulated World and Ground Truth
 
@@ -86,7 +86,6 @@ W1 has no upstream dependency and is on the critical path for everyone else, whi
 
 Each item below is explicitly unresolved. Answers are recorded in `DECISIONS.md`.
 
-- **Which person owns which workstream.** The team's stated backgrounds are in the `README.md` team section and are input to that call, not the call itself.
 - **Language, framework and stack.** Still open by the existing `DECISIONS.md` entry; PRD section 21's preferences are not a decision. Blocks the concrete directory names in this document, which are deliberately left abstract until then.
 - **Transport between simulator and detector:** a Kafka-like stream or something simpler. PRD section 21 explicitly permits simplifying, and PRD section 29 prefers simple process boundaries.
 - **Persistence choice for operational and historical data.**
