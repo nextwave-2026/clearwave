@@ -11,7 +11,7 @@ callable directly for now until W4 wires a real trigger to it.
 
 The target worker must already be running and consuming
 worker.helpers.control.CONTROL_TOPIC - this only publishes the command. See
-worker/helpers/payment.py for what each --effect does.
+worker/helpers/incident.py for what each --effect does.
 """
 
 import argparse
@@ -21,7 +21,7 @@ import os
 from confluent_kafka import Producer
 
 from worker.helpers.control import CONTROL_TOPIC
-from worker.helpers.payment import (
+from worker.helpers.incident import (
     DECLINE,
     DEFAULT_INCIDENT_DECLINE_REASON,
     DEFAULT_INCIDENT_LATENCY_MS,

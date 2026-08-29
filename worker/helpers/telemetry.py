@@ -8,8 +8,8 @@ import random
 import uuid
 from datetime import datetime, timezone
 
+from worker.helpers.incident import Incident
 from worker.helpers.merchant import Merchant
-from worker.helpers.payment import Incident
 
 
 def _now_iso() -> str:

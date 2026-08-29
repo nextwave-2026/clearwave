@@ -21,7 +21,7 @@ without checking that decision still holds.
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from worker.helpers.payment import DECLINE, Incident
+from worker.helpers.incident import DECLINE, Incident
 
 ScenarioId = str
 

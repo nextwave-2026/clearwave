@@ -15,7 +15,7 @@ Messages:
      "scope": {"provider": "adyen"}, "effect": "latency", "latency_ms": 8000}
     {"merchant_id": "merchant-b", "action": "stop"}
 
-"effect" defaults to "decline" when omitted. See worker.helpers.payment
+"effect" defaults to "decline" when omitted. See worker.helpers.incident
 for what each effect does and outage's provider-only restriction.
 
 A message not naming this worker's merchant_id is ignored, so one shared
@@ -31,7 +31,7 @@ import uuid
 from confluent_kafka import Consumer
 from confluent_kafka.admin import AdminClient, NewTopic
 
-from worker.helpers.payment import (
+from worker.helpers.incident import (
     DECLINE,
     DEFAULT_INCIDENT_DECLINE_REASON,
     DEFAULT_INCIDENT_LATENCY_MS,
