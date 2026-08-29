@@ -1,4 +1,4 @@
-"""The sole gateway from L4 to the ten C2 evidence tools.
+"""The sole gateway from L4 to the eleven C2 evidence tools.
 
 The gateway owns query identity, allowlisting, subprocess invocation, timeout
 handling, budget enforcement, and trail recording. It contains no diagnosis
@@ -31,6 +31,7 @@ ALLOWED_TOOLS = (
     "incident_history",
     "external_status",
     "financial_impact",
+    "metric_series",
 )
 OPENING_TOOLS = (
     "cohort_metrics",
