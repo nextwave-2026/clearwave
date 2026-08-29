@@ -45,3 +45,5 @@ the other side pushed first, run `git pull --no-rebase && git push`; union merge
   -> other side: keep workstream boundaries and ownership legible from the repository
 - 2026-08-29T18:11Z  derek  the two DECISIONS.md entries timestamped 2026-08-29T18:09Z whose paths render as bare backslashes were corrupted by a tooling error and are void, superseded by the correctly rendered entries of the same timestamp
   -> other side: disregard the backslash entries and read the entries with backticked paths
+- 2026-08-29T18:15Z  derek  workstream assignment decided: W1 Simulated World and Ground Truth to raul, W2 Detection Plane to andres, W3 Investigation Agent to derek, W4 Surfaces and Escalation to juank
+  -> other side: each person must read their workstream's Owns and Hard rule entries in docs/ownership.md and the contracts they own or consume; the stack decision is now the only remaining gate on starting parallel implementation
