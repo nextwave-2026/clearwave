@@ -54,6 +54,8 @@ another contributor pushed first, run `git pull --no-rebase && git push`; union 
   -> other side: attribute entries with your own handle - `derek`, `andres`, `juank` or `raul`
 - 2026-08-29T19:04Z  derek  ingestion: Kafka is the real ingestion pipeline; merchant producers publish to raw topics, and each simulator emits its own native heterogeneous event shape
   -> other side: publish and register each merchant's native shape on raw Kafka topics; do not replace the pipeline with a simulation prop or force producer shapes to match
+- 2026-08-29T19:04Z  derek  merchant shapes: each simulated merchant emits its own native event shape; deliberate heterogeneity mirrors the real orchestrator problem
+  -> other side: preserve native per-merchant differences and register each shape rather than flattening producers into a shared input shape
 - 2026-08-29T19:04Z  derek  schema: a schema registry normalises heterogeneous merchant shapes into one canonical ingestion schema, serialised as JSON Schema for speed in the build window
   -> other side: register native shapes with W1 and consume the single JSON Schema canonical model downstream; do not introduce Avro or parallel canonical models
 - 2026-08-29T19:04Z  derek  persistence: the normalized representation is persisted in a non-relational document store for detection, investigation, analytics and incident workflows; the specific product remains undecided
