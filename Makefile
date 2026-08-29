@@ -5,7 +5,11 @@
 
 install:
 	@python3 -c 'import sys; assert sys.version_info >= (3, 11), sys.version' \
-	  && printf '%s\n' 'install: standard library only, no third-party dependencies to install'
+	  && for manifest in $$(find . -name requirements.txt -not -path './.git/*'); do \
+	       echo "install: pip install -r $$manifest"; \
+	       python3 -m pip install --quiet -r "$$manifest" || exit 1; \
+	     done \
+	  && printf '%s\n' 'install: dependencies installed from every requirements.txt'
 
 lint:
 	@python3 -m compileall -q detector investigation tests stubs \

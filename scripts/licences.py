@@ -164,6 +164,9 @@ def local_python_license(name: str) -> str:
     value = distribution.metadata.get("License", "").strip()
     if value and value.lower() not in {"unknown", "none"}:
         return value
+    expression = distribution.metadata.get("License-Expression", "").strip()
+    if expression:
+        return expression
     classifiers = distribution.metadata.get_all("Classifier", [])
     licenses = [
         classifier.removeprefix("License :: ")
