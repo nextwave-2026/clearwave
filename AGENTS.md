@@ -37,7 +37,7 @@ one by appending a new one.
 
 `INTERFACES.md` is deliberately NOT union-merged. Union would keep both the old and the new value of an
 interface, leaving the file asserting two contradictory things at once. A conflict there is a genuine
-signal that both sides are editing the same boundary and must reconcile.
+signal that two contributors are editing the same boundary and must reconcile.
 
 **Every entry names who wrote it**, using that person's handle - `derek`, `andres`, `juank`, or
 `raul`. With independent machines and no shared supervisor, an unattributed line is close to
@@ -45,13 +45,13 @@ useless, and a real name tells you who to go and talk to.
 
 ### When to write to which
 
-- Finished something the other side should know about → `STATUS.md`.
-- Made a call the other side must now build around → `DECISIONS.md`, including what they must do
+- Finished something everyone else should know about → `STATUS.md`.
+- Made a call everyone else must now build around → `DECISIONS.md`, including what they must do
   differently.
 - Changed the shape of a boundary → update `INTERFACES.md` in place.
 
 Writing to `STATUS.md` at every milestone is the single habit this whole arrangement depends on. A file
-nobody remembers to write to is worse than no file, because both sides trust it.
+nobody remembers to write to is worse than no file, because everyone trusts it.
 
 ## The Makefile contract
 
@@ -95,12 +95,12 @@ That protection depends on two things staying true:
 **Code** goes through a branch and a pull request. Never commit code directly to `main`.
 
 **The coordination files are the deliberate exception. Commit them straight to `main`.**
-`STATUS.md`, `DECISIONS.md`, `INTERFACES.md` and this file exist so the two sides stay in step, and a
-pull request round trip defeats that: a status line the other side needs now is useless sitting in
+`STATUS.md`, `DECISIONS.md`, `INTERFACES.md` and this file exist so the four contributors stay in step, and a
+pull request round trip defeats that: a status line everyone else needs now is useless sitting in
 review. Append, commit, push to `main`, done - no branch, no pull request, no waiting.
 
 That is safe here precisely because of the merge configuration. `STATUS.md` and `DECISIONS.md` are
-union-merged, so two people appending at the same moment cannot conflict. Verified: with both sides
+union-merged, so contributors appending at the same moment cannot conflict. Verified: with contributors
 committing to `main` from a stale base, the second push is rejected, a plain `git pull` merges cleanly,
 and both entries survive. So the recovery when your push is rejected is simply:
 
@@ -120,7 +120,7 @@ Other conventions:
 
 - Never merge a red pull request. Green checks only, either side.
 - Do not discard work that has not landed. If something looks stale, ask rather than delete.
-- Both sides may merge their own green code work without waiting for the other.
+- Any contributor may merge their own green code work without waiting for the others.
 
 ## Required deliverables
 
