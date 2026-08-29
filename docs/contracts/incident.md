@@ -33,9 +33,11 @@ what changed and its business priority, not why it changed.
   "blast_radius": {
     "attempted_payments": 1000,
     "affected_merchants": 1,
-    "affected_countries": 1,
+    "affected_providers": 1,
+    "affected_payment_methods": 1,
     "affected_card_networks": 1,
-    "affected_providers": 1
+    "affected_countries": 1,
+    "affected_issuing_banks": 1
   },
   "financial_impact": {
     "attempted_value": {
@@ -69,10 +71,18 @@ what changed and its business priority, not why it changed.
 - `affected_cohort` (object) contains equality filters over the registered C1 dimensions.
 - `change` (object) contains the measured metric name, expected and actual values, absolute and
   relative deltas, and the metric unit. Conversion values are ratios in the range 0 to 1.
-- `onset` (RFC 3339 UTC string) is the first observed time of the qualifying deviation.
+- `onset` (RFC 3339 UTC string) is the first observed time of the qualifying deviation. It is not
+  bounded by the detection sweep window: the deviation is walked backwards, bucket by bucket, for as
+  long as it stays qualifying, so an incident that began before the sweep reports when it actually
+  began. The walk stops at the first bucket that is not degraded, which keeps onset the start of the
+  current episode rather than of an earlier dip that has since recovered.
 - `persistence.is_persistent` (boolean), `observed_for_seconds` (non-negative integer), and
   `last_observed_at` describe duration and recency.
-- `blast_radius` (object) reports the affected payment count and distinct dimension counts.
+- `blast_radius` (object) reports the affected payment count and one distinct count per registered
+  C1 dimension: `affected_merchants`, `affected_providers`, `affected_payment_methods`,
+  `affected_card_networks`, `affected_countries`, and `affected_issuing_banks`. The names are
+  declared per dimension in `detector/metrics.py:BLAST_RADIUS_FIELDS` rather than generated from the
+  dimension name, because generating them produced `affected_countrys` and `affected_merchant_ids`.
 - `financial_impact` is the deterministic C2 financial-impact shape. `gmv_at_risk` is an estimate,
   not a platform-revenue claim.
 - `severity` is one of `low`, `medium`, `high`, or `critical` and represents business priority.
