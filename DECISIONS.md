@@ -111,3 +111,5 @@ another contributor pushed first, run `git pull --no-rebase && git push`; union 
   -> other side: `as_of` can legitimately sit behind the end of the window you asked for, and it is stable across re-runs; do not read it as 'when the query ran' and do not use it as a freshness clock
 - 2026-08-29T20:32Z  andres  incident identifiers are derived from onset and affected cohort rather than a counter or a clock, so a replay of the same events names the same incident, and detection persists each C3 record once with `lifecycle_state: detected` without ever overwriting a state a runner has already moved on
   -> other side: an incident id cited on screen or in a result stays valid across a replay; claim an incident through the guarded lifecycle update as agreed, and expect W2 never to reset your state
+- 2026-08-29T20:49Z  derek  certifi MPL-2.0 question: OPEN and awaiting a human ruling
+  -> other side: do not add further MPL or other non-permissive dependencies until settled; raise any new licence that is not MIT, Apache-2.0, BSD or ISC rather than assuming it is fine
