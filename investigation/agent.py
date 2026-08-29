@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 from collections.abc import Mapping, MutableMapping, Sequence
@@ -15,6 +14,7 @@ from pydantic import ValidationError
 
 from .contracts import InvestigationResult, result_dict
 from .degrade import degrade_result
+from .env import openai_client_kwargs, openai_model, redact_secrets
 from .gateway import ALLOWED_TOOLS, EvidenceGateway
 from .ledger import HypothesisLedger
 from .prefilter import prefilter
@@ -111,7 +111,7 @@ class InvestigationAgent:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self.client = client
-        self.model = model or os.environ.get("OPENAI_MODEL", DEFAULT_MODEL)
+        self.model = model or openai_model(DEFAULT_MODEL)
         self.max_turns = int(max_turns)
         self.query_budget = int(query_budget)
         self.timeout_seconds = float(timeout_seconds)
@@ -160,7 +160,7 @@ class InvestigationAgent:
         conversation: list[Any] = [{"role": "user", "content": prompt}]
 
         try:
-            client = self.client or OpenAI()
+            client = self.client or OpenAI(**openai_client_kwargs())
             _response, conversation, _stopped_without_tools = self._gather(
                 client,
                 conversation,
@@ -429,7 +429,9 @@ class InvestigationAgent:
         started_at: str,
         reason: str,
     ) -> InvestigationRun:
-        result = degrade_result(incident, opening, gateway.trail, reason=reason)
+        result = degrade_result(
+            incident, opening, gateway.trail, reason=redact_secrets(reason)
+        )
         return self._finish(result, gateway.trail, started_clock, started_at)
 
 

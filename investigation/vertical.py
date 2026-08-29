@@ -28,6 +28,12 @@ from detector.store import load_incident
 
 from .agent import InvestigationAgent, InvestigationRun
 from .contracts import InvestigationResult
+from .env import (
+    MISSING_KEY_MESSAGE,
+    api_key_present,
+    load_dotenv,
+    redact_secrets,
+)
 from .gateway import EvidenceGateway
 from .runner import InvestigationRunner
 from .store import connect as investigation_connect
@@ -35,7 +41,6 @@ from .store import read_result
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "state" / "vertical.db"
-MISSING_KEY_MESSAGE = "vertical-path: OPENAI_API_KEY is not set"
 
 
 class UnavailableClient:
@@ -71,10 +76,6 @@ class VerticalOutcome:
     @property
     def outcome(self) -> str:
         return str(self.result.get("outcome", ""))
-
-
-def api_key_present() -> bool:
-    return bool(os.environ.get("OPENAI_API_KEY"))
 
 
 def reset_database(path: Path) -> None:
@@ -255,7 +256,8 @@ def format_report(outcome: VerticalOutcome) -> str:
     else:
         mode_lines = [
             "MODE: agent_unavailable",
-            "OPENAI_API_KEY is not set. The investigation model did not run.",
+            MISSING_KEY_MESSAGE,
+            "The investigation model did not run.",
             "This is the deterministic degrade path, not a model diagnosis.",
         ]
 
@@ -307,7 +309,7 @@ def format_report(outcome: VerticalOutcome) -> str:
         f"Evidence trail: {executed} executed queries",
         citation_line,
     ]
-    return "\n".join(lines)
+    return redact_secrets("\n".join(lines))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -323,11 +325,12 @@ def main(argv: list[str] | None = None) -> int:
         help="do not recreate the store before seeding",
     )
     args = parser.parse_args(argv)
+    load_dotenv()
     db_path = Path(args.db or os.environ.get("CLEARWAVE_DB") or DEFAULT_DB)
     try:
         outcome = execute_vertical_path(db_path, recreate=not args.keep)
     except RuntimeError as exc:
-        message = str(exc)
+        message = redact_secrets(str(exc))
         if "OPENAI_API_KEY" in message:
             print(MISSING_KEY_MESSAGE, file=sys.stderr)
             return 1
