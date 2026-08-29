@@ -52,3 +52,21 @@ another contributor pushed first, run `git pull --no-rebase && git push`; union 
 
 - 2026-08-29T18:26Z  derek  coordination instructions reconciled from a two-side arrangement to four contributors; all four handles are valid attribution
   -> other side: attribute entries with your own handle - `derek`, `andres`, `juank` or `raul`
+- 2026-08-29T19:04Z  derek  ingestion: Kafka is the real ingestion pipeline; merchant producers publish to raw topics, and each simulator emits its own native heterogeneous event shape
+  -> other side: publish and register each merchant's native shape on raw Kafka topics; do not replace the pipeline with a simulation prop or force producer shapes to match
+- 2026-08-29T19:04Z  derek  merchant shapes: each simulated merchant emits its own native event shape; deliberate heterogeneity mirrors the real orchestrator problem
+  -> other side: preserve native per-merchant differences and register each shape rather than flattening producers into a shared input shape
+- 2026-08-29T19:04Z  derek  schema: a schema registry normalises heterogeneous merchant shapes into one canonical ingestion schema, serialised as JSON Schema for speed in the build window
+  -> other side: register native shapes with W1 and consume the single JSON Schema canonical model downstream; do not introduce Avro or parallel canonical models
+- 2026-08-29T19:04Z  derek  persistence: the normalized representation is persisted in a non-relational document store for detection, investigation, analytics and incident workflows; the specific product remains undecided
+  -> other side: build every downstream workflow against the consistent document model without selecting or naming a document-store product yet
+- 2026-08-29T19:04Z  derek  ownership: W1 (`raul`) owns raw per-merchant shapes and registration; W2 (`andres`) owns normalisation, the canonical schema and persistence, because the contract owner is whoever breaks when it is wrong
+  -> other side: let W1 change merchant shapes without breaking three people, and route canonical-schema or persistence changes through W2
+- 2026-08-29T19:04Z  derek  detection: detection reads the canonical topic for rolling aggregates and uses the document store as its query surface
+  -> other side: keep rolling aggregation on the canonical stream and expose/query evidence through the document store rather than creating another read model
+- 2026-08-29T19:04Z  derek  integration: the scenario catalogue and evaluator move from W1 to `derek` alongside integration because they are integration and validation concerns and this removes the largest critical-path concentration
+  -> other side: W1 supplies hidden truth and injection, while `derek` owns the scenario catalogue, evaluator and integration validation
+- 2026-08-29T19:04Z  derek  investigation: use headless `pi-coding-agent` (MIT); disable built-in shell, file-read, edit and write tools so only W2 evidence-query scripts are available; use non-interactive JSON print mode, wall-clock timeout, contract validation with one retry, then deterministic incident without narrative on invalid output; direct model-API tool-calling is the fallback
+  -> other side: provide only evidence-query scripts to Pi, enforce the timeout and result contract, retry invalid JSON once, degrade without failing incidents, and keep the direct API loop as the documented fallback
+- 2026-08-29T19:04Z  derek  detection quality: statistical detection is demo-grade; controlled scenarios and tuned thresholds are acceptable, but tune the sensitivity, never tune the search space - cohort localisation stays genuinely general across arbitrary dimension combinations
+  -> other side: tune thresholds against controlled scenarios without narrowing cohort search dimensions; preserve general localisation as the defensible property
