@@ -1,4 +1,4 @@
 #!/usr/bin/env python3
-from _common import run
+from _common import run_measured
 
-raise SystemExit(run("retry_stats", "retry_stats.json"))
+raise SystemExit(run_measured("retry_stats"))
