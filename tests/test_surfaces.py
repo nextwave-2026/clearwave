@@ -13,6 +13,7 @@ from pathlib import Path
 from investigation.store import insert_incident, persist_result
 from surfaces.escalation import (
     TWILIO_ENV_VARS,
+    TWILIO_TWIML_URL_ENV,
     escalate,
     notify_slack,
     place_call,
@@ -361,7 +362,7 @@ class SlackBlockKitTests(unittest.TestCase):
 
 class TwilioPhoneTests(unittest.TestCase):
     def setUp(self):
-        for name in TWILIO_ENV_VARS:
+        for name in (*TWILIO_ENV_VARS, TWILIO_TWIML_URL_ENV):
             os.environ.pop(name, None)
 
     def test_twiml_is_silent_and_well_formed(self):
@@ -397,6 +398,44 @@ class TwilioPhoneTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             provider({"incident_id": "inc-x"}, {"incident_id": "inc-x"})
 
+    def test_twilio_provider_uses_twiml_bin_url_when_configured(self):
+        # Verified against a real Twilio trial account: the Calls API rejects
+        # inline Twiml with HTTP 400 "trial accounts have limited parameter
+        # access". A TwiML Bin URL is required on trial accounts.
+        captured = {}
+
+        def poster(account_sid, body, headers):
+            captured["body"] = body.decode("utf-8")
+
+        provider = twilio_provider(
+            account_sid="ACtest",
+            auth_token="secret",
+            from_number="+15550000001",
+            to_number="+15550000002",
+            twiml_url="https://handler.twilio.com/twiml/EHtest",
+            poster=poster,
+        )
+        provider({"incident_id": "inc-x"}, {"incident_id": "inc-x"})
+        self.assertIn("Url=https%3A%2F%2Fhandler.twilio.com%2Ftwiml%2FEHtest", captured["body"])
+        self.assertNotIn("Twiml=", captured["body"])
+
+    def test_twilio_provider_falls_back_to_inline_twiml_without_a_bin_url(self):
+        captured = {}
+
+        def poster(account_sid, body, headers):
+            captured["body"] = body.decode("utf-8")
+
+        provider = twilio_provider(
+            account_sid="ACtest",
+            auth_token="secret",
+            from_number="+15550000001",
+            to_number="+15550000002",
+            poster=poster,
+        )
+        provider({"incident_id": "inc-x"}, {"incident_id": "inc-x"})
+        self.assertIn("Twiml=", captured["body"])
+        self.assertNotIn("Url=", captured["body"])
+
     def test_place_call_auto_wires_twilio_from_environment(self):
         os.environ["CLEARWAVE_TWILIO_ACCOUNT_SID"] = "ACtest"
         os.environ["CLEARWAVE_TWILIO_AUTH_TOKEN"] = "secret"
@@ -417,6 +456,30 @@ class TwilioPhoneTests(unittest.TestCase):
         outcome = place_call({"incident_id": "inc-x"}, {"incident_id": "inc-x"})
         self.assertEqual(outcome["status"], "delivered")
         self.assertEqual(captured["account_sid"], "ACtest")
+
+    def test_place_call_auto_wires_the_twiml_bin_url_when_set(self):
+        os.environ["CLEARWAVE_TWILIO_ACCOUNT_SID"] = "ACtest"
+        os.environ["CLEARWAVE_TWILIO_AUTH_TOKEN"] = "secret"
+        os.environ["CLEARWAVE_TWILIO_FROM_NUMBER"] = "+15550000001"
+        os.environ["CLEARWAVE_TWILIO_TO_NUMBER"] = "+15550000002"
+        os.environ[TWILIO_TWIML_URL_ENV] = "https://handler.twilio.com/twiml/EHtest"
+        self.addCleanup(
+            lambda: [os.environ.pop(name, None) for name in (*TWILIO_ENV_VARS, TWILIO_TWIML_URL_ENV)]
+        )
+        captured = {}
+
+        def fake_urlopen_poster(account_sid, body, headers):
+            captured["body"] = body.decode("utf-8")
+
+        import surfaces.escalation as escalation_module
+
+        original = escalation_module._post_twilio_call
+        escalation_module._post_twilio_call = fake_urlopen_poster
+        self.addCleanup(setattr, escalation_module, "_post_twilio_call", original)
+
+        outcome = place_call({"incident_id": "inc-x"}, {"incident_id": "inc-x"})
+        self.assertEqual(outcome["status"], "delivered")
+        self.assertIn("Url=https%3A%2F%2Fhandler.twilio.com%2Ftwiml%2FEHtest", captured["body"])
 
     def test_place_call_falls_back_without_credentials(self):
         outcome = place_call({"incident_id": "inc-x"}, {"incident_id": "inc-x"})
