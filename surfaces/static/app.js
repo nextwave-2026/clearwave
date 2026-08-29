@@ -8,6 +8,7 @@
     queue: [],
     detail: null,
     calls: [],
+    dismissedCalls: {},
   };
 
   const overviewBoard = document.getElementById("overview-board");
@@ -68,15 +69,51 @@
     return "Platform-wide";
   }
 
-  function badgePair(severity, confidence) {
+  function confidenceLabel(confidence, lifecycle) {
+    if (confidence) return String(confidence);
+    if (lifecycle === "investigating") return "awaiting investigation";
+    return "not in store";
+  }
+
+  function isInvestigating(record) {
+    return ((record && record.lifecycle_state) || "") === "investigating";
+  }
+
+  function narrativePlaceholder(incident, investigation) {
+    if (isInvestigating(incident)) {
+      return "Investigation is running. This usually takes about a minute.";
+    }
+    const outcome = investigation && investigation.outcome;
+    if (outcome === "agent_unavailable") {
+      return "Narrative unavailable because the investigation agent failed.";
+    }
+    if (outcome) {
+      return "Narrative unavailable (" + outcome + ").";
+    }
+    return "Investigation has not run yet.";
+  }
+
+  function statusBanner(incident, investigation) {
+    if (isInvestigating(incident)) {
+      return '<p class="banner">Investigation is running. This usually takes about a minute.</p>';
+    }
+    if (investigation && investigation.narrative_available) return "";
+    const outcome = (investigation && investigation.outcome) || "no investigation";
+    return '<p class="banner">Narrative unavailable (' +
+      escapeHtml(outcome) +
+      "). Localisation, money and the evidence trail remain.</p>";
+  }
+
+  function badgePair(severity, confidence, lifecycle) {
     const sev = document.createElement("span");
     sev.className = "severity";
     sev.setAttribute("data-severity", severity || "unknown");
     sev.textContent = "severity " + (severity || "unknown");
     const conf = document.createElement("span");
+    const confValue = confidenceLabel(confidence, lifecycle);
     conf.className = "confidence";
-    conf.setAttribute("data-confidence", confidence || "none");
-    conf.textContent = "confidence " + (confidence || "none");
+    conf.setAttribute("data-confidence", confidence || confValue);
+    conf.textContent = "confidence " + confValue;
     const wrap = document.createElement("div");
     wrap.className = "badges";
     wrap.appendChild(sev);
@@ -142,7 +179,7 @@
       const row = document.createElement("button");
       row.type = "button";
       row.className = "queue-row";
-      row.appendChild(badgePair(item.severity, item.diagnostic_confidence));
+      row.appendChild(badgePair(item.severity, item.diagnostic_confidence, item.lifecycle_state));
       const mid = document.createElement("div");
       mid.innerHTML =
         "<strong>" + escapeHtml(item.incident_id || "") + "</strong>" +
@@ -171,20 +208,22 @@
     const incident = detail.incident || {};
     const investigation = detail.investigation || {};
     const questions = detail.questions || {};
-    const banner = investigation.narrative_available
-      ? ""
-      : '<p class="banner">Narrative unavailable (' +
-        escapeHtml(investigation.outcome || "no investigation") +
-        "). Localisation, money and the evidence trail remain.</p>";
+    const banner = statusBanner(incident, investigation);
     const channels = (detail.escalation || []).map(function (event) {
       return escapeHtml(event.channel) + ": " + escapeHtml(event.status);
     }).join(" · ");
     detailBoard.innerHTML = "";
     const head = document.createElement("div");
-    head.appendChild(badgePair(incident.severity, (investigation.result || {}).diagnostic_confidence));
+    head.appendChild(badgePair(
+      incident.severity,
+      (investigation.result || {}).diagnostic_confidence,
+      incident.lifecycle_state
+    ));
     const meta = document.createElement("p");
     meta.className = "cohort";
+    const outcome = investigation.outcome;
     meta.textContent = (incident.incident_id || "") + " · " + (incident.lifecycle_state || "") +
+      (outcome ? " · " + outcome : "") +
       (channels ? " · " + channels : "");
     detailBoard.insertAdjacentHTML("beforeend", banner);
     detailBoard.appendChild(head);
@@ -194,23 +233,22 @@
     grid.appendChild(questionCard("1. What changed?", questions.what_changed));
     grid.appendChild(questionCard("2. Where?", questions.where));
     grid.appendChild(questionCard("3. How much does it matter?", questions.how_much_it_matters));
+    const narrativeBody = questions.narrative_available
+      ? null
+      : narrativePlaceholder(incident, investigation);
     grid.appendChild(questionCard(
       "4. What probably caused it?",
-      questions.narrative_available ? questions.what_probably_caused_it : unavailableCopy(investigation.outcome)
+      questions.narrative_available ? questions.what_probably_caused_it : narrativeBody
     ));
     grid.appendChild(questionCard(
       "5. Why do we believe that?",
-      questions.narrative_available ? questions.why_we_believe_that : unavailableCopy(investigation.outcome)
+      questions.narrative_available ? questions.why_we_believe_that : narrativeBody
     ));
     grid.appendChild(questionCard(
       "6. What should the TAM do?",
-      questions.narrative_available ? questions.what_the_operator_should_do : unavailableCopy(investigation.outcome)
+      questions.narrative_available ? questions.what_the_operator_should_do : narrativeBody
     ));
     detailBoard.appendChild(grid);
-  }
-
-  function unavailableCopy(outcome) {
-    return { unavailable: true, outcome: outcome || "agent_unavailable" };
   }
 
   function questionCard(title, body) {
@@ -231,12 +269,20 @@
       evidenceBoard.innerHTML = '<p class="empty">Select an incident to inspect its evidence trail.</p>';
       return;
     }
+    const incident = detail.incident || {};
+    const investigation = detail.investigation || {};
     const trail = detail.evidence_trail || [];
-    const banner = (detail.investigation && detail.investigation.narrative_available)
-      ? ""
-      : '<p class="banner">Narrative unavailable. The trail still shows every query that ran.</p>';
+    const running = isInvestigating(incident);
+    const banner = running
+      ? '<p class="banner">Investigation is running. This usually takes about a minute.</p>'
+      : (investigation.narrative_available
+        ? ""
+        : '<p class="banner">Narrative unavailable. The trail still shows every query that ran.</p>');
     if (!trail.length) {
-      evidenceBoard.innerHTML = banner + '<p class="empty">No evidence trail is stored for this incident.</p>';
+      const empty = running
+        ? '<p class="empty">Investigation is running. The evidence trail is stored when it finishes.</p>'
+        : '<p class="empty">No evidence trail is stored for this incident.</p>';
+      evidenceBoard.innerHTML = banner + empty;
       return;
     }
     evidenceBoard.innerHTML = banner;
@@ -306,7 +352,7 @@
   }
 
   function showCall(call) {
-    if (!call) {
+    if (!call || state.dismissedCalls[call.incident_id]) {
       incoming.hidden = true;
       return;
     }
@@ -316,7 +362,7 @@
       "Incident " + (call.incident_id || ""),
       "Severity " + (payload.severity || "unknown") + " (from the incident record)",
       incidentScope(payload),
-      action.action || "Operator narrative is the stored recommended action, or unavailable if the agent failed.",
+      action.action || "Recommended action not in store",
     ].join("\n");
     incoming.dataset.incidentId = call.incident_id;
     incoming.hidden = false;
@@ -348,10 +394,11 @@
 
   $("answer-call").addEventListener("click", function () {
     const incidentId = incoming.dataset.incidentId;
+    incoming.hidden = true;
     if (!incidentId) {
-      incoming.hidden = true;
       return;
     }
+    state.dismissedCalls[incidentId] = true;
     fetch("/api/calls/" + encodeURIComponent(incidentId) + "/ack", { method: "POST", cache: "no-store" })
       .then(function () {
         incoming.hidden = true;
