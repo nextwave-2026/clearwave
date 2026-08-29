@@ -15,15 +15,15 @@ file is NOT union-merged, so it can genuinely conflict. A conflict here means an
 - **Current shape:** One normalized model for every downstream component, expressed as JSON Schema in the schema registry. The canonical topic carries the normalized stream; W2 persists it in a relational SQLite store. W2, W3 and W4 consume this consistent model.
 - **Last changed:** 2026-08-29T19:17Z
 
-- **Boundary name:** C2 Cohort and metric query
-- **Owner:** W2 - Detection Plane
-- **Current shape:** Contract is named and owned but not yet specified. Specifying it is the gate on opening parallel work.
-- **Last changed:** 2026-08-29T17:00Z
+- **Boundary name:** C2 Evidence-query tools
+- **Owner:** W2 - Detection Plane (`andres`)
+- **Current shape:** Specified in full in `docs/contracts/evidence-tools.md`, which is the single definition. Ten tools, each a standalone Python 3 subprocess reading one JSON object on stdin and writing one on stdout: `cohort_metrics`, `cohort_compare`, `drilldown`, `decline_breakdown`, `retry_stats`, `operational_metrics`, `confounding_check`, `incident_history`, `external_status`, `financial_impact`. Every successful response carries `query_id` and `as_of`. Payment-level and attempt-level conversion stay explicit and are never collapsed. Fixture-backed reference stubs are in `stubs/evidence/`; W2 replaces each with real measurement. Callers cite `query_id` and never compute a metric themselves. Open: no tool returns a metric over a series of time buckets, which C3's `onset` and severity's trajectory both need.
+- **Last changed:** 2026-08-29T19:38Z
 
 - **Boundary name:** C3 Incident record
-- **Owner:** W2 - Detection Plane
-- **Current shape:** Contract is named and owned but not yet specified. Specifying it is the gate on opening parallel work.
-- **Last changed:** 2026-08-29T17:00Z
+- **Owner:** W2 - Detection Plane (`andres`)
+- **Current shape:** Specified in full in `docs/contracts/incident.md`, which is the single definition. Carries `affected_cohort`, `change`, `onset`, `persistence`, `blast_radius`, `financial_impact`, `severity` and `lifecycle_state`, and deliberately has no `root_cause`, `hypothesis` or `diagnostic_confidence` field. Severity is a business-impact-only function of log-scaled loss per hour, blast radius, persistence and trajectory, and never of statistical strength. Open: nothing yet defines what transports a C3 record to the investigation agent or what starts an investigation.
+- **Last changed:** 2026-08-29T19:38Z
 
 - **Boundary name:** C4 Investigation result
 - **Owner:** W3 - Investigation Agent
