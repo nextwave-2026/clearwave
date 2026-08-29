@@ -2,10 +2,10 @@
 
 Append only. Never edit or delete an existing entry. Correct a past decision by appending a new decision. Keep the newest entries at the bottom.
 
-Each entry is exactly two lines. The first carries an ISO 8601 UTC timestamp, **who made the decision** (your GitHub username, `derek` or `andres`), and what changed. The second states what the other side must now do differently - that line is the reason this file exists, so never leave it out.
+Each entry is exactly two lines. The first carries an ISO 8601 UTC timestamp, **who made the decision** (your GitHub username, `derek`, `andres`, `juank`, or `raul`), and what changed. The second states what every other contributor must now do differently - that line is the reason this file exists, so never leave it out. The literal `-> other side:` prefix means every other contributor, not one specific counterpart.
 
 **Commit this file straight to `main`** - no branch, no pull request. If your push is rejected because
-the other side pushed first, run `git pull --no-rebase && git push`; union merge keeps both entries.
+another contributor pushed first, run `git pull --no-rebase && git push`; union merge keeps both entries.
 
 ## Entries
 
@@ -49,3 +49,6 @@ the other side pushed first, run `git pull --no-rebase && git push`; union merge
   -> other side: each person must read their workstream's Owns and Hard rule entries in docs/ownership.md and the contracts they own or consume; the stack decision is now the only remaining gate on starting parallel implementation
 - 2026-08-29T18:16Z  derek  integration across the four workstreams is owned by derek alongside W3; each contributor's internal working method is deliberately unspecified while the seam rules bind everyone
   -> other side: preserve the documented seams and rules, while choosing your own internal workflow; integration ownership adds no authority over contract disputes
+
+- 2026-08-29T18:26Z  derek  coordination instructions reconciled from a two-side arrangement to four contributors; all four handles are valid attribution
+  -> other side: attribute entries with your own handle - `derek`, `andres`, `juank` or `raul`

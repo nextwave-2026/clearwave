@@ -2,22 +2,23 @@
 
 Append-only progress log. Newest entries at the bottom. Never edit or delete an existing entry.
 
-This file is declared `merge=union` in `.gitattributes`, so both sides can append freely without
-conflicts. **Every entry names who wrote it** - use your GitHub username (`derek` or `andres`), because
-there is no shared supervisor between the two sides and an unattributed line is close to useless.
+This file is declared `merge=union` in `.gitattributes`, so all four contributors can append freely without
+conflicts. **Every entry names who wrote it** - use your GitHub username (`derek`, `andres`, `juank`, or
+`raul`), because there is no shared supervisor across the four independent machines and an unattributed
+line is close to useless.
 
 **Commit this file straight to `main`** - no branch, no pull request. That is the point of it: a
-progress line the other side needs now is useless sitting in review. If your push is rejected because
+progress line everyone else needs now is useless sitting in review. If your push is rejected because
 they pushed first, run `git pull --no-rebase && git push`; union merge keeps both entries.
 
-Write here whenever you finish something the other side should know about. A decision the other side
+Write here whenever you finish something everyone else should know about. A decision everyone else
 must build around goes in `DECISIONS.md` instead; the current shape of a boundary goes in
 `INTERFACES.md`.
 
 Format: one line per entry.
 
 ```
-- <ISO 8601 UTC timestamp>  <who>  <what happened, and what it means for the other side>
+- <ISO 8601 UTC timestamp>  <who>  <what happened, and what it means for everyone else>
 ```
 
 ## Log
@@ -42,3 +43,5 @@ Format: one line per entry.
 - 2026-08-29T18:09Z  derek  done: PR https://github.com/nextwave-2026/clearwave/pull/4
 - 2026-08-29T18:11Z  derek  the STATUS.md entry timestamped 2026-08-29T18:09Z whose paths render as bare backslashes was corrupted by a tooling error and is void and superseded by the correctly rendered entry; the `done: PR` line was an internal status-protocol line written in error and is not a team status entry
 - 2026-08-29T18:15Z  derek  baseline PRD and ownership boundaries merged to main, the four workstreams now have named owners, and the stack decision is the remaining blocker before parallel work opens
+
+- done: coordination files reconciled to four contributors
