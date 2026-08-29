@@ -1,9 +1,9 @@
 """Load OpenAI settings from the environment, with an optional root .env file.
 
-The investigation agent reads ``OPENAI_API_KEY``, ``OPENAI_BASE_URL``, and
-``OPENAI_MODEL`` from the process environment only. The CLI may copy values
-from a gitignored ``.env`` into that environment first. Existing environment
-variables always win. The key is never returned in logs or error text.
+The investigation agent reads its OpenAI settings from the process environment
+only. The CLI may copy values from a gitignored ``.env`` into that environment
+first. Existing environment variables always win. The key is never returned in
+logs or error text.
 """
 
 from __future__ import annotations
@@ -44,19 +44,21 @@ def load_dotenv(
     *,
     environ: MutableMapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """Copy unset keys from a ``.env`` file into ``environ``.
+    """Copy non-empty unset keys from a ``.env`` file into ``environ``.
 
     Returns the keys that were applied. Keys already present in ``environ``
     are left untouched, so the process environment wins over the file.
+    Empty OpenAI settings are removed so SDKs cannot interpret them as values.
     """
     env = os.environ if environ is None else environ
+    _clear_empty_openai_settings(env)
     target = Path(path) if path is not None else ROOT / ".env"
     if not target.is_file():
         return {}
     loaded = parse_env_file(target.read_text(encoding="utf-8"))
     applied: dict[str, str] = {}
     for key, value in loaded.items():
-        if key in env:
+        if not value.strip() or key in env:
             continue
         env[key] = value
         applied[key] = value
@@ -79,6 +81,7 @@ def openai_client_kwargs() -> dict[str, str]:
     key = api_key()
     if key is not None:
         kwargs["api_key"] = key
+    _clear_empty_openai_settings(os.environ)
     base = os.environ.get("OPENAI_BASE_URL") or ""
     if base:
         kwargs["base_url"] = base
@@ -87,6 +90,53 @@ def openai_client_kwargs() -> dict[str, str]:
 
 def openai_model(default: str) -> str:
     return os.environ.get("OPENAI_MODEL") or default
+
+
+def openai_reasoning_effort(default: str | None = None) -> str | None:
+    """Return configured reasoning effort, or a supplied model default."""
+    value = os.environ.get("OPENAI_REASONING_EFFORT", "").strip()
+    return value or default
+
+
+def openai_max_output_tokens(default: int) -> int:
+    """Return a positive configurable output ceiling, or the supplied default."""
+    value = os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "").strip()
+    if not value:
+        return default
+    try:
+        ceiling = int(value)
+    except ValueError as exc:
+        raise ValueError("OPENAI_MAX_OUTPUT_TOKENS must be a positive integer") from exc
+    if ceiling <= 0:
+        raise ValueError("OPENAI_MAX_OUTPUT_TOKENS must be a positive integer")
+    return ceiling
+
+
+def openai_timeout_seconds(default: float) -> float:
+    """Return a positive configurable wall-clock deadline."""
+    value = os.environ.get("OPENAI_TIMEOUT_SECONDS", "").strip()
+    if not value:
+        return default
+    try:
+        timeout = float(value)
+    except ValueError as exc:
+        raise ValueError("OPENAI_TIMEOUT_SECONDS must be a positive number") from exc
+    if timeout <= 0:
+        raise ValueError("OPENAI_TIMEOUT_SECONDS must be a positive number")
+    return timeout
+
+
+def _clear_empty_openai_settings(environ: MutableMapping[str, str]) -> None:
+    for key in (
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_MODEL",
+        "OPENAI_REASONING_EFFORT",
+        "OPENAI_MAX_OUTPUT_TOKENS",
+        "OPENAI_TIMEOUT_SECONDS",
+    ):
+        if key in environ and not environ[key].strip():
+            del environ[key]
 
 
 def redact_secrets(text: str) -> str:
@@ -118,6 +168,9 @@ __all__ = [
     "missing_key_message",
     "openai_client_kwargs",
     "openai_model",
+    "openai_reasoning_effort",
+    "openai_max_output_tokens",
+    "openai_timeout_seconds",
     "parse_env_file",
     "redact_secrets",
 ]
