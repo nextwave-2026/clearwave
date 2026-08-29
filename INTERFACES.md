@@ -12,8 +12,8 @@ file is NOT union-merged, so it can genuinely conflict. A conflict here means an
 
 - **Boundary name:** C1b Canonical ingestion schema
 - **Owner:** W2 - Detection Plane (`andres`)
-- **Current shape:** One normalized model for every downstream component, expressed as JSON Schema in the schema registry. The canonical topic carries the normalized stream; W2 persists it in the non-relational document store, whose specific product remains undecided. W2, W3 and W4 consume this consistent model.
-- **Last changed:** 2026-08-29T19:04Z
+- **Current shape:** One normalized model for every downstream component, expressed as JSON Schema in the schema registry. The canonical topic carries the normalized stream; W2 persists it in a relational SQLite store. W2, W3 and W4 consume this consistent model.
+- **Last changed:** 2026-08-29T19:17Z
 
 - **Boundary name:** C2 Cohort and metric query
 - **Owner:** W2 - Detection Plane
