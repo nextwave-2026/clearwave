@@ -83,4 +83,3 @@ Dashboard, Slack and phone escalation consume the incident and investigation sur
 The judge trigger reaches W1's incident injection point, while hidden ground truth remains quarantined from detection and investigation.
 Only the evaluator receives hidden ground truth and compares it with the diagnosis after the fact.
 The specific document-store product remains an open decision; no product is implied by this diagram.
-```
