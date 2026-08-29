@@ -1,0 +1,1555 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control Tower - TAM dashboard mockups</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ---------------------------------------------------------------------------
+   Palette sourced from Yuno's published brand guidelines, y.uno/en/brand-guidelines
+   Yuno Blue #3E4FE0 · Unity Black #000000 · White #FFFFFF · Harmony Lilac #E8EAF5
+   Supporting values read from that page's own stylesheet: #6B7BFF #3040C8
+   #D2D9FF #282A30 #1A1A1A. Typefaces Geist / Geist Mono, the faces that page
+   itself loads. Severity is an ORDINAL heat ramp, never a categorical set, and
+   never the only carrier of meaning - the word ships with the colour every time.
+--------------------------------------------------------------------------- */
+:root{
+  --yuno-blue:#3E4FE0;
+  --yuno-blue-lift:#6B7BFF;
+  --yuno-blue-deep:#3040C8;
+  --lilac:#E8EAF5;
+  --lilac-deep:#D2D9FF;
+
+  --ground:#000000;
+  --surface:#0E0E12;
+  --surface-2:#14141A;
+  --surface-3:#1A1A22;
+  --line:#282A30;
+  --line-soft:#1E2028;
+
+  --ink:#F2F3F7;
+  --ink-2:#A8ADBD;
+  --ink-3:#767C8C;
+
+  /* ordinal severity ramp - monotone lightness, hottest = most urgent */
+  --sev-critical:#FF4D5E;
+  --sev-high:#E8722E;
+  --sev-medium:#B0842C;
+  --sev-low:#6E7789;
+
+  --good:#3FBF87;
+  --cite:#6B7BFF;
+
+  --r-sm:6px; --r-md:10px; --r-lg:14px;
+  --shadow-lift:0 1px 2px rgba(0,0,0,.6), 0 8px 24px -12px rgba(0,0,0,.9);
+  --shadow-drawer:0 0 0 1px var(--line), -24px 0 64px -24px rgba(0,0,0,.95);
+}
+*,*::before,*::after{box-sizing:border-box}
+:where(.grid,.flex)>*{min-width:0}
+:where(p,li,dd,td,th,h1,h2,h3,h4){overflow-wrap:anywhere}
+:where(img,svg){max-width:100%}
+
+html{color-scheme:dark;scrollbar-color:var(--line) var(--ground)}
+body{
+  margin:0;background:var(--ground);color:var(--ink);
+  font-family:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-size:14px;line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+  font-variant-numeric:tabular-nums;
+}
+::selection{background:var(--yuno-blue);color:#fff}
+:focus-visible{outline:2px solid var(--yuno-blue-lift);outline-offset:2px;border-radius:3px}
+::-webkit-scrollbar{width:11px;height:11px}
+::-webkit-scrollbar-track{background:var(--ground)}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:6px;border:3px solid var(--ground)}
+::-webkit-scrollbar-thumb:hover{background:#3a3d47}
+
+.mono{font-family:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-feature-settings:"zero"1}
+a{color:var(--yuno-blue-lift);text-underline-offset:3px}
+
+/* ---------- shell ---------- */
+.wrap{max-width:1320px;margin:0 auto;padding:0 28px}
+@media(max-width:640px){.wrap{padding:0 16px}}
+
+header.mast{border-bottom:1px solid var(--line);background:linear-gradient(180deg,#08080B,var(--ground));}
+.mast-in{display:flex;align-items:center;gap:20px;padding:20px 0 18px;flex-wrap:wrap}
+.brandlock{display:flex;align-items:center;gap:14px;min-width:0}
+.brandlock img{height:19px;width:auto;display:block}
+.brandlock .rule{width:1px;height:22px;background:var(--line)}
+.brandlock .product{font-size:14px;font-weight:600;letter-spacing:-.01em;white-space:nowrap}
+.brandlock .product span{color:var(--ink-3);font-weight:400}
+.mast-right{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+
+.unofficial{
+  display:inline-flex;align-items:center;gap:8px;
+  border:1px solid #4A3A1E;background:#1C1608;color:#E9C877;
+  padding:5px 11px;border-radius:100px;font-size:11.5px;font-weight:500;
+}
+.unofficial svg{flex:none}
+
+/* provenance strip */
+.prov{border-bottom:1px solid var(--line-soft);background:var(--surface)}
+.prov-in{display:flex;gap:26px;padding:9px 0;flex-wrap:wrap;font-size:11.5px;color:var(--ink-3)}
+.prov-in b{color:var(--ink-2);font-weight:500}
+
+/* section nav */
+nav.jump{position:sticky;top:0;z-index:30;background:rgba(0,0,0,.86);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.jump-in{display:flex;gap:2px;overflow-x:auto;padding:0}
+.jump a{
+  padding:13px 15px;font-size:12.5px;font-weight:500;color:var(--ink-3);
+  text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap;
+  transition:color .16s cubic-bezier(.2,.8,.2,1),border-color .16s cubic-bezier(.2,.8,.2,1)
+}
+.jump a:hover{color:var(--ink)}
+.jump a.on{color:var(--ink);border-bottom-color:var(--yuno-blue)}
+
+section.screen{padding:46px 0 8px;scroll-margin-top:52px}
+.screen-head{display:flex;align-items:baseline;gap:14px;margin-bottom:6px;flex-wrap:wrap}
+.screen-head h2{margin:0;font-size:23px;font-weight:600;letter-spacing:-.025em}
+.screen-head .who{font-size:12px;color:var(--ink-3)}
+.screen-lede{margin:0 0 26px;color:var(--ink-2);max-width:70ch;font-size:13.5px}
+
+.frame{
+  border:1px solid var(--line);border-radius:var(--r-lg);background:var(--surface);
+  box-shadow:var(--shadow-lift);overflow:hidden;
+}
+.frame-bar{
+  display:flex;align-items:center;gap:10px;padding:10px 16px;
+  border-bottom:1px solid var(--line-soft);background:var(--surface-2);
+  font-size:11.5px;color:var(--ink-3)
+}
+.frame-bar .dot{width:8px;height:8px;border-radius:50%;background:var(--line);flex:none}
+.frame-bar .path{color:var(--ink-2)}
+.frame-body{padding:22px}
+@media(max-width:640px){.frame-body{padding:14px}}
+
+/* ---------- severity ---------- */
+.sev{
+  display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:600;
+  letter-spacing:.09em;text-transform:uppercase;white-space:nowrap;
+}
+.sev i{width:9px;height:9px;border-radius:2px;flex:none;transform:rotate(45deg)}
+.sev-critical{color:var(--sev-critical)} .sev-critical i{background:var(--sev-critical)}
+.sev-high{color:var(--sev-high)} .sev-high i{background:var(--sev-high)}
+.sev-medium{color:var(--sev-medium)} .sev-medium i{background:var(--sev-medium)}
+.sev-low{color:var(--sev-low)} .sev-low i{background:var(--sev-low)}
+
+/* confidence - deliberately a DIFFERENT visual language from severity:
+   outlined, lowercase, no fill, in its own column. Never blended. */
+.conf{
+  display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:500;
+  border:1px dashed var(--line);border-radius:100px;padding:3px 9px;color:var(--ink-2);
+  white-space:nowrap;
+}
+.conf b{font-weight:600;color:var(--ink)}
+.conf.none{color:var(--ink-3);border-style:dotted}
+
+/* ---------- citation affordance ---------- */
+.fig{white-space:nowrap;display:inline-flex;align-items:baseline;gap:3px}
+button.cite{
+  all:unset;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
+  width:14px;height:14px;border-radius:3px;flex:none;
+  background:rgba(107,123,255,.13);color:var(--cite);
+  font-size:9px;font-weight:700;font-family:"Geist Mono",monospace;
+  transform:translateY(-2px);
+  transition:background .14s ease-out,color .14s ease-out,transform .14s ease-out;
+}
+button.cite:hover{background:var(--yuno-blue);color:#fff;transform:translateY(-2px) scale(1.14)}
+button.cite:focus-visible{outline:2px solid var(--yuno-blue-lift);outline-offset:1px}
+button.cite.on{background:var(--yuno-blue);color:#fff}
+.uncited{color:var(--sev-critical);border-bottom:1px dotted var(--sev-critical)}
+
+/* evidence drawer */
+.drawer{
+  position:fixed;top:0;right:0;height:100dvh;width:min(430px,92vw);z-index:80;
+  background:var(--surface);box-shadow:var(--shadow-drawer);
+  transform:translateX(101%);transition:transform .34s cubic-bezier(.16,1,.3,1);
+  display:flex;flex-direction:column;
+}
+.drawer.open{transform:translateX(0)}
+.drawer-head{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;gap:12px}
+.drawer-head h3{margin:0;font-size:13px;font-weight:600;letter-spacing:-.01em}
+.drawer-head p{margin:3px 0 0;font-size:11.5px;color:var(--ink-3)}
+.drawer-close{all:unset;cursor:pointer;margin-left:auto;color:var(--ink-3);padding:2px;border-radius:4px;line-height:0}
+.drawer-close:hover{color:var(--ink)}
+.drawer-body{padding:18px;overflow-y:auto;flex:1}
+.drawer-body dl{margin:0 0 18px;display:grid;grid-template-columns:auto 1fr;gap:7px 14px;align-items:baseline}
+.drawer-body dt{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);white-space:nowrap}
+.drawer-body dd{margin:0;font-size:12px;word-break:break-all}
+.drawer-body pre{
+  margin:0;background:var(--ground);border:1px solid var(--line-soft);border-radius:var(--r-sm);
+  padding:12px;font-size:11px;line-height:1.6;overflow-x:auto;color:var(--ink-2)
+}
+.drawer-body h4{margin:20px 0 8px;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);font-weight:600}
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:79;opacity:0;pointer-events:none;transition:opacity .3s}
+.scrim.on{opacity:1;pointer-events:auto}
+
+/* ---------- tables ---------- */
+.tbl-scroll{overflow-x:auto;margin:0 -22px;padding:0 22px}
+@media(max-width:640px){.tbl-scroll{margin:0 -14px;padding:0 14px}}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{
+  text-align:left;font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-3);padding:0 14px 9px 0;border-bottom:1px solid var(--line);white-space:nowrap
+}
+tbody td{padding:13px 14px 13px 0;border-bottom:1px solid var(--line-soft);vertical-align:top}
+tbody tr:last-child td{border-bottom:0}
+tbody tr.rank-row{transition:background .14s ease-out}
+tbody tr.rank-row:hover{background:var(--surface-2)}
+th.num,td.num{text-align:right;padding-right:0}
+.cohort{font-size:12.5px}
+.cohort b{font-weight:600}
+.sub{display:block;font-size:11.5px;color:var(--ink-3);margin-top:3px;white-space:nowrap}
+.money{font-weight:600;font-size:14px;letter-spacing:-.01em}
+
+/* trajectory */
+.traj{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;white-space:nowrap}
+.traj svg{flex:none}
+.traj.worse{color:var(--sev-critical)}
+.traj.flat{color:var(--ink-2)}
+.traj.better{color:var(--good)}
+
+/* ---------- callouts ---------- */
+.note{
+  border:1px solid var(--line);border-radius:var(--r-md);padding:15px 17px;
+  background:var(--surface-2);margin:20px 0;font-size:13px;color:var(--ink-2)
+}
+.note h4{margin:0 0 7px;font-size:12.5px;font-weight:600;color:var(--ink);letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
+.note p{margin:0 0 9px}.note p:last-child{margin:0}
+.note.warn{border-color:#4A3A1E;background:#150F04}
+.note.warn h4{color:#E9C877}
+.note.defect{border-color:#4A1F26;background:#150609}
+.note.defect h4{color:var(--sev-critical)}
+.note code{background:var(--ground);padding:1.5px 5px;border-radius:4px;font-family:"Geist Mono",monospace;font-size:11.5px;color:var(--lilac-deep)}
+
+/* ---------- incident detail ---------- */
+.detail-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:22px}
+@media(max-width:960px){.detail-grid{grid-template-columns:minmax(0,1fr)}}
+.panel{border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--surface-2);padding:17px}
+.panel h3{margin:0 0 3px;font-size:12.5px;font-weight:600;letter-spacing:-.01em}
+.panel .hint{margin:0 0 14px;font-size:11.5px;color:var(--ink-3)}
+.panel + .panel{margin-top:18px}
+
+.headline{display:flex;gap:26px;align-items:flex-start;flex-wrap:wrap;padding-bottom:20px;border-bottom:1px solid var(--line-soft);margin-bottom:20px}
+.headline .lead{flex:1 1 340px;min-width:0}
+.headline h3{margin:0 0 10px;font-size:19px;font-weight:600;letter-spacing:-.025em;line-height:1.3}
+.headline .meta{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--ink-2)}
+.headline .meta span b{color:var(--ink);font-weight:600}
+
+.readout{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:1px;background:var(--line-soft);border:1px solid var(--line-soft);border-radius:var(--r-md);overflow:hidden}
+.readout div{background:var(--surface-2);padding:13px 14px}
+.readout dt{font-size:10.5px;text-transform:uppercase;letter-spacing:.075em;color:var(--ink-3);margin-bottom:5px}
+.readout dd{margin:0;font-size:17px;font-weight:600;letter-spacing:-.02em;line-height:1.2}
+.readout dd small{display:block;font-size:11px;font-weight:400;color:var(--ink-3);letter-spacing:0;margin-top:4px}
+
+/* chart */
+.chart-wrap{position:relative}
+figure.chart{margin:0}
+figure.chart figcaption{margin-top:11px;font-size:11.5px;color:var(--ink-3)}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-2);margin-bottom:12px}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.legend i{width:14px;height:2px;border-radius:1px;flex:none}
+.legend i.dash{height:0;border-top:2px dashed var(--ink-3);width:16px}
+
+/* ladder / drilldown */
+.ladder{display:flex;flex-direction:column;gap:0}
+.rung{display:flex;gap:13px;align-items:flex-start;padding:11px 0;border-bottom:1px solid var(--line-soft)}
+.rung:last-child{border-bottom:0}
+.rung .stem{display:flex;flex-direction:column;align-items:center;flex:none;padding-top:3px}
+.rung .node{width:9px;height:9px;border-radius:50%;border:2px solid var(--ink-3);background:var(--surface-2)}
+.rung.picked .node{border-color:var(--yuno-blue-lift);background:var(--yuno-blue-lift);box-shadow:0 0 0 4px rgba(107,123,255,.18)}
+.rung .tail{width:2px;flex:1;background:var(--line);margin-top:4px;min-height:16px}
+.rung:last-child .tail{display:none}
+.rung .body{min-width:0;flex:1}
+.rung .body b{font-size:12.5px;font-weight:600}
+.rung .body p{margin:4px 0 0;font-size:11.5px;color:var(--ink-3)}
+.rung .val{margin-left:auto;text-align:right;flex:none;font-size:12.5px;font-weight:600;white-space:nowrap}
+.rung .val small{display:block;font-weight:400;font-size:11px;color:var(--ink-3);margin-top:2px}
+
+/* merchant script */
+.script{
+  border:1px solid var(--line);border-radius:var(--r-md);background:var(--ground);
+  padding:16px 17px;font-size:13px;line-height:1.7;color:var(--ink)
+}
+.script p{margin:0 0 11px}.script p:last-child{margin:0}
+
+/* escalation */
+.chan{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:4px}
+.chan-card{border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--surface-2);padding:14px;position:relative}
+.chan-card.armed{border-color:rgba(255,77,94,.42);background:#140609}
+.chan-card h4{margin:0 0 3px;font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:8px}
+.chan-card p{margin:0;font-size:11.5px;color:var(--ink-3)}
+.chan-card .state{margin-top:10px;font-size:11px;font-weight:500;color:var(--ink-2)}
+.chan-card.armed .state{color:var(--sev-critical)}
+
+.slackish{border:1px solid var(--line);border-radius:var(--r-md);background:#0B0B0E;overflow:hidden}
+.slackish .bar{padding:8px 13px;border-bottom:1px solid var(--line-soft);font-size:11.5px;color:var(--ink-3);display:flex;gap:9px;align-items:center}
+.slackish .msg{display:flex;gap:11px;padding:14px 13px}
+.slackish .av{width:32px;height:32px;border-radius:7px;background:var(--yuno-blue);flex:none;display:grid;place-items:center}
+.slackish .av img{width:19px;height:19px}
+.slackish .who{font-size:12.5px;font-weight:600;margin-bottom:5px}
+.slackish .who em{font-style:normal;font-size:10px;font-weight:500;color:var(--ink-3);background:var(--surface-3);padding:1.5px 5px;border-radius:3px;margin-left:6px;letter-spacing:.03em}
+.slackish .block{border-left:3px solid var(--sev-critical);padding-left:12px;font-size:12.5px}
+.slackish .block p{margin:0 0 7px}.slackish .block p:last-child{margin:0}
+.slackish .ctx{font-size:11px;color:var(--ink-3);margin-top:9px;display:flex;gap:12px;flex-wrap:wrap}
+
+/* decisions */
+.q{border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface-2);padding:17px;margin-bottom:14px}
+.q h4{margin:0 0 5px;font-size:13px;font-weight:600;letter-spacing:-.01em}
+.q .why{margin:0 0 13px;font-size:12.5px;color:var(--ink-2)}
+.q label{display:flex;gap:10px;align-items:flex-start;padding:9px 11px;border:1px solid var(--line-soft);border-radius:var(--r-sm);margin-bottom:7px;cursor:pointer;transition:border-color .14s,background .14s}
+.q label:hover{border-color:var(--line);background:var(--surface-3)}
+.q label:has(input:checked){border-color:var(--yuno-blue);background:rgba(62,79,224,.09)}
+.q input[type=radio]{margin:3px 0 0;accent-color:var(--yuno-blue);flex:none}
+.q label span{font-size:12.5px}
+.q label span small{display:block;color:var(--ink-3);font-size:11.5px;margin-top:2px}
+.q button[type=submit]{
+  all:unset;cursor:pointer;margin-top:6px;padding:8px 15px;border-radius:var(--r-sm);
+  background:var(--yuno-blue);color:#fff;font-size:12.5px;font-weight:600;
+  transition:background .14s ease-out
+}
+.q button[type=submit]:hover{background:var(--yuno-blue-lift)}
+.q button[type=submit]:focus-visible{outline:2px solid var(--lilac);outline-offset:2px}
+
+footer{border-top:1px solid var(--line);margin-top:56px;padding:26px 0 44px;font-size:11.5px;color:var(--ink-3)}
+footer p{margin:0 0 7px;max-width:88ch}
+footer b{color:var(--ink-2);font-weight:500}
+
+/* ---- visual-first additions ---- */
+.split-2{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:22px;align-items:start}
+@media(max-width:860px){.split-2{grid-template-columns:minmax(0,1fr)}}
+.note.tight{padding:12px 14px;margin:14px 0}
+.note.tight h4{font-size:12px;margin-bottom:5px}
+.note.tight p{font-size:12.5px;margin:0}
+.readout.compact div{padding:10px 12px}
+.readout.compact dd{font-size:15px}
+figure.chart .fc-top{margin:0 0 10px;font-size:11.5px;color:var(--ink-3)}
+.span-full{margin-top:22px}
+svg.spark{width:120px;height:30px;display:block}
+.heat-key{display:flex;gap:9px;align-items:center;flex-wrap:wrap;font-size:10.5px;color:var(--ink-3);margin-top:10px;font-family:"Geist Mono",monospace}
+.heat-key .hk{color:var(--ink-2);margin-right:2px}
+.heat-key span{display:inline-flex;align-items:center;gap:5px}
+.heat-key i{width:15px;height:11px;border-radius:2px;display:inline-block;flex:none}
+.panel .foot{margin:11px 0 0;font-size:11.5px;color:var(--ink-3)}
+.panel .foot code{background:var(--ground);padding:1px 4px;border-radius:3px;font-family:"Geist Mono",monospace;font-size:11px;color:var(--lilac-deep)}
+.panel svg{display:block}
+.dual{display:flex;gap:26px;flex-wrap:wrap;padding-top:4px}
+.dual > div{display:flex;flex-direction:column;gap:6px}
+.dual-l{font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:var(--ink-3)}
+.br{display:flex;flex-wrap:wrap;gap:8px}
+.br-i{display:inline-flex;flex-direction:column;gap:2px;border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:8px 11px;font-size:10.5px;color:var(--ink-3);background:var(--surface)}
+.br-i b{font-size:17px;font-weight:600;color:var(--ink);letter-spacing:-.02em}
+.br-i em{font-style:normal;font-family:"Geist Mono",monospace;font-size:9.5px;color:var(--sev-critical)}
+.dec-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:14px}
+.dec-grid .q{margin-bottom:0}
+.screen-head .sev,.screen-head .conf{transform:translateY(-1px)}
+
+/* ---- KPI header and filters ---- */
+.overview{padding-top:34px}
+.overview .screen-head{margin-bottom:16px}
+.filterbar{
+  display:flex;gap:12px;align-items:center;flex-wrap:wrap;
+  padding:13px 15px;margin:0 0 18px;
+  border:1px solid var(--line);border-radius:var(--r-md);
+  background:linear-gradient(180deg,var(--surface-3),var(--surface-2));
+}
+.flab{display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2)}
+.flab svg{color:var(--yuno-blue-lift)}
+.fsel{
+  position:relative;display:inline-flex;align-items:center;gap:8px;
+  border:1px solid var(--line);border-radius:var(--r-sm);
+  padding:6px 30px 6px 10px;background:var(--ground);
+  transition:border-color .14s ease-out,background .14s ease-out;cursor:pointer;
+}
+.fsel:hover{border-color:var(--yuno-blue);background:#07070A}
+.fsel:focus-within{border-color:var(--yuno-blue);box-shadow:0 0 0 3px rgba(62,79,224,.22)}
+.fsel > span{font-size:9.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);pointer-events:none}
+.fsel select{all:unset;font-family:"Geist Mono",monospace;font-size:12px;color:var(--ink);cursor:pointer;min-width:0}
+.fsel select option{background:#14141A;color:var(--ink)}
+.fsel::after{
+  content:"";position:absolute;right:11px;top:50%;width:7px;height:7px;
+  border-right:1.6px solid var(--ink-2);border-bottom:1.6px solid var(--ink-2);
+  transform:translateY(-70%) rotate(45deg);pointer-events:none;
+}
+.fsel:hover::after{border-color:var(--yuno-blue-lift)}
+.fnote{font-size:11px;color:var(--ink-3);margin-left:auto;max-width:34ch;line-height:1.4}
+.fnote code{background:var(--ground);padding:1px 4px;border-radius:3px;font-family:"Geist Mono",monospace;font-size:10.5px;color:var(--lilac-deep)}
+@media(max-width:900px){.fnote{margin-left:0;max-width:none}}
+
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:12px}
+.kpi{
+  position:relative;background:linear-gradient(180deg,var(--surface-2),var(--surface));
+  border:1px solid var(--line);border-radius:var(--r-lg);padding:17px 18px 16px;
+  box-shadow:var(--shadow-lift);
+  transition:border-color .18s cubic-bezier(.2,.8,.2,1),transform .18s cubic-bezier(.2,.8,.2,1);
+}
+.kpi:hover{transform:translateY(-2px)}
+.kpi::before{content:"";position:absolute;inset:-1px -1px auto;height:3px;border-radius:var(--r-lg) var(--r-lg) 0 0}
+.kpi-red::before{background:linear-gradient(90deg,var(--sev-critical),rgba(255,77,94,0))}
+.kpi-amber::before{background:linear-gradient(90deg,var(--sev-high),rgba(232,114,46,0))}
+.kpi-grey::before{background:linear-gradient(90deg,#3A3D47,rgba(58,61,71,0))}
+.kpi-red:hover{border-color:rgba(255,77,94,.5)}
+.kpi-amber:hover{border-color:rgba(232,114,46,.5)}
+.kpi-grey:hover{border-color:#3A3D47}
+.kpi dt{font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:var(--ink-3);margin-bottom:9px;padding-right:26px}
+.kpi dd{margin:0;font-size:30px;font-weight:600;letter-spacing:-.035em;line-height:1.02}
+.kpi dd .of{font-size:13px;font-weight:400;color:var(--ink-3);letter-spacing:0}
+.kpi p{margin:9px 0 0;font-size:11px;color:var(--ink-3);line-height:1.45}
+.kpi-red dd{color:var(--sev-critical)}
+.kpi-amber dd{color:var(--sev-high)}
+.kpi-grey dd{color:var(--ink-2)}
+.lamp{position:absolute;top:16px;right:16px;display:flex;flex-direction:column;gap:3px;padding:3px;border-radius:100px;background:var(--ground);border:1px solid var(--line-soft)}
+.lamp i{width:7px;height:7px;border-radius:50%;background:#20222A;display:block}
+.lamp i.on:nth-child(1){background:var(--sev-critical);box-shadow:0 0 7px rgba(255,77,94,.7)}
+.lamp i.on:nth-child(2){background:var(--sev-high);box-shadow:0 0 7px rgba(232,114,46,.7)}
+.lamp i.on:nth-child(3){background:var(--good);box-shadow:0 0 7px rgba(63,191,135,.7)}
+.lamp i.on.grey{background:var(--ink-3);box-shadow:none}
+</style>
+</head>
+<body>
+
+<header class="mast">
+  <div class="wrap mast-in">
+    <div class="brandlock">
+      <img src="yuno-wordmark-light.svg" alt="Yuno">
+      <span class="rule"></span>
+      <span class="product">Control Tower <span>/ TAM console</span></span>
+    </div>
+    <div class="mast-right">
+      <span class="unofficial">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1.5 1.5 13.5h13L8 1.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6.2v3.1M8 11.4h.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Unofficial mockup - not a Yuno product
+      </span>
+    </div>
+  </div>
+</header>
+
+<div class="prov">
+  <div class="wrap prov-in mono">
+    <span><b>run</b> python3 -m detector seed &amp;&amp; python3 -m detector detect</span>
+    <span><b>config</b> det-v1</span>
+    <span><b>watermark</b> 2026-08-30T05:18:00Z</span>
+    <span><b>store</b> SQLite, CLEARWAVE_DB</span>
+  </div>
+</div>
+
+<nav class="jump">
+  <div class="wrap jump-in">
+    <a href="#overview" class="on">Right now</a>
+    <a href="#queue">1 - Incident queue</a>
+    <a href="#incident">2 - Single incident</a>
+    <a href="#escalate">3 - Escalation</a>
+    <a href="#decide">Decisions for you</a>
+  </div>
+</nav>
+
+<main class="wrap">
+
+<!-- ==================================================================== -->
+<section class="screen overview" id="overview">
+  <div class="screen-head">
+    <h2>Right now</h2>
+    <span class="who">Everything a TAM needs before scrolling</span>
+  </div>
+
+    <div class="filterbar">
+      <span class="flab"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 3.5h12L9.5 8.6v4.2l-3 1.7V8.6L2 3.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>Showing</span>
+      <label class="fsel"><span>window</span>
+        <select><option>last 30 minutes</option><option>last hour</option><option>last 4 hours</option><option>today</option></select>
+      </label>
+      <label class="fsel"><span>provider</span>
+        <select><option>all providers</option><option>provider-p2</option><option>provider-p3</option></select>
+      </label>
+      <label class="fsel"><span>merchant</span>
+        <select><option>all merchants</option><option>merchant-a</option><option>merchant-b</option></select>
+      </label>
+      <label class="fsel"><span>country</span>
+        <select><option>all countries</option><option>CO</option><option>MX</option></select>
+      </label>
+      <span class="fnote">each filter is one C2 call &mdash; <code>window</code> and <code>cohort</code>, nothing recomputed here</span>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi kpi-red">
+        <span class="lamp"><i class="on"></i><i></i><i></i></span>
+        <dt>Service status</dt>
+        <dd>Critical</dd>
+        <p>worst of 3 open incidents</p>
+      </div>
+
+      <div class="kpi kpi-red">
+        <span class="lamp"><i class="on"></i><i></i><i></i></span>
+        <dt>Providers affected</dt>
+        <dd>2 <span class="of">of 2</span></dd>
+        <p><span class="fig">both routes carrying traffic have an open incident<button class="cite" data-cite="scope" aria-label="cite"></button></span></p>
+      </div>
+
+      <div class="kpi kpi-red">
+        <span class="lamp"><i class="on"></i><i></i><i></i></span>
+        <dt>Merchants affected</dt>
+        <dd>2 <span class="of">of 2</span></dd>
+        <p><span class="fig">merchant-a and merchant-b both in a blast radius<button class="cite" data-cite="scope" aria-label="cite"></button></span></p>
+      </div>
+
+      <div class="kpi kpi-amber">
+        <span class="lamp"><i></i><i class="on"></i><i></i></span>
+        <dt>Worst burn rate</dt>
+        <dd><span class="fig">$78,919<button class="cite" data-cite="b-fin" aria-label="cite"></button></span><span class="of">/hr</span></dd>
+        <p>Mexico &middot; $19,785 and $3,348 behind it</p>
+      </div>
+
+      <div class="kpi kpi-amber">
+        <span class="lamp"><i></i><i class="on"></i><i></i></span>
+        <dt>Longest running</dt>
+        <dd><span class="fig">13 min<button class="cite" data-cite="a-series60" aria-label="cite"></button></span></dd>
+        <p>Provider P2, falling since 05:05</p>
+      </div>
+
+      <div class="kpi kpi-grey">
+        <span class="lamp"><i></i><i></i><i class="on grey"></i></span>
+        <dt>Cause attributed</dt>
+        <dd>0 <span class="of">of 3</span></dd>
+        <p>no incident has a confirmed cause yet</p>
+      </div>
+    </div>
+
+    <div class="note warn tight">
+      <h4>Two things this header deliberately does not show</h4>
+      <p><b>A portfolio total.</b> Adding three cited <code>loss_per_hour</code> figures would be a number that exists only here, which the ownership rules make a defect. A real total has to come from W2 as its own cited figure. <b>Decision 4.</b></p>
+      <p style="margin:0"><b>Whose fault it is.</b> Nothing in the data says whether an incident is Yuno's or the provider's - attribution belongs to the investigation, and all three are still unattributed. A traffic light that guessed would be the worst thing this dashboard could do.</p>
+    </div>
+</section>
+
+<section class="screen" id="queue">
+  <div class="screen-head">
+    <h2>Incident queue</h2>
+    <span class="who">3 open &middot; measured through 05:18:00Z</span>
+  </div>
+
+  <div class="frame">
+    <div class="frame-bar"><span class="dot"></span><span class="path mono">/incidents</span></div>
+    <div class="frame-body">
+      <div class="split-2" style="margin-bottom:24px">
+        <figure class="chart">
+          <figcaption class="fc-top">Value moving through each affected slice, and how much of it is not landing.</figcaption>
+          <svg viewBox="0 0 640 176" width="100%" role="img" aria-label="Mexico has 42,500 dollars flowing with 6,577 at risk. Provider P2 has 5,000 dollars flowing with 1,649 at risk. Provider P3 has 2,000 dollars flowing with 279 at risk.">
+            <title>Value flowing against value at risk</title>
+            <g font-family="Geist Mono, monospace" font-size="10.5">
+              <text x="0" y="26" fill="#E8722E" font-weight="600">Mexico</text>
+              <rect x="86" y="16" width="424" height="18" rx="3" fill="#1E2430"/>
+              <rect x="86" y="16" width="65.6" height="18" rx="3" fill="#E8722E"/>
+              <text x="518" y="29" fill="#A8ADBD">$42,500 in</text>
+              <text x="155" y="29" fill="#E8722E" font-weight="600">$6,577 at risk</text>
+
+              <text x="0" y="76" fill="#FF4D5E" font-weight="600">Provider P2</text>
+              <rect x="86" y="66" width="49.9" height="18" rx="3" fill="#1E2430"/>
+              <rect x="86" y="66" width="16.5" height="18" rx="3" fill="#FF4D5E"/>
+              <text x="144" y="79" fill="#A8ADBD">$5,000 in</text>
+              <text x="212" y="79" fill="#FF4D5E" font-weight="600">$1,649 at risk</text>
+
+              <text x="0" y="126" fill="#B0842C" font-weight="600">Provider P3</text>
+              <rect x="86" y="116" width="20" height="18" rx="3" fill="#1E2430"/>
+              <rect x="86" y="116" width="2.8" height="18" rx="3" fill="#B0842C"/>
+              <text x="114" y="129" fill="#A8ADBD">$2,000 in</text>
+              <text x="182" y="129" fill="#B0842C" font-weight="600">$279 at risk</text>
+
+              <line x1="86" y1="150" x2="510" y2="150" stroke="#282A30"/>
+              <text x="86" y="166" fill="#767C8C" font-size="9.5">$0</text>
+              <text x="510" y="166" fill="#767C8C" font-size="9.5" text-anchor="end">$42,500 &mdash; same scale on all three</text>
+            </g>
+          </svg>
+          <figcaption><span class="fig">Attempted value and GMV at risk, per incident<button class="cite" data-cite="a-fin" aria-label="cite"></button></span> &middot; the deepest technical damage is not where the most money is.</figcaption>
+        </figure>
+
+        <figure class="chart">
+          <figcaption class="fc-top">Burn rate - what each is costing per hour if it continues.</figcaption>
+          <svg viewBox="0 0 400 176" width="100%" role="img" aria-label="Mexico is burning 78,919 dollars per hour, Provider P2 19,785, Provider P3 3,348.">
+            <title>Loss per hour</title>
+            <g font-family="Geist Mono, monospace" font-size="10.5">
+              <rect x="0" y="16" width="340" height="18" rx="3" fill="#E8722E"/>
+              <text x="334" y="29" fill="#0E0E12" font-weight="600" text-anchor="end">$78,919 /hr</text>
+              <text x="0" y="46" fill="#767C8C" font-size="9.5">Mexico &middot; High</text>
+
+              <rect x="0" y="70" width="85.2" height="18" rx="3" fill="#FF4D5E"/>
+              <text x="93" y="83" fill="#FF4D5E" font-weight="600">$19,785 /hr</text>
+              <text x="0" y="100" fill="#767C8C" font-size="9.5">Provider P2 &middot; Critical</text>
+
+              <rect x="0" y="124" width="14.4" height="18" rx="3" fill="#B0842C"/>
+              <text x="22" y="137" fill="#B0842C" font-weight="600">$3,348 /hr</text>
+              <text x="0" y="154" fill="#767C8C" font-size="9.5">Provider P3 &middot; Medium</text>
+            </g>
+          </svg>
+          <figcaption><span class="fig">loss_per_hour, three incidents<button class="cite" data-cite="b-fin" aria-label="cite"></button></span> &middot; the Critical one is not the expensive one.</figcaption>
+        </figure>
+      </div>
+
+      </div>
+
+      <div class="tbl-scroll" style="margin-top:22px">
+      <table>
+        <thead>
+          <tr><th style="width:1%">Priority</th><th>Slice</th><th style="width:132px">Last 28 min</th>
+              <th class="num">Approval</th><th class="num">$ / hour</th><th>Trend</th><th>Diagnosis</th></tr>
+        </thead>
+        <tbody>
+          <tr class="rank-row">
+            <td><span class="sev sev-high"><i></i>High</span></td>
+            <td class="cohort"><b>Mexico</b><span class="sub mono">country = MX</span></td>
+            <td><svg viewBox="0 0 120 30" class="spark" role="img" aria-label="Mexico approval holds near 90 percent"><polyline points="0,9 4.4,3 8.9,9 13.3,6 17.8,3 22.2,9 26.7,3 31.1,9 35.6,3 40,3 44.4,6 48.9,3 53.3,6 57.8,3 62.2,3 66.7,9 71.1,3 75.6,3 80,9 84.4,6 88.9,6 93.3,3 97.8,3 102.2,3 106.7,3 111.1,6 115.6,6 120,6" fill="none" stroke="#E8722E" stroke-width="2" stroke-linejoin="round"/><line x1="0" y1="7.5" x2="120" y2="7.5" stroke="#767C8C" stroke-width="1" stroke-dasharray="3 3"/></svg></td>
+            <td class="num"><b>76.0%</b><span class="sub">was 91.5%</span></td>
+            <td class="num"><span class="fig money">$78,919<button class="cite" data-cite="b-fin" aria-label="cite"></button></span></td>
+            <td><span class="traj flat"><svg width="13" height="9" viewBox="0 0 14 10" fill="none" aria-hidden="true"><path d="M1 5h12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>Holding</span></td>
+            <td><span class="conf none">not assessed</span></td>
+          </tr>
+          <tr class="rank-row">
+            <td><span class="sev sev-critical"><i></i>Critical</span></td>
+            <td class="cohort"><b>Provider P2</b><span class="sub mono">provider = provider-p2</span></td>
+            <td><svg viewBox="0 0 120 30" class="spark" role="img" aria-label="Provider P2 approval collapses from 100 to 40 percent"><polyline points="0,12 4.4,6 8.9,6 13.3,6 17.8,6 22.2,0 26.7,0 31.1,6 35.6,6 40,6 44.4,6 48.9,0 53.3,12 57.8,0 62.2,0 66.7,12 71.1,12 75.6,15 80,18 84.4,18 88.9,18 93.3,15 97.8,12 102.2,12 106.7,9 111.1,18 115.6,18 120,15" fill="none" stroke="#FF4D5E" stroke-width="2" stroke-linejoin="round"/><line x1="0" y1="7.5" x2="120" y2="7.5" stroke="#767C8C" stroke-width="1" stroke-dasharray="3 3"/></svg></td>
+            <td class="num"><b>52.0%</b><span class="sub">was 85.0%</span></td>
+            <td class="num"><span class="fig money">$19,785<button class="cite" data-cite="a-fin" aria-label="cite"></button></span></td>
+            <td><span class="traj worse"><svg width="13" height="9" viewBox="0 0 14 10" fill="none" aria-hidden="true"><path d="M1 1.5 7 8.5l6-7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>Worsening</span></td>
+            <td><span class="conf">confidence <b>low</b></span></td>
+          </tr>
+          <tr class="rank-row">
+            <td><span class="sev sev-medium"><i></i>Medium</span></td>
+            <td class="cohort"><b>Provider P3</b><span class="sub mono">provider = provider-p3</span></td>
+            <td><svg viewBox="0 0 120 30" class="spark" role="img" aria-label="Provider P3 approval stays near 100 percent"><polyline points="0,6 4.4,0 8.9,6 13.3,0 17.8,0 22.2,12 26.7,0 31.1,6 35.6,0 40,0 44.4,0 48.9,6 53.3,0 57.8,0 62.2,0 66.7,12 71.1,0 75.6,0 80,6 84.4,0 88.9,6 93.3,0 97.8,6 102.2,0 106.7,0 111.1,6 115.6,0 120,6" fill="none" stroke="#B0842C" stroke-width="2" stroke-linejoin="round"/><line x1="0" y1="7.5" x2="120" y2="7.5" stroke="#767C8C" stroke-width="1" stroke-dasharray="3 3"/></svg></td>
+            <td class="num"><b>76.0%</b><span class="sub">was 90.0%</span></td>
+            <td class="num"><span class="fig money">$3,348<button class="cite" data-cite="c-fin" aria-label="cite"></button></span></td>
+            <td><span class="traj flat"><svg width="13" height="9" viewBox="0 0 14 10" fill="none" aria-hidden="true"><path d="M1 5h12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>Holding</span></td>
+            <td><span class="conf none">not assessed</span></td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+
+      <div class="note warn tight">
+        <h4>Sorted by money, this run puts Critical second</h4>
+        <p>Mexico is losing <span class="fig">$78,919/hr<button class="cite" data-cite="b-fin" aria-label="cite"></button></span> against Provider P2's <span class="fig">$19,785/hr<button class="cite" data-cite="a-fin" aria-label="cite"></button></span>, yet P2 is the Critical one - it is worsening and has run longer, and severity weights those alongside money. Both figures are correct; the table has to pick one to sort on and may not blend them. <b>Decision 1.</b></p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== -->
+<section class="screen" id="incident">
+  <div class="screen-head">
+    <h2>Provider P2</h2>
+    <span class="sev sev-critical"><i></i>Critical</span>
+    <span class="conf">confidence <b>low</b></span>
+    <span class="who">inc-2026-08-30-c2b28a30</span>
+  </div>
+
+  <div class="frame">
+    <div class="frame-bar"><span class="dot"></span><span class="path mono">/incidents/inc-2026-08-30-c2b28a30</span></div>
+    <div class="frame-body">
+
+      <dl class="readout">
+        <div><dt>Approval now</dt><dd><span class="fig">52.0%<button class="cite" data-cite="a-cm" aria-label="cite"></button></span><small>expected 85.0%</small></dd></div>
+        <div><dt>Payments lost</dt><dd><span class="fig">16<button class="cite" data-cite="a-fin" aria-label="cite"></button></span><small>of 50 attempted</small></dd></div>
+        <div><dt>At risk so far</dt><dd><span class="fig">$1,649<button class="cite" data-cite="a-fin" aria-label="cite"></button></span><small>this window</small></dd></div>
+        <div><dt>Costing / hour</dt><dd><span class="fig">$19,785<button class="cite" data-cite="a-fin" aria-label="cite"></button></span><small>if sustained</small></dd></div>
+        <div><dt>Retry load</dt><dd><span class="fig">1.44&times;<button class="cite" data-cite="a-retry" aria-label="cite"></button></span><small>22 of 50 retried</small></dd></div>
+        <div><dt>Falling since</dt><dd><span class="fig" style="color:var(--sev-high)">05:05<button class="cite" data-cite="a-series60" aria-label="cite"></button></span><small>record says 05:14</small></dd></div>
+      </dl>
+
+      <div class="split-2 span-full">
+        <figure class="chart">
+          <figcaption class="fc-top">Payments landing, minute by minute. The shaded gap is what stopped landing.</figcaption>
+          <svg viewBox="0 0 640 224" width="100%" role="img" aria-label="Attempted payments hold flat at 10 per minute throughout. Approved payments run at 9 or 10 per minute until 05:04, then drop to between 4 and 7 per minute from 05:05 onward, leaving a widening gap.">
+            <title>Payments attempted against payments approved</title>
+            <defs><linearGradient id="gapG" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#FF4D5E" stop-opacity=".30"/><stop offset="100%" stop-color="#FF4D5E" stop-opacity=".06"/>
+            </linearGradient></defs>
+            <g stroke="#1E2028" stroke-width="1">
+              <line x1="52" y1="44" x2="622" y2="44"/><line x1="52" y1="120" x2="622" y2="120"/>
+            </g>
+            <g fill="#767C8C" font-size="9.5" font-family="Geist Mono, monospace" text-anchor="end">
+              <text x="43" y="48">10</text><text x="43" y="124">5</text><text x="43" y="200">0</text>
+            </g>
+            <!-- gap between attempted (flat 10) and approved -->
+            <path d="M52,44 L622,44 L622,120 L600.9,135.2 L579.8,135.2 L558.7,89.6 L537.6,104.8 L516.4,104.8 L495.3,120 L474.2,135.2 L453.1,135.2 L432,135.2 L410.9,120 L389.8,104.8 L368.7,104.8 L347.6,44 L326.4,44 L305.3,74.4 L284.2,44 L263.1,59.2 L242,59.2 L220.9,59.2 L199.8,59.2 L178.7,44 L157.6,44 L136.4,59.2 L115.3,59.2 L94.2,59.2 L73.1,59.2 L52,104.8 Z" fill="url(#gapG)"/>
+            <!-- attempted, flat -->
+            <line x1="52" y1="44" x2="622" y2="44" stroke="#767C8C" stroke-width="2" stroke-dasharray="4 4"/>
+            <!-- approved -->
+            <path d="M52,104.8 L73.1,59.2 L94.2,59.2 L115.3,59.2 L136.4,59.2 L157.6,44 L178.7,44 L199.8,59.2 L220.9,59.2 L242,59.2 L263.1,59.2 L284.2,44 L305.3,74.4 L326.4,44 L347.6,44 L368.7,104.8 L389.8,104.8 L410.9,120 L432,135.2 L453.1,135.2 L474.2,135.2 L495.3,120 L516.4,104.8 L537.6,104.8 L558.7,89.6 L579.8,135.2 L600.9,135.2 L622,120"
+                  fill="none" stroke="#6B7BFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="368.7" y1="36" x2="368.7" y2="196" stroke="#E8722E" stroke-width="2"/>
+            <text x="368.7" y="30" fill="#E8722E" font-size="10" font-family="Geist Mono, monospace" text-anchor="middle" font-weight="600">05:05</text>
+            <text x="60" y="38" fill="#A8ADBD" font-size="9.5" font-family="Geist Mono, monospace">attempted, 10/min</text>
+            <text x="622" y="112" fill="#6B7BFF" font-size="9.5" font-family="Geist Mono, monospace" text-anchor="end">approved</text>
+            <line x1="52" y1="196" x2="622" y2="196" stroke="#282A30"/>
+            <g fill="#767C8C" font-size="9.5" font-family="Geist Mono, monospace">
+              <text x="52" y="212" text-anchor="start">04:50</text><text x="337" y="212" text-anchor="middle">05:03</text><text x="622" y="212" text-anchor="end">05:17</text>
+            </g>
+          </svg>
+          <figcaption><span class="fig">Two cited series, same window and bucket<button class="cite" data-cite="money" aria-label="cite"></button></span> &middot; value in is flat at $1,000/min, so the gap is money, not traffic.</figcaption>
+        </figure>
+
+        <div>
+          <div class="panel">
+            <h3>Where the $5,000 went</h3>
+            <p class="hint">The whole window's value, split.</p>
+            <svg viewBox="0 0 400 100" width="100%" role="img" aria-label="Of 5,000 dollars attempted, 2,600 was captured, 1,648.72 is at risk, and the remainder would not have converted at the baseline rate anyway.">
+              <title>Value disposition</title>
+              <rect x="0" y="16" width="208" height="30" rx="3" fill="#3FBF87"/>
+              <rect x="210" y="16" width="131.9" height="30" rx="3" fill="#FF4D5E"/>
+              <rect x="343.9" y="16" width="56.1" height="30" rx="3" fill="#282A30"/>
+              <g font-family="Geist Mono, monospace" font-size="10.5">
+                <text x="0" y="62" fill="#3FBF87" font-weight="600">$2,600</text>
+                <text x="0" y="76" fill="#767C8C" font-size="9.5">captured</text>
+                <text x="210" y="62" fill="#FF4D5E" font-weight="600">$1,648.72</text>
+                <text x="210" y="76" fill="#767C8C" font-size="9.5">at risk &mdash; would have landed</text>
+                <text x="400" y="62" fill="#767C8C" font-size="9.5" text-anchor="end">baseline</text>
+                <text x="400" y="76" fill="#767C8C" font-size="9.5" text-anchor="end">shortfall</text>
+              </g>
+            </svg>
+            <p class="foot"><span class="fig">Attempted $5,000, approved $2,600, at risk $1,648.72<button class="cite" data-cite="a-money" aria-label="cite"></button></span>. The grey band is what would not have converted at the 85% baseline anyway - it is not a loss.</p>
+          </div>
+
+          <div class="panel">
+            <h3>What good looks like</h3>
+            <p class="hint">Same value in, same window, the other route.</p>
+            <svg viewBox="0 0 400 96" width="100%" role="img" aria-label="Provider P3 captured 4,800 of 5,000 dollars. Provider P2 captured 2,600 of the same 5,000.">
+              <title>Value captured, P3 against P2</title>
+              <g font-family="Geist Mono, monospace" font-size="10.5">
+                <text x="0" y="14" fill="#3FBF87" font-weight="600">provider-p3</text>
+                <rect x="0" y="20" width="400" height="20" rx="3" fill="#1A1A22"/>
+                <rect x="0" y="20" width="384" height="20" rx="3" fill="#3FBF87"/>
+                <text x="378" y="34" fill="#0E0E12" font-weight="600" text-anchor="end">$4,800 captured</text>
+
+                <text x="0" y="70" fill="#FF4D5E" font-weight="600">provider-p2</text>
+                <rect x="0" y="76" width="400" height="20" rx="3" fill="#1A1A22"/>
+                <rect x="0" y="76" width="208" height="20" rx="3" fill="#FF4D5E"/>
+                <text x="216" y="90" fill="#F2F3F7" font-weight="600">$2,600 captured</text>
+              </g>
+            </svg>
+            <p class="foot"><span class="fig">$5,000 attempted through each route<button class="cite" data-cite="a-cmp" aria-label="cite"></button></span> &middot; same value in, and the healthy route is landing nearly twice as much of it.</p>
+          </div>
+        </div>
+      </div>
+
+      <figure class="chart span-full">
+        <figcaption class="fc-top">Approval conversion, one-minute buckets - the detector's own width.</figcaption>
+        <svg viewBox="0 0 640 250" width="100%" role="img" aria-label="Approval for provider-p2 sits between 80 and 100 percent until 05:04, breaks the 85 percent baseline at 05:05, and stays below it through 05:17, reaching 40 percent. The incident record dates onset at 05:14, nine minutes late.">
+          <title>Approval conversion, provider-p2</title>
+          <defs><linearGradient id="fillA" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#6B7BFF" stop-opacity=".24"/><stop offset="100%" stop-color="#6B7BFF" stop-opacity="0"/>
+          </linearGradient></defs>
+          <g stroke="#1E2028" stroke-width="1">
+            <line x1="52" y1="44" x2="622" y2="44"/><line x1="52" y1="94.7" x2="622" y2="94.7"/>
+            <line x1="52" y1="145.3" x2="622" y2="145.3"/><line x1="52" y1="196" x2="622" y2="196"/>
+          </g>
+          <g fill="#767C8C" font-size="9.5" font-family="Geist Mono, monospace" text-anchor="end">
+            <text x="43" y="48">100%</text><text x="43" y="98">80%</text><text x="43" y="149">60%</text><text x="43" y="200">40%</text>
+          </g>
+          <line x1="52" y1="82.1" x2="622" y2="82.1" stroke="#767C8C" stroke-width="2" stroke-dasharray="5 5"/>
+          <text x="626" y="85" fill="#767C8C" font-size="9.5" font-family="Geist Mono, monospace">exp</text>
+          <rect x="368.7" y="40" width="253.3" height="156" fill="#FF4D5E" fill-opacity=".05"/>
+          <line x1="368.7" y1="40" x2="368.7" y2="196" stroke="#E8722E" stroke-width="2"/>
+          <text x="368.7" y="33" fill="#E8722E" font-size="10" font-family="Geist Mono, monospace" text-anchor="middle" font-weight="600">05:05</text>
+          <line x1="558.7" y1="40" x2="558.7" y2="196" stroke="#767C8C" stroke-width="2" stroke-dasharray="3 4"/>
+          <text x="558.7" y="33" fill="#A8ADBD" font-size="10" font-family="Geist Mono, monospace" text-anchor="middle">05:14</text>
+          <path d="M52,145.3 L73.1,69.3 L94.2,69.3 L115.3,69.3 L136.4,69.3 L157.6,44 L178.7,44 L199.8,69.3 L220.9,69.3 L242,69.3 L263.1,69.3 L284.2,44 L305.3,94.7 L326.4,44 L347.6,44 L368.7,145.3 L389.8,145.3 L410.9,170.7 L432,196 L453.1,196 L474.2,196 L495.3,170.7 L516.4,145.3 L537.6,145.3 L558.7,120 L579.8,196 L600.9,196 L622,170.7 L622,196 L52,196 Z" fill="url(#fillA)"/>
+          <path d="M52,145.3 L73.1,69.3 L94.2,69.3 L115.3,69.3 L136.4,69.3 L157.6,44 L178.7,44 L199.8,69.3 L220.9,69.3 L242,69.3 L263.1,69.3 L284.2,44 L305.3,94.7 L326.4,44 L347.6,44 L368.7,145.3 L389.8,145.3 L410.9,170.7 L432,196 L453.1,196 L474.2,196 L495.3,170.7 L516.4,145.3 L537.6,145.3 L558.7,120 L579.8,196 L600.9,196 L622,170.7" fill="none" stroke="#6B7BFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="368.7" cy="145.3" r="4.5" fill="#E8722E" stroke="#0E0E12" stroke-width="2"/>
+          <line x1="52" y1="196" x2="622" y2="196" stroke="#282A30"/>
+          <g fill="#767C8C" font-size="9.5" font-family="Geist Mono, monospace">
+            <text x="52" y="212" text-anchor="start">04:50</text><text x="337" y="212" text-anchor="middle">05:03</text><text x="622" y="212" text-anchor="end">05:17</text>
+          </g>
+        </svg>
+      </figure>
+
+      <div class="note defect tight">
+        <h4>The record's "since when" is nine minutes late</h4>
+        <p>Approval breaks baseline at <b>05:05</b> and stays under for <b>13 minutes</b>; the record says onset <b>05:14</b>, persistence <b>300s</b>. Ours, in <code>detector/detect.py:338</code> - onset is <code>min(degraded)</code> over a series already clipped to the 5-bucket sweep window, so it reports the window, not the deviation. <code>buckets_sustained</code> is capped the same way, which under-ranks persistent incidents in severity. <b>Decision 3.</b></p>
+      </div>
+
+      <figure class="chart span-full">
+        <figcaption class="fc-top">Every slice, every minute. This is how the detector found the cohort - and why it stopped where it did.</figcaption>
+        <svg viewBox="0 0 640 232" width="100%" role="img" aria-label="Heatmap of approval conversion by slice and minute. Provider P2 and country CO go dark red from 05:05 onward. Provider P3 and country MX stay calm. Bank X and bank Y both dip by a similar amount, so the issuing bank does not separate the incident.">
+          <title>Approval conversion by slice and minute</title>
+<text x="96" y="46.3" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" fill="#A8ADBD">All traffic</text>
+<rect x="104.0" y="34.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>All traffic at 04:50 - 75% of 20 payments</title></rect>
+<rect x="123.6" y="34.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>All traffic at 04:51 - 95% of 20 payments</title></rect>
+<rect x="143.2" y="34.0" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>All traffic at 04:52 - 90% of 20 payments</title></rect>
+<rect x="162.8" y="34.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>All traffic at 04:53 - 95% of 20 payments</title></rect>
+<rect x="182.4" y="34.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>All traffic at 04:54 - 95% of 20 payments</title></rect>
+<rect x="202.0" y="34.0" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>All traffic at 04:55 - 90% of 20 payments</title></rect>
+<rect x="221.6" y="34.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>All traffic at 04:56 - 100% of 20 payments</title></rect>
+<rect x="241.2" y="34.0" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>All traffic at 04:57 - 90% of 20 payments</title></rect>
+<rect x="260.8" y="34.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>All traffic at 04:58 - 95% of 20 payments</title></rect>
+<rect x="280.4" y="34.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>All traffic at 04:59 - 95% of 20 payments</title></rect>
+<rect x="300.0" y="34.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>All traffic at 05:00 - 95% of 20 payments</title></rect>
+<rect x="319.6" y="34.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>All traffic at 05:01 - 95% of 20 payments</title></rect>
+<rect x="339.2" y="34.0" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>All traffic at 05:02 - 90% of 20 payments</title></rect>
+<rect x="358.8" y="34.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>All traffic at 05:03 - 100% of 20 payments</title></rect>
+<rect x="378.4" y="34.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>All traffic at 05:04 - 100% of 20 payments</title></rect>
+<rect x="398.0" y="34.0" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>All traffic at 05:05 - 70% of 20 payments</title></rect>
+<rect x="417.6" y="34.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>All traffic at 05:06 - 80% of 20 payments</title></rect>
+<rect x="437.2" y="34.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>All traffic at 05:07 - 75% of 20 payments</title></rect>
+<rect x="456.8" y="34.0" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>All traffic at 05:08 - 65% of 20 payments</title></rect>
+<rect x="476.4" y="34.0" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>All traffic at 05:09 - 70% of 20 payments</title></rect>
+<rect x="496.0" y="34.0" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>All traffic at 05:10 - 65% of 20 payments</title></rect>
+<rect x="515.6" y="34.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>All traffic at 05:11 - 75% of 20 payments</title></rect>
+<rect x="535.2" y="34.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>All traffic at 05:12 - 75% of 20 payments</title></rect>
+<rect x="554.8" y="34.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>All traffic at 05:13 - 80% of 20 payments</title></rect>
+<rect x="574.4" y="34.0" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>All traffic at 05:14 - 85% of 20 payments</title></rect>
+<rect x="594.0" y="34.0" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>All traffic at 05:15 - 65% of 20 payments</title></rect>
+<rect x="613.6" y="34.0" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>All traffic at 05:16 - 70% of 20 payments</title></rect>
+<rect x="633.2" y="34.0" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>All traffic at 05:17 - 70% of 20 payments</title></rect>
+<text x="96" y="64.9" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" font-weight="600" fill="#F2F3F7">provider-p2</text>
+<rect x="104.0" y="52.6" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>provider-p2 at 04:50 - 60% of 10 payments</title></rect>
+<rect x="123.6" y="52.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p2 at 04:51 - 90% of 10 payments</title></rect>
+<rect x="143.2" y="52.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p2 at 04:52 - 90% of 10 payments</title></rect>
+<rect x="162.8" y="52.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p2 at 04:53 - 90% of 10 payments</title></rect>
+<rect x="182.4" y="52.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p2 at 04:54 - 90% of 10 payments</title></rect>
+<rect x="202.0" y="52.6" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p2 at 04:55 - 100% of 10 payments</title></rect>
+<rect x="221.6" y="52.6" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p2 at 04:56 - 100% of 10 payments</title></rect>
+<rect x="241.2" y="52.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p2 at 04:57 - 90% of 10 payments</title></rect>
+<rect x="260.8" y="52.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p2 at 04:58 - 90% of 10 payments</title></rect>
+<rect x="280.4" y="52.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p2 at 04:59 - 90% of 10 payments</title></rect>
+<rect x="300.0" y="52.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p2 at 05:00 - 90% of 10 payments</title></rect>
+<rect x="319.6" y="52.6" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p2 at 05:01 - 100% of 10 payments</title></rect>
+<rect x="339.2" y="52.6" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>provider-p2 at 05:02 - 80% of 10 payments</title></rect>
+<rect x="358.8" y="52.6" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p2 at 05:03 - 100% of 10 payments</title></rect>
+<rect x="378.4" y="52.6" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p2 at 05:04 - 100% of 10 payments</title></rect>
+<rect x="398.0" y="52.6" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>provider-p2 at 05:05 - 60% of 10 payments</title></rect>
+<rect x="417.6" y="52.6" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>provider-p2 at 05:06 - 60% of 10 payments</title></rect>
+<rect x="437.2" y="52.6" width="18.0" height="17.0" rx="2" fill="#F04A5A"><title>provider-p2 at 05:07 - 50% of 10 payments</title></rect>
+<rect x="456.8" y="52.6" width="18.0" height="17.0" rx="2" fill="#FF6B78"><title>provider-p2 at 05:08 - 40% of 10 payments</title></rect>
+<rect x="476.4" y="52.6" width="18.0" height="17.0" rx="2" fill="#FF6B78"><title>provider-p2 at 05:09 - 40% of 10 payments</title></rect>
+<rect x="496.0" y="52.6" width="18.0" height="17.0" rx="2" fill="#FF6B78"><title>provider-p2 at 05:10 - 40% of 10 payments</title></rect>
+<rect x="515.6" y="52.6" width="18.0" height="17.0" rx="2" fill="#F04A5A"><title>provider-p2 at 05:11 - 50% of 10 payments</title></rect>
+<rect x="535.2" y="52.6" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>provider-p2 at 05:12 - 60% of 10 payments</title></rect>
+<rect x="554.8" y="52.6" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>provider-p2 at 05:13 - 60% of 10 payments</title></rect>
+<rect x="574.4" y="52.6" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>provider-p2 at 05:14 - 70% of 10 payments</title></rect>
+<rect x="594.0" y="52.6" width="18.0" height="17.0" rx="2" fill="#FF6B78"><title>provider-p2 at 05:15 - 40% of 10 payments</title></rect>
+<rect x="613.6" y="52.6" width="18.0" height="17.0" rx="2" fill="#FF6B78"><title>provider-p2 at 05:16 - 40% of 10 payments</title></rect>
+<rect x="633.2" y="52.6" width="18.0" height="17.0" rx="2" fill="#F04A5A"><title>provider-p2 at 05:17 - 50% of 10 payments</title></rect>
+<text x="96" y="83.5" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" fill="#A8ADBD">provider-p3</text>
+<rect x="104.0" y="71.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p3 at 04:50 - 90% of 10 payments</title></rect>
+<rect x="123.6" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 04:51 - 100% of 10 payments</title></rect>
+<rect x="143.2" y="71.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p3 at 04:52 - 90% of 10 payments</title></rect>
+<rect x="162.8" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 04:53 - 100% of 10 payments</title></rect>
+<rect x="182.4" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 04:54 - 100% of 10 payments</title></rect>
+<rect x="202.0" y="71.2" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>provider-p3 at 04:55 - 80% of 10 payments</title></rect>
+<rect x="221.6" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 04:56 - 100% of 10 payments</title></rect>
+<rect x="241.2" y="71.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p3 at 04:57 - 90% of 10 payments</title></rect>
+<rect x="260.8" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 04:58 - 100% of 10 payments</title></rect>
+<rect x="280.4" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 04:59 - 100% of 10 payments</title></rect>
+<rect x="300.0" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 05:00 - 100% of 10 payments</title></rect>
+<rect x="319.6" y="71.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p3 at 05:01 - 90% of 10 payments</title></rect>
+<rect x="339.2" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 05:02 - 100% of 10 payments</title></rect>
+<rect x="358.8" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 05:03 - 100% of 10 payments</title></rect>
+<rect x="378.4" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 05:04 - 100% of 10 payments</title></rect>
+<rect x="398.0" y="71.2" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>provider-p3 at 05:05 - 80% of 10 payments</title></rect>
+<rect x="417.6" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 05:06 - 100% of 10 payments</title></rect>
+<rect x="437.2" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 05:07 - 100% of 10 payments</title></rect>
+<rect x="456.8" y="71.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p3 at 05:08 - 90% of 10 payments</title></rect>
+<rect x="476.4" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 05:09 - 100% of 10 payments</title></rect>
+<rect x="496.0" y="71.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p3 at 05:10 - 90% of 10 payments</title></rect>
+<rect x="515.6" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 05:11 - 100% of 10 payments</title></rect>
+<rect x="535.2" y="71.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p3 at 05:12 - 90% of 10 payments</title></rect>
+<rect x="554.8" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 05:13 - 100% of 10 payments</title></rect>
+<rect x="574.4" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 05:14 - 100% of 10 payments</title></rect>
+<rect x="594.0" y="71.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p3 at 05:15 - 90% of 10 payments</title></rect>
+<rect x="613.6" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 05:16 - 100% of 10 payments</title></rect>
+<rect x="633.2" y="71.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p3 at 05:17 - 90% of 10 payments</title></rect>
+<text x="96" y="102.1" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" font-weight="600" fill="#F2F3F7">country CO</text>
+<rect x="104.0" y="89.8" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>country CO at 04:50 - 70% of 10 payments</title></rect>
+<rect x="123.6" y="89.8" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country CO at 04:51 - 90% of 10 payments</title></rect>
+<rect x="143.2" y="89.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>country CO at 04:52 - 100% of 10 payments</title></rect>
+<rect x="162.8" y="89.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>country CO at 04:53 - 100% of 10 payments</title></rect>
+<rect x="182.4" y="89.8" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country CO at 04:54 - 90% of 10 payments</title></rect>
+<rect x="202.0" y="89.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>country CO at 04:55 - 100% of 10 payments</title></rect>
+<rect x="221.6" y="89.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>country CO at 04:56 - 100% of 10 payments</title></rect>
+<rect x="241.2" y="89.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>country CO at 04:57 - 100% of 10 payments</title></rect>
+<rect x="260.8" y="89.8" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country CO at 04:58 - 90% of 10 payments</title></rect>
+<rect x="280.4" y="89.8" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country CO at 04:59 - 90% of 10 payments</title></rect>
+<rect x="300.0" y="89.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>country CO at 05:00 - 100% of 10 payments</title></rect>
+<rect x="319.6" y="89.8" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country CO at 05:01 - 90% of 10 payments</title></rect>
+<rect x="339.2" y="89.8" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country CO at 05:02 - 90% of 10 payments</title></rect>
+<rect x="358.8" y="89.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>country CO at 05:03 - 100% of 10 payments</title></rect>
+<rect x="378.4" y="89.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>country CO at 05:04 - 100% of 10 payments</title></rect>
+<rect x="398.0" y="89.8" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>country CO at 05:05 - 60% of 10 payments</title></rect>
+<rect x="417.6" y="89.8" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>country CO at 05:06 - 60% of 10 payments</title></rect>
+<rect x="437.2" y="89.8" width="18.0" height="17.0" rx="2" fill="#F04A5A"><title>country CO at 05:07 - 50% of 10 payments</title></rect>
+<rect x="456.8" y="89.8" width="18.0" height="17.0" rx="2" fill="#F04A5A"><title>country CO at 05:08 - 50% of 10 payments</title></rect>
+<rect x="476.4" y="89.8" width="18.0" height="17.0" rx="2" fill="#F04A5A"><title>country CO at 05:09 - 50% of 10 payments</title></rect>
+<rect x="496.0" y="89.8" width="18.0" height="17.0" rx="2" fill="#FF6B78"><title>country CO at 05:10 - 40% of 10 payments</title></rect>
+<rect x="515.6" y="89.8" width="18.0" height="17.0" rx="2" fill="#F04A5A"><title>country CO at 05:11 - 50% of 10 payments</title></rect>
+<rect x="535.2" y="89.8" width="18.0" height="17.0" rx="2" fill="#F04A5A"><title>country CO at 05:12 - 50% of 10 payments</title></rect>
+<rect x="554.8" y="89.8" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>country CO at 05:13 - 60% of 10 payments</title></rect>
+<rect x="574.4" y="89.8" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>country CO at 05:14 - 70% of 10 payments</title></rect>
+<rect x="594.0" y="89.8" width="18.0" height="17.0" rx="2" fill="#FF6B78"><title>country CO at 05:15 - 40% of 10 payments</title></rect>
+<rect x="613.6" y="89.8" width="18.0" height="17.0" rx="2" fill="#F04A5A"><title>country CO at 05:16 - 50% of 10 payments</title></rect>
+<rect x="633.2" y="89.8" width="18.0" height="17.0" rx="2" fill="#F04A5A"><title>country CO at 05:17 - 50% of 10 payments</title></rect>
+<text x="96" y="120.7" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" fill="#A8ADBD">country MX</text>
+<rect x="104.0" y="108.4" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>country MX at 04:50 - 80% of 10 payments</title></rect>
+<rect x="123.6" y="108.4" width="18.0" height="17.0" rx="2" fill="#151922"><title>country MX at 04:51 - 100% of 10 payments</title></rect>
+<rect x="143.2" y="108.4" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>country MX at 04:52 - 80% of 10 payments</title></rect>
+<rect x="162.8" y="108.4" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country MX at 04:53 - 90% of 10 payments</title></rect>
+<rect x="182.4" y="108.4" width="18.0" height="17.0" rx="2" fill="#151922"><title>country MX at 04:54 - 100% of 10 payments</title></rect>
+<rect x="202.0" y="108.4" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>country MX at 04:55 - 80% of 10 payments</title></rect>
+<rect x="221.6" y="108.4" width="18.0" height="17.0" rx="2" fill="#151922"><title>country MX at 04:56 - 100% of 10 payments</title></rect>
+<rect x="241.2" y="108.4" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>country MX at 04:57 - 80% of 10 payments</title></rect>
+<rect x="260.8" y="108.4" width="18.0" height="17.0" rx="2" fill="#151922"><title>country MX at 04:58 - 100% of 10 payments</title></rect>
+<rect x="280.4" y="108.4" width="18.0" height="17.0" rx="2" fill="#151922"><title>country MX at 04:59 - 100% of 10 payments</title></rect>
+<rect x="300.0" y="108.4" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country MX at 05:00 - 90% of 10 payments</title></rect>
+<rect x="319.6" y="108.4" width="18.0" height="17.0" rx="2" fill="#151922"><title>country MX at 05:01 - 100% of 10 payments</title></rect>
+<rect x="339.2" y="108.4" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country MX at 05:02 - 90% of 10 payments</title></rect>
+<rect x="358.8" y="108.4" width="18.0" height="17.0" rx="2" fill="#151922"><title>country MX at 05:03 - 100% of 10 payments</title></rect>
+<rect x="378.4" y="108.4" width="18.0" height="17.0" rx="2" fill="#151922"><title>country MX at 05:04 - 100% of 10 payments</title></rect>
+<rect x="398.0" y="108.4" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>country MX at 05:05 - 80% of 10 payments</title></rect>
+<rect x="417.6" y="108.4" width="18.0" height="17.0" rx="2" fill="#151922"><title>country MX at 05:06 - 100% of 10 payments</title></rect>
+<rect x="437.2" y="108.4" width="18.0" height="17.0" rx="2" fill="#151922"><title>country MX at 05:07 - 100% of 10 payments</title></rect>
+<rect x="456.8" y="108.4" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>country MX at 05:08 - 80% of 10 payments</title></rect>
+<rect x="476.4" y="108.4" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country MX at 05:09 - 90% of 10 payments</title></rect>
+<rect x="496.0" y="108.4" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country MX at 05:10 - 90% of 10 payments</title></rect>
+<rect x="515.6" y="108.4" width="18.0" height="17.0" rx="2" fill="#151922"><title>country MX at 05:11 - 100% of 10 payments</title></rect>
+<rect x="535.2" y="108.4" width="18.0" height="17.0" rx="2" fill="#151922"><title>country MX at 05:12 - 100% of 10 payments</title></rect>
+<rect x="554.8" y="108.4" width="18.0" height="17.0" rx="2" fill="#151922"><title>country MX at 05:13 - 100% of 10 payments</title></rect>
+<rect x="574.4" y="108.4" width="18.0" height="17.0" rx="2" fill="#151922"><title>country MX at 05:14 - 100% of 10 payments</title></rect>
+<rect x="594.0" y="108.4" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country MX at 05:15 - 90% of 10 payments</title></rect>
+<rect x="613.6" y="108.4" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country MX at 05:16 - 90% of 10 payments</title></rect>
+<rect x="633.2" y="108.4" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country MX at 05:17 - 90% of 10 payments</title></rect>
+<text x="96" y="139.3" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" fill="#A8ADBD">merchant-a</text>
+<rect x="104.0" y="127.0" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>merchant-a at 04:50 - 62% of 8 payments</title></rect>
+<rect x="123.6" y="127.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>merchant-a at 04:51 - 100% of 9 payments</title></rect>
+<rect x="143.2" y="127.0" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-a at 04:52 - 92% of 12 payments</title></rect>
+<rect x="162.8" y="127.0" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-a at 04:53 - 91% of 11 payments</title></rect>
+<rect x="182.4" y="127.0" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-a at 04:54 - 88% of 8 payments</title></rect>
+<rect x="202.0" y="127.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>merchant-a at 04:55 - 100% of 9 payments</title></rect>
+<rect x="221.6" y="127.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>merchant-a at 04:56 - 100% of 12 payments</title></rect>
+<rect x="241.2" y="127.0" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-a at 04:57 - 91% of 11 payments</title></rect>
+<rect x="260.8" y="127.0" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-a at 04:58 - 88% of 8 payments</title></rect>
+<rect x="280.4" y="127.0" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-a at 04:59 - 89% of 9 payments</title></rect>
+<rect x="300.0" y="127.0" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-a at 05:00 - 92% of 12 payments</title></rect>
+<rect x="319.6" y="127.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>merchant-a at 05:01 - 100% of 11 payments</title></rect>
+<rect x="339.2" y="127.0" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-a at 05:02 - 88% of 8 payments</title></rect>
+<rect x="358.8" y="127.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>merchant-a at 05:03 - 100% of 9 payments</title></rect>
+<rect x="378.4" y="127.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>merchant-a at 05:04 - 100% of 12 payments</title></rect>
+<rect x="398.0" y="127.0" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>merchant-a at 05:05 - 64% of 11 payments</title></rect>
+<rect x="417.6" y="127.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-a at 05:06 - 75% of 8 payments</title></rect>
+<rect x="437.2" y="127.0" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>merchant-a at 05:07 - 67% of 9 payments</title></rect>
+<rect x="456.8" y="127.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-a at 05:08 - 75% of 12 payments</title></rect>
+<rect x="476.4" y="127.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-a at 05:09 - 82% of 11 payments</title></rect>
+<rect x="496.0" y="127.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-a at 05:10 - 75% of 8 payments</title></rect>
+<rect x="515.6" y="127.0" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>merchant-a at 05:11 - 67% of 9 payments</title></rect>
+<rect x="535.2" y="127.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-a at 05:12 - 75% of 12 payments</title></rect>
+<rect x="554.8" y="127.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-a at 05:13 - 82% of 11 payments</title></rect>
+<rect x="574.4" y="127.0" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-a at 05:14 - 88% of 8 payments</title></rect>
+<rect x="594.0" y="127.0" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>merchant-a at 05:15 - 56% of 9 payments</title></rect>
+<rect x="613.6" y="127.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-a at 05:16 - 75% of 12 payments</title></rect>
+<rect x="633.2" y="127.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-a at 05:17 - 82% of 11 payments</title></rect>
+<text x="96" y="157.9" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" fill="#A8ADBD">merchant-b</text>
+<rect x="104.0" y="145.6" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-b at 04:50 - 83% of 12 payments</title></rect>
+<rect x="123.6" y="145.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-b at 04:51 - 91% of 11 payments</title></rect>
+<rect x="143.2" y="145.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-b at 04:52 - 88% of 8 payments</title></rect>
+<rect x="162.8" y="145.6" width="18.0" height="17.0" rx="2" fill="#151922"><title>merchant-b at 04:53 - 100% of 9 payments</title></rect>
+<rect x="182.4" y="145.6" width="18.0" height="17.0" rx="2" fill="#151922"><title>merchant-b at 04:54 - 100% of 12 payments</title></rect>
+<rect x="202.0" y="145.6" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-b at 04:55 - 82% of 11 payments</title></rect>
+<rect x="221.6" y="145.6" width="18.0" height="17.0" rx="2" fill="#151922"><title>merchant-b at 04:56 - 100% of 8 payments</title></rect>
+<rect x="241.2" y="145.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-b at 04:57 - 89% of 9 payments</title></rect>
+<rect x="260.8" y="145.6" width="18.0" height="17.0" rx="2" fill="#151922"><title>merchant-b at 04:58 - 100% of 12 payments</title></rect>
+<rect x="280.4" y="145.6" width="18.0" height="17.0" rx="2" fill="#151922"><title>merchant-b at 04:59 - 100% of 11 payments</title></rect>
+<rect x="300.0" y="145.6" width="18.0" height="17.0" rx="2" fill="#151922"><title>merchant-b at 05:00 - 100% of 8 payments</title></rect>
+<rect x="319.6" y="145.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-b at 05:01 - 89% of 9 payments</title></rect>
+<rect x="339.2" y="145.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-b at 05:02 - 92% of 12 payments</title></rect>
+<rect x="358.8" y="145.6" width="18.0" height="17.0" rx="2" fill="#151922"><title>merchant-b at 05:03 - 100% of 11 payments</title></rect>
+<rect x="378.4" y="145.6" width="18.0" height="17.0" rx="2" fill="#151922"><title>merchant-b at 05:04 - 100% of 8 payments</title></rect>
+<rect x="398.0" y="145.6" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-b at 05:05 - 78% of 9 payments</title></rect>
+<rect x="417.6" y="145.6" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-b at 05:06 - 83% of 12 payments</title></rect>
+<rect x="437.2" y="145.6" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-b at 05:07 - 82% of 11 payments</title></rect>
+<rect x="456.8" y="145.6" width="18.0" height="17.0" rx="2" fill="#F04A5A"><title>merchant-b at 05:08 - 50% of 8 payments</title></rect>
+<rect x="476.4" y="145.6" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>merchant-b at 05:09 - 56% of 9 payments</title></rect>
+<rect x="496.0" y="145.6" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>merchant-b at 05:10 - 58% of 12 payments</title></rect>
+<rect x="515.6" y="145.6" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-b at 05:11 - 82% of 11 payments</title></rect>
+<rect x="535.2" y="145.6" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-b at 05:12 - 75% of 8 payments</title></rect>
+<rect x="554.8" y="145.6" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-b at 05:13 - 78% of 9 payments</title></rect>
+<rect x="574.4" y="145.6" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-b at 05:14 - 83% of 12 payments</title></rect>
+<rect x="594.0" y="145.6" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>merchant-b at 05:15 - 73% of 11 payments</title></rect>
+<rect x="613.6" y="145.6" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>merchant-b at 05:16 - 62% of 8 payments</title></rect>
+<rect x="633.2" y="145.6" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>merchant-b at 05:17 - 56% of 9 payments</title></rect>
+<text x="96" y="176.5" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" fill="#A8ADBD">bank-x</text>
+<rect x="104.0" y="164.2" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>bank-x at 04:50 - 73% of 11 payments</title></rect>
+<rect x="123.6" y="164.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>bank-x at 04:51 - 89% of 9 payments</title></rect>
+<rect x="143.2" y="164.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>bank-x at 04:52 - 91% of 11 payments</title></rect>
+<rect x="162.8" y="164.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>bank-x at 04:53 - 100% of 9 payments</title></rect>
+<rect x="182.4" y="164.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>bank-x at 04:54 - 91% of 11 payments</title></rect>
+<rect x="202.0" y="164.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>bank-x at 04:55 - 89% of 9 payments</title></rect>
+<rect x="221.6" y="164.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>bank-x at 04:56 - 100% of 11 payments</title></rect>
+<rect x="241.2" y="164.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>bank-x at 04:57 - 100% of 9 payments</title></rect>
+<rect x="260.8" y="164.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>bank-x at 04:58 - 91% of 11 payments</title></rect>
+<rect x="280.4" y="164.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>bank-x at 04:59 - 89% of 9 payments</title></rect>
+<rect x="300.0" y="164.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>bank-x at 05:00 - 91% of 11 payments</title></rect>
+<rect x="319.6" y="164.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>bank-x at 05:01 - 89% of 9 payments</title></rect>
+<rect x="339.2" y="164.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>bank-x at 05:02 - 100% of 11 payments</title></rect>
+<rect x="358.8" y="164.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>bank-x at 05:03 - 100% of 9 payments</title></rect>
+<rect x="378.4" y="164.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>bank-x at 05:04 - 100% of 11 payments</title></rect>
+<rect x="398.0" y="164.2" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>bank-x at 05:05 - 67% of 9 payments</title></rect>
+<rect x="417.6" y="164.2" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>bank-x at 05:06 - 82% of 11 payments</title></rect>
+<rect x="437.2" y="164.2" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>bank-x at 05:07 - 67% of 9 payments</title></rect>
+<rect x="456.8" y="164.2" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>bank-x at 05:08 - 73% of 11 payments</title></rect>
+<rect x="476.4" y="164.2" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>bank-x at 05:09 - 56% of 9 payments</title></rect>
+<rect x="496.0" y="164.2" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>bank-x at 05:10 - 73% of 11 payments</title></rect>
+<rect x="515.6" y="164.2" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>bank-x at 05:11 - 67% of 9 payments</title></rect>
+<rect x="535.2" y="164.2" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>bank-x at 05:12 - 82% of 11 payments</title></rect>
+<rect x="554.8" y="164.2" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>bank-x at 05:13 - 78% of 9 payments</title></rect>
+<rect x="574.4" y="164.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>bank-x at 05:14 - 91% of 11 payments</title></rect>
+<rect x="594.0" y="164.2" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>bank-x at 05:15 - 67% of 9 payments</title></rect>
+<rect x="613.6" y="164.2" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>bank-x at 05:16 - 82% of 11 payments</title></rect>
+<rect x="633.2" y="164.2" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>bank-x at 05:17 - 67% of 9 payments</title></rect>
+<text x="96" y="195.1" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" fill="#A8ADBD">bank-y</text>
+<rect x="104.0" y="182.8" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>bank-y at 04:50 - 78% of 9 payments</title></rect>
+<rect x="123.6" y="182.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>bank-y at 04:51 - 100% of 11 payments</title></rect>
+<rect x="143.2" y="182.8" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>bank-y at 04:52 - 89% of 9 payments</title></rect>
+<rect x="162.8" y="182.8" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>bank-y at 04:53 - 91% of 11 payments</title></rect>
+<rect x="182.4" y="182.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>bank-y at 04:54 - 100% of 9 payments</title></rect>
+<rect x="202.0" y="182.8" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>bank-y at 04:55 - 91% of 11 payments</title></rect>
+<rect x="221.6" y="182.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>bank-y at 04:56 - 100% of 9 payments</title></rect>
+<rect x="241.2" y="182.8" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>bank-y at 04:57 - 82% of 11 payments</title></rect>
+<rect x="260.8" y="182.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>bank-y at 04:58 - 100% of 9 payments</title></rect>
+<rect x="280.4" y="182.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>bank-y at 04:59 - 100% of 11 payments</title></rect>
+<rect x="300.0" y="182.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>bank-y at 05:00 - 100% of 9 payments</title></rect>
+<rect x="319.6" y="182.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>bank-y at 05:01 - 100% of 11 payments</title></rect>
+<rect x="339.2" y="182.8" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>bank-y at 05:02 - 78% of 9 payments</title></rect>
+<rect x="358.8" y="182.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>bank-y at 05:03 - 100% of 11 payments</title></rect>
+<rect x="378.4" y="182.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>bank-y at 05:04 - 100% of 9 payments</title></rect>
+<rect x="398.0" y="182.8" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>bank-y at 05:05 - 73% of 11 payments</title></rect>
+<rect x="417.6" y="182.8" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>bank-y at 05:06 - 78% of 9 payments</title></rect>
+<rect x="437.2" y="182.8" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>bank-y at 05:07 - 82% of 11 payments</title></rect>
+<rect x="456.8" y="182.8" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>bank-y at 05:08 - 56% of 9 payments</title></rect>
+<rect x="476.4" y="182.8" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>bank-y at 05:09 - 82% of 11 payments</title></rect>
+<rect x="496.0" y="182.8" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>bank-y at 05:10 - 56% of 9 payments</title></rect>
+<rect x="515.6" y="182.8" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>bank-y at 05:11 - 82% of 11 payments</title></rect>
+<rect x="535.2" y="182.8" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>bank-y at 05:12 - 67% of 9 payments</title></rect>
+<rect x="554.8" y="182.8" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>bank-y at 05:13 - 82% of 11 payments</title></rect>
+<rect x="574.4" y="182.8" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>bank-y at 05:14 - 78% of 9 payments</title></rect>
+<rect x="594.0" y="182.8" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>bank-y at 05:15 - 64% of 11 payments</title></rect>
+<rect x="613.6" y="182.8" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>bank-y at 05:16 - 56% of 9 payments</title></rect>
+<rect x="633.2" y="182.8" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>bank-y at 05:17 - 73% of 11 payments</title></rect>
+<text x="113.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, monospace" fill="#767C8C">04:50</text>
+<text x="211.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, monospace" fill="#767C8C">04:55</text>
+<text x="309.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, monospace" fill="#767C8C">05:00</text>
+<text x="407.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, monospace" fill="#767C8C">05:05</text>
+<text x="505.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, monospace" fill="#767C8C">05:10</text>
+<text x="603.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, monospace" fill="#767C8C">05:15</text>
+<line x1="397.2" y1="26.0" x2="397.2" y2="202.4" stroke="#E8722E" stroke-width="2"/>
+<text x="397.2" y="21.0" text-anchor="middle" font-size="9.5" font-family="Geist Mono, monospace" fill="#E8722E" font-weight="600">05:05</text>
+        </svg>
+        <figcaption>
+          <span class="fig">9 slices &times; 28 one-minute buckets<button class="cite" data-cite="heat" aria-label="cite heatmap"></button></span> &middot; hover any cell for its value and sample count.
+        </figcaption>
+      </figure>
+
+      <div class="heat-key">
+        <span class="hk">approval</span>
+        <span><i style="background:#151922"></i>95%+</span>
+        <span><i style="background:#1E2430"></i>85</span>
+        <span><i style="background:#5A3038"></i>75</span>
+        <span><i style="background:#8E3340"></i>65</span>
+        <span><i style="background:#C43C4C"></i>55</span>
+        <span><i style="background:#F04A5A"></i>45</span>
+        <span><i style="background:#FF6B78"></i>&lt;45%</span>
+      </div>
+
+      <div class="note tight">
+        <h4>Read it in three moves</h4>
+        <p><b>provider-p2</b> and <b>country CO</b> go hot together while <b>provider-p3</b> and <b>country MX</b> stay calm - so the fault is on the P2 path, not platform-wide. <b>bank-x</b> and <b>bank-y</b> dim by roughly the same amount, so the issuing bank separates nothing, which is exactly why <span class="fig">the descent stopped at provider<button class="cite" data-cite="a-drill" aria-label="cite drilldown"></button></span> rather than naming a bank - and why <span class="fig">provider and issuer are reported separable<button class="cite" data-cite="a-conf" aria-label="cite confounding"></button></span> here.</p>
+      </div>
+
+      <div class="detail-grid">
+        <div>
+          <div class="panel">
+            <h3>Isolation</h3>
+            <p class="hint">Same window, one dimension swapped.</p>
+            <svg viewBox="0 0 400 132" width="100%" role="img" aria-label="Provider P2 approval 52 percent, provider P3 96 percent, all traffic 74 percent.">
+              <title>Cohort comparison</title>
+              <g font-family="Geist Mono, monospace" font-size="10.5">
+                <text x="0" y="20" fill="#FF4D5E" font-weight="600">provider-p2</text>
+                <rect x="0" y="26" width="400" height="14" rx="3" fill="#1A1A22"/>
+                <rect x="0" y="26" width="208" height="14" rx="3" fill="#FF4D5E"/>
+                <text x="214" y="37" fill="#F2F3F7" font-weight="600">52.0%</text>
+
+                <text x="0" y="66" fill="#A8ADBD">provider-p3</text>
+                <rect x="0" y="72" width="400" height="14" rx="3" fill="#1A1A22"/>
+                <rect x="0" y="72" width="384" height="14" rx="3" fill="#3FBF87"/>
+                <text x="378" y="83" fill="#0E0E12" font-weight="600" text-anchor="end">96.0%</text>
+
+                <text x="0" y="112" fill="#A8ADBD">all traffic</text>
+                <rect x="0" y="118" width="400" height="14" rx="3" fill="#1A1A22"/>
+                <rect x="0" y="118" width="296" height="14" rx="3" fill="#6B7BFF"/>
+                <text x="302" y="129" fill="#F2F3F7" font-weight="600">74.0%</text>
+              </g>
+            </svg>
+            <p class="foot"><span class="fig">The sibling is healthy<button class="cite" data-cite="a-cmp" aria-label="cite"></button></span> - the platform is not down, the P2 path is.</p>
+          </div>
+
+          <div class="panel">
+            <h3>Why declines changed</h3>
+            <p class="hint">Share of failed attempts, against this cohort's own baseline.</p>
+            <svg viewBox="0 0 400 128" width="100%" role="img" aria-label="Timeouts up 17.5 points, do not honor up 17.5 points, insufficient funds down 35 points.">
+              <title>Decline mix shift</title>
+              <line x1="200" y1="8" x2="200" y2="118" stroke="#282A30" stroke-width="1"/>
+              <text x="200" y="126" fill="#767C8C" font-size="9" font-family="Geist Mono, monospace" text-anchor="middle">no change</text>
+              <g font-family="Geist Mono, monospace" font-size="10.5">
+                <text x="196" y="22" fill="#A8ADBD" text-anchor="end">timeout</text>
+                <rect x="200" y="12" width="80" height="14" rx="3" fill="#FF4D5E"/>
+                <text x="286" y="23" fill="#FF4D5E" font-weight="600">+17.5</text>
+
+                <text x="196" y="58" fill="#A8ADBD" text-anchor="end">do_not_honor</text>
+                <rect x="200" y="48" width="80" height="14" rx="3" fill="#FF4D5E"/>
+                <text x="286" y="59" fill="#FF4D5E" font-weight="600">+17.5</text>
+
+                <text x="196" y="94" fill="#A8ADBD" text-anchor="end">insufficient_funds</text>
+                <rect x="40" y="84" width="160" height="14" rx="3" fill="#3FBF87"/>
+                <text x="34" y="95" fill="#3FBF87" font-weight="600" text-anchor="end">&minus;35.0</text>
+              </g>
+            </svg>
+            <p class="foot"><span class="fig">Over 46 failed attempts<button class="cite" data-cite="a-dec" aria-label="cite"></button></span> - ordinary funding declines gave way to timeouts and hard declines.</p>
+          </div>
+        </div>
+
+        <div>
+          <div class="panel">
+            <h3>Response time</h3>
+            <p class="hint">Percentiles from stored samples. Not quartiles - the tool publishes p50, p95, p99.</p>
+            <svg viewBox="0 0 400 92" width="100%" role="img" aria-label="Latency p50 is 400 milliseconds, p95 and p99 are both 8000 milliseconds.">
+              <title>Latency percentiles</title>
+              <line x1="20" y1="70" x2="380" y2="70" stroke="#282A30"/>
+              <g font-family="Geist Mono, monospace" font-size="9.5" fill="#767C8C" text-anchor="middle">
+                <text x="20" y="84">0</text><text x="200" y="84">4s</text><text x="380" y="84">8s</text>
+              </g>
+              <rect x="20" y="30" width="18" height="24" rx="3" fill="#6B7BFF"/>
+              <line x1="38" y1="42" x2="380" y2="42" stroke="#FF4D5E" stroke-width="2"/>
+              <circle cx="380" cy="42" r="5" fill="#FF4D5E"/>
+              <text x="24" y="24" font-size="9.5" font-family="Geist Mono, monospace" fill="#6B7BFF">p50 400ms</text>
+              <text x="380" y="24" font-size="9.5" font-family="Geist Mono, monospace" fill="#FF4D5E" text-anchor="end">p95 / p99 8,000ms</text>
+            </svg>
+            <p class="foot"><span class="fig">Timeout rate 30.6%, service health degraded<button class="cite" data-cite="a-ops" aria-label="cite"></button></span>. Runtime health not observed; provider status page unavailable.</p>
+          </div>
+
+          <div class="panel">
+            <h3>What made it Critical</h3>
+            <p class="hint">The four weighted terms behind the score. No statistical term reaches severity.</p>
+            <svg viewBox="0 0 400 132" width="100%" role="img" aria-label="Severity components: money impact 0.85 at weight 55 percent, blast radius 0.5 at 20 percent, persistence 0.25 at 15 percent, trajectory 1.0 at 10 percent.">
+              <title>Severity components</title>
+              <g font-family="Geist Mono, monospace" font-size="10">
+                <text x="0" y="14" fill="#A8ADBD">money  55%</text>
+                <rect x="104" y="4" width="296" height="12" rx="3" fill="#1A1A22"/>
+                <rect x="104" y="4" width="252" height="12" rx="3" fill="#FF4D5E"/>
+                <text x="362" y="14" fill="#F2F3F7">.85</text>
+
+                <text x="0" y="46" fill="#A8ADBD">radius 20%</text>
+                <rect x="104" y="36" width="296" height="12" rx="3" fill="#1A1A22"/>
+                <rect x="104" y="36" width="148" height="12" rx="3" fill="#E8722E"/>
+                <text x="258" y="46" fill="#F2F3F7">.50</text>
+
+                <text x="0" y="78" fill="#A8ADBD">lasting 15%</text>
+                <rect x="104" y="68" width="296" height="12" rx="3" fill="#1A1A22"/>
+                <rect x="104" y="68" width="74" height="12" rx="3" fill="#B0842C"/>
+                <text x="184" y="78" fill="#F2F3F7">.25</text>
+
+                <text x="0" y="110" fill="#A8ADBD">getting worse 10%</text>
+                <rect x="104" y="100" width="296" height="12" rx="3" fill="#1A1A22"/>
+                <rect x="104" y="100" width="296" height="12" rx="3" fill="#FF4D5E"/>
+                <text x="392" y="110" fill="#0E0E12" font-weight="600" text-anchor="end">1.0</text>
+              </g>
+            </svg>
+            <p class="foot"><span class="fig">Score .71, band critical<button class="cite" data-cite="a-c3" aria-label="cite"></button></span>. "Lasting" is understated by the onset defect above.</p>
+          </div>
+
+          <div class="panel">
+            <h3>Diagnosis</h3>
+            <div class="dual">
+              <div><span class="dual-l">priority</span><span class="sev sev-critical"><i></i>Critical</span></div>
+              <div><span class="dual-l">confidence</span><span class="conf">low</span></div>
+            </div>
+            <p class="foot" style="margin-top:12px">
+              Investigation agent unreachable, so there is <b>no cause</b> - only facts and a retained evidence trail.
+              Priority does not move because confidence is low.
+            </p>
+            <p class="foot"><b>Next:</b> review the facts and the trail. Do not execute automatic remediation.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel span-full">
+        <h3>What to tell the merchant</h3>
+        <div class="script">
+          <p>Since about <b>05:05 UTC</b>, approvals on the <b>Provider P2</b> route dropped from <b>85%</b> to <b>52%</b>. About <b>16 payments</b> worth <b>$1,649</b> did not go through.</p>
+          <p>Your <b>P3</b> route is unaffected at <b>96%</b>, so this is not platform-wide. Failures are timeouts and hard declines on P2, whose p95 response time went from <b>400ms</b> to <b>8s</b>.</p>
+          <p>Cause not confirmed, and we are not guessing. At this rate it is roughly <b>$19,785/hour</b> at risk. I will come back as soon as we can attribute it.</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== -->
+<section class="screen" id="escalate">
+  <div class="screen-head">
+    <h2>Escalation</h2>
+    <span class="who">Severity routes. Confidence never does.</span>
+  </div>
+
+  <div class="frame">
+    <div class="frame-bar"><span class="dot"></span><span class="path mono">/incidents/inc-2026-08-30-c2b28a30/escalation</span></div>
+    <div class="frame-body">
+
+      <figure class="chart span-full" style="margin-bottom:22px">
+        <svg viewBox="0 0 640 150" width="100%" role="img" aria-label="Channel binding: low and medium go to the dashboard only; high adds Slack; critical adds a phone call. This incident is critical, so all three fire.">
+          <title>Severity to channel binding</title>
+          <g font-family="Geist Mono, monospace" font-size="10.5">
+            <text x="0" y="20" fill="#767C8C" font-size="9.5">SEVERITY</text>
+            <text x="150" y="20" fill="#767C8C" font-size="9.5">DASHBOARD</text>
+            <text x="310" y="20" fill="#767C8C" font-size="9.5">SLACK</text>
+            <text x="450" y="20" fill="#767C8C" font-size="9.5">PHONE</text>
+
+            <text x="0" y="48" fill="#6E7789">low</text>
+            <circle cx="176" cy="44" r="6" fill="#6E7789"/>
+            <circle cx="330" cy="44" r="6" fill="none" stroke="#282A30" stroke-width="1.5"/>
+            <circle cx="470" cy="44" r="6" fill="none" stroke="#282A30" stroke-width="1.5"/>
+
+            <text x="0" y="74" fill="#B0842C">medium</text>
+            <circle cx="176" cy="70" r="6" fill="#B0842C"/>
+            <circle cx="330" cy="70" r="6" fill="none" stroke="#282A30" stroke-width="1.5"/>
+            <circle cx="470" cy="70" r="6" fill="none" stroke="#282A30" stroke-width="1.5"/>
+
+            <text x="0" y="100" fill="#E8722E">high</text>
+            <circle cx="176" cy="96" r="6" fill="#E8722E"/>
+            <circle cx="330" cy="96" r="6" fill="#E8722E"/>
+            <circle cx="470" cy="96" r="6" fill="none" stroke="#282A30" stroke-width="1.5"/>
+
+            <rect x="-8" y="112" width="530" height="28" rx="6" fill="#FF4D5E" fill-opacity=".09"/>
+            <text x="0" y="130" fill="#FF4D5E" font-weight="600">critical</text>
+            <circle cx="176" cy="126" r="6" fill="#FF4D5E"/>
+            <circle cx="330" cy="126" r="6" fill="#FF4D5E"/>
+            <circle cx="470" cy="126" r="6" fill="#FF4D5E"/>
+            <text x="534" y="130" fill="#FF4D5E" font-size="9.5">this incident</text>
+          </g>
+        </svg>
+      </figure>
+
+      <div class="detail-grid">
+        <div>
+          <div class="panel">
+            <h3>Slack</h3>
+            <div class="slackish">
+              <div class="bar mono"><span style="color:var(--ink-2)">#control-tower</span> &middot; now</div>
+              <div class="msg">
+                <div class="av"><img src="yuno-mark-light.svg" alt=""></div>
+                <div style="min-width:0">
+                  <div class="who">Control Tower <em>APP</em></div>
+                  <div class="block">
+                    <p><b>Critical &mdash; approval collapse on provider-p2</b></p>
+                    <p style="color:var(--ink-2)">85.0% &rarr; 52.0% since 05:14:00Z. 16 payments lost, $1,648.72 at risk, $19,784.62/hr if sustained.</p>
+                    <p style="color:var(--ink-2)">Diagnostic confidence: <b style="color:var(--ink)">low</b>. No causal narrative &mdash; agent unreachable.</p>
+                  </div>
+                  <div class="ctx mono"><span>q_cohort_metrics_6cdcc91b38e171f6</span><span>q_financial_impact_d45713aba6f16b3d</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="panel">
+            <h3>Phone</h3>
+            <div class="script" style="font-size:12.5px">
+              <p>"Yuno Control Tower, critical incident. Card approvals on provider P two have fallen from eighty five percent to fifty two percent. Estimated nineteen thousand seven hundred dollars per hour at risk."</p>
+              <p>"Cause not confirmed. Confidence is low. Please open the Control Tower dashboard."</p>
+            </div>
+          </div>
+          <div class="panel">
+            <h3>Blast radius</h3>
+            <div class="br">
+              <span class="br-i"><b>50</b>payments</span>
+              <span class="br-i"><b>2</b>merchants <em>affected_merchant_ids</em></span>
+              <span class="br-i"><b>2</b>countries <em>affected_countrys</em></span>
+              <span class="br-i"><b>1</b>provider</span>
+              <span class="br-i"><b>1</b>card network</span>
+            </div>
+            <p class="foot" style="color:var(--sev-critical)">Two names miss the contract (<code>affected_merchants</code>, <code>affected_countries</code>), so a contract-conformant dashboard reads them as absent. <b>Decision 2.</b></p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== -->
+<section class="screen" id="decide">
+  <div class="screen-head">
+    <h2>Decisions</h2>
+    <span class="who">Five calls I could not make from the contracts</span>
+  </div>
+
+  <div class="dec-grid">
+  <form class="q" data-lavish-question="ranking" onsubmit="event.preventDefault();var v=new FormData(event.currentTarget).get('ranking');if(v)window.lavish.queuePrompt('Queue ordering decision: '+v,{tag:'decision',text:'Queue ordering: '+v,element:event.currentTarget,data:{question:'queue-ordering',answer:v}});">
+    <h4>1 &middot; What orders the queue?</h4>
+    <p class="why">Severity and money disagree on this run.</p>
+    <label><input type="radio" name="ranking" value="loss per hour, severity shown as a chip"><span>Loss per hour<small>Money leads; severity shows but never reorders.</small></span></label>
+    <label><input type="radio" name="ranking" value="severity band first, loss per hour within band"><span>Severity band first<small>Money sorts only inside a band.</small></span></label>
+    <label><input type="radio" name="ranking" value="TAM-switchable sort, defaulting to loss per hour"><span>Let the TAM switch<small>Default money, one control to flip.</small></span></label>
+    <button type="submit">Queue answer</button>
+  </form>
+
+  <form class="q" data-lavish-question="blastradius" onsubmit="event.preventDefault();var v=new FormData(event.currentTarget).get('blastradius');if(v)window.lavish.queuePrompt('Blast-radius field mismatch decision: '+v,{tag:'decision',text:'Blast radius: '+v,element:event.currentTarget,data:{question:'blast-radius',answer:v}});">
+    <h4>2 &middot; Blast-radius field names</h4>
+    <p class="why">Our detector drifts from our own contract.</p>
+    <label><input type="radio" name="blastradius" value="fix it in W2 now, before any W4 implementation"><span>Fix in W2 first<small>Then the hand-up is built on a contract that holds.</small></span></label>
+    <label><input type="radio" name="blastradius" value="fix in W2 and separately note it in STATUS.md for juank"><span>Fix and flag<small>Plus a STATUS.md line for juank.</small></span></label>
+    <label><input type="radio" name="blastradius" value="leave it, and have the dashboard read the emitted names"><span>Leave it<small>Fastest, bakes the drift in.</small></span></label>
+    <button type="submit">Queue answer</button>
+  </form>
+
+  <form class="q" data-lavish-question="onset" onsubmit="event.preventDefault();var v=new FormData(event.currentTarget).get('onset');if(v)window.lavish.queuePrompt('Onset defect decision: '+v,{tag:'decision',text:'Onset defect: '+v,element:event.currentTarget,data:{question:'onset-defect',answer:v}});">
+    <h4>3 &middot; The onset defect</h4>
+    <p class="why">Wrong "since when", and it under-ranks persistence.</p>
+    <label><input type="radio" name="onset" value="fix onset and buckets_sustained in W2 now, with a regression test"><span>Fix it now<small>Widen the scanned series, with a regression test.</small></span></label>
+    <label><input type="radio" name="onset" value="file it and fix after the code freeze"><span>File it, fix after freeze<small>Freeze is 10:30.</small></span></label>
+    <label><input type="radio" name="onset" value="scout it first - the severity persistence term may be intentional"><span>Investigate first<small>The cap may be deliberate.</small></span></label>
+    <button type="submit">Queue answer</button>
+  </form>
+
+  <form class="q" data-lavish-question="total" onsubmit="event.preventDefault();var v=new FormData(event.currentTarget).get('total');if(v)window.lavish.queuePrompt('Portfolio total decision: '+v,{tag:'decision',text:'Portfolio total: '+v,element:event.currentTarget,data:{question:'portfolio-total',answer:v}});">
+    <h4>4 &middot; The portfolio total</h4>
+    <p class="why">A TAM header wants one money number. Summing here is forbidden.</p>
+    <label><input type="radio" name="total" value="ask W2 for a cited portfolio exposure metric across open incidents"><span>Add it to W2<small>A new cited figure over open incidents. Correct, costs a contract change.</small></span></label>
+    <label><input type="radio" name="total" value="show only the worst single incident, no total"><span>Show the worst only<small>What the mockup does now. Honest, less punchy.</small></span></label>
+    <label><input type="radio" name="total" value="show the three cited figures side by side and let the reader add them"><span>Show all three<small>No total, all values visible.</small></span></label>
+    <button type="submit">Queue answer</button>
+  </form>
+
+  <form class="q" data-lavish-question="scope" onsubmit="event.preventDefault();var v=new FormData(event.currentTarget).get('scope');if(v)window.lavish.queuePrompt('Mockup scope decision: '+v,{tag:'decision',text:'Scope: '+v,element:event.currentTarget,data:{question:'scope',answer:v}});">
+    <h4>5 &middot; Right shape to hand up?</h4>
+    <p class="why">Juank already has W4 code on main with his own look.</p>
+    <label><input type="radio" name="scope" value="right shape, proceed to a hand-up branch"><span>Right shape<small>Reference branch, no PR, no claim.</small></span></label>
+    <label><input type="radio" name="scope" value="right content, but restyle to juank's existing surfaces design"><span>Right content, wrong skin<small>Rebuild in the design already on main.</small></span></label>
+    <label><input type="radio" name="scope" value="narrow it - hand up only the citation affordance and the incident detail"><span>Narrow it<small>Just the citations and the detail view.</small></span></label>
+    <button type="submit">Queue answer</button>
+  </form>
+  </div>
+</section>
+
+<footer class="wrap">
+  <p><b>Brand.</b> Colours and logo from Yuno's published brand guidelines, <a href="https://y.uno/en/brand-guidelines">y.uno/en/brand-guidelines</a>: Yuno Blue #3E4FE0, Unity Black #000000, White #FFFFFF, Harmony Lilac #E8EAF5, plus #6B7BFF / #3040C8 / #D2D9FF / #282A30 read from that page's stylesheet. Wordmark and logomark are the unmodified published SVGs. Typefaces Geist and Geist Mono, the faces that page loads.</p>
+  <p><b>Not affiliated with Yuno.</b> Internal design mockup for the NextWave Control Tower challenge; not a Yuno product and not endorsed by Yuno.</p>
+  <p><b>Data.</b> One real run - <code class="mono">python3 -m detector seed &amp;&amp; python3 -m detector detect</code> plus direct C2 tool calls, config det-v1, measured through 2026-08-30T05:18:00Z. The two other incidents came from the same detector over generated event files. The investigation result is the project's own deterministic degraded path, which is why confidence reads low with no narrative.</p>
+</footer>
+
+</main>
+</main>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-hidden="true" aria-label="Evidence citation">
+  <div class="drawer-head">
+    <div style="min-width:0">
+      <h3 id="dTool">Citation</h3>
+      <p id="dPurpose"></p>
+    </div>
+    <button class="drawer-close" id="dClose" aria-label="Close citation">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+  <div class="drawer-body">
+    <dl>
+      <dt>Tool</dt><dd class="mono" id="dToolName"></dd>
+      <dt>Query</dt><dd class="mono" id="dQuery"></dd>
+      <dt>Measured</dt><dd class="mono" id="dAsOf"></dd>
+      <dt>Config</dt><dd class="mono" id="dCfg">det-v1</dd>
+    </dl>
+    <h4>Exact call</h4>
+    <pre id="dCall"></pre>
+    <h4>Field read</h4>
+    <pre id="dField"></pre>
+    <h4>Re-run it</h4>
+    <pre id="dRerun"></pre>
+  </div>
+</aside>
+
+<script>
+const CITES = {
+  demo: {tool:"cohort_metrics", purpose:"Example - this is what every citation opens.",
+    q:"q_cohort_metrics_6cdcc91b38e171f6", asOf:"2026-08-30T05:18:00Z",
+    call:'{"cohort":{"provider":"provider-p2"},\n "window":{"start":"2026-08-30T05:14:00Z",\n           "end":"2026-08-30T05:19:00Z"}}',
+    field:'payment_metrics.approval_conversion = 0.52',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/cohort_metrics.py"},
+
+  "a-cm": {tool:"cohort_metrics", purpose:"Measured conversion and volume for the affected cohort.",
+    q:"q_cohort_metrics_6cdcc91b38e171f6", asOf:"2026-08-30T05:18:00Z",
+    call:'{"cohort":{"provider":"provider-p2"},\n "window":{"start":"2026-08-30T05:14:00Z",\n           "end":"2026-08-30T05:19:00Z"}}',
+    field:'payment_metrics.approval_conversion          = 0.52\npayment_metrics.expected_approval_conversion = 0.8497435897\npayment_metrics.approved_payments            = 26\npayment_metrics.attempted_payments           = 50',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/cohort_metrics.py"},
+
+  "a-fin": {tool:"financial_impact", purpose:"Deterministic business impact. GMV at risk, not platform revenue.",
+    q:"q_financial_impact_d45713aba6f16b3d", asOf:"2026-08-30T05:18:00Z",
+    call:'{"incident_id":"inc-2026-08-30-c2b28a30"}',
+    field:'gmv_at_risk.amount                      = 1648.72\nloss_per_hour.amount                    = 19784.62\nestimated_lost_approved_volume.payments = 16\nattempted_value.amount                  = 5000.0',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/financial_impact.py"},
+
+  "a-series": {tool:"metric_series", purpose:"The only tool that answers “since when”. Onset and trend read it.",
+    q:"q_metric_series_94764fae4f5c6263", asOf:"2026-08-30T05:18:00Z",
+    call:'{"cohort":{"provider":"provider-p2"},\n "window":{"start":"2026-08-30T04:14:00Z",\n           "end":"2026-08-30T05:19:00Z"},\n "metric":"payment_approval_conversion",\n "bucket_seconds":300}',
+    field:'points[11].value = 0.50   (05:05–05:10)\npoints[12].value = 0.56   (05:10–05:15)\nwatermark        = 2026-08-30T05:18:00Z\nsamples per point = 50',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/metric_series.py"},
+
+  "a-series60": {tool:"metric_series", purpose:"One-minute buckets, the detector's own width. This is what exposes the onset gap.",
+    q:"q_metric_series_e7c2c7d4bbef910a", asOf:"2026-08-30T05:18:00Z",
+    call:'{"cohort":{"provider":"provider-p2"},\n "window":{"start":"2026-08-30T04:50:00Z",\n           "end":"2026-08-30T05:19:00Z"},\n "metric":"payment_approval_conversion",\n "bucket_seconds":60}',
+    field:'05:04 value = 1.0   ← last bucket at or above baseline\n05:05 value = 0.6   ← first bucket below it\n05:08 value = 0.4\n05:14 value = 0.7   ← what the record calls onset\nwatermark   = 2026-08-30T05:18:00Z\nsamples per bucket = 10',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/metric_series.py"},
+
+  heat: {tool:"metric_series", purpose:"Nine separate calls, one per slice, same window and bucket width. The heatmap is nine cited series side by side - no cross-slice arithmetic.",
+    q:"9 queries, one per row", asOf:"2026-08-30T05:18:00Z",
+    call:'{"cohort":<one of the nine>,\n "window":{"start":"2026-08-30T04:50:00Z",\n           "end":"2026-08-30T05:19:00Z"},\n "metric":"payment_approval_conversion",\n "bucket_seconds":60}',
+    field:'All traffic  q_metric_series_a980e17a53de7da5\nprovider-p2  q_metric_series_e7c2c7d4bbef910a\nprovider-p3  q_metric_series_e93e63d6ab3979a1\ncountry CO   q_metric_series_e3f5c69deaf6b13e\ncountry MX   q_metric_series_6abf857d2b7a88a3\nmerchant-a   q_metric_series_0c88945aa47edd7c\nmerchant-b   q_metric_series_4b48510aa363fbff\nbank-x       q_metric_series_09aae19d864de545\nbank-y       q_metric_series_9a4ae8e7917dfd04',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/metric_series.py"},
+
+
+  money: {tool:"metric_series", purpose:"Two series over the same window and bucket width: how many payments were attempted, and how many landed.",
+    q:"2 queries", asOf:"2026-08-30T05:18:00Z",
+    call:'{"cohort":{"provider":"provider-p2"},\n "window":{"start":"2026-08-30T04:50:00Z",\n           "end":"2026-08-30T05:19:00Z"},\n "metric":"approved_payments" | "attempted_payments"\n          | "attempted_value_usd",\n "bucket_seconds":60}',
+    field:'attempted_payments   q_metric_series_b77d19797d0f7392\n  flat at 10 per minute, all 28 buckets\napproved_payments    q_metric_series_ecbfd917fc5b0ab6\n  9-10/min through 05:04, then 4-7/min\nattempted_value_usd  q_metric_series_49788a19dd09264c\n  flat at 1000.0 per minute, all 28 buckets',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/metric_series.py"},
+
+  "a-money": {tool:"cohort_metrics + financial_impact", purpose:"The window's value in, value out, and the part that would have landed at baseline.",
+    q:"q_cohort_metrics_6cdcc91b38e171f6 / q_financial_impact_d45713aba6f16b3d", asOf:"2026-08-30T05:18:00Z",
+    call:'{"cohort":{"provider":"provider-p2"},\n "window":{"start":"2026-08-30T05:14:00Z",\n           "end":"2026-08-30T05:19:00Z"}}',
+    field:'volume.attempted.amount = 5000.0\nvolume.approved.amount  = 2600.0\ngmv_at_risk.amount      = 1648.72\nexpected_approval_rate  = 0.849744\nThe grey band is the remainder and carries no\ndisplayed figure - it is not a cited number.',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/cohort_metrics.py"},
+
+  scope: {tool:"confounding_check + C3 blast radius", purpose:"How much of the estate is in play. Counts of observed values, not a computed health score.",
+    q:"q_confounding_check_957cc3c4db7b2bc4", asOf:"2026-08-30T05:18:00Z",
+    call:'{"dimension_a":"provider",\n "dimension_b":"issuing_bank",\n "window":{"start":"2026-08-30T05:14:00Z",\n           "end":"2026-08-30T05:19:00Z"}}',
+    field:'observed_mappings names exactly two providers:\n  provider-p2, provider-p3\nBoth have an open incident of their own\n  (critical, medium).\n\nBlast radius on inc-...c2b28a30 reports\n  affected_merchant_ids = 2, of the two\n  merchants observed in the window.',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/confounding_check.py"},
+
+  "a-drill": {tool:"drilldown", purpose:"The localisation path, level by level, and why it stopped.",
+    q:"q_drilldown_0e0679ca4de11f4d", asOf:"2026-08-30T05:18:00Z",
+    call:'{"incident_id":"inc-2026-08-30-c2b28a30"}',
+    field:'levels[0] all_traffic  conversion = 0.74\nlevels[1] provider     conversion = 0.52\nstopped_at  = "provider"\nstop_reason = no dimension separates siblings by >= 0.1',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/drilldown.py"},
+
+  "a-dec": {tool:"decline_breakdown", purpose:"Normalised decline mix and its shift against the baseline.",
+    q:"q_decline_breakdown_5b853a1e8d8a5db1", asOf:"2026-08-30T05:18:00Z",
+    call:'{"cohort":{"provider":"provider-p2"},\n "window":{"start":"2026-08-30T05:14:00Z",\n           "end":"2026-08-30T05:19:00Z"}}',
+    field:'normalised_denominator = "failed_attempts" (46)\ntimeout            share 0.4783  shift +0.1752\ndo_not_honor       share 0.4783  shift +0.1752\ninsufficient_funds share 0.0435  shift -0.3505',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/decline_breakdown.py"},
+
+  "a-retry": {tool:"retry_stats", purpose:"Retry depth and amplification, without counting retries as new payments.",
+    q:"q_retry_stats_7a6072417d09d5d2", asOf:"2026-08-30T05:18:00Z",
+    call:'{"cohort":{"provider":"provider-p2"},\n "window":{"start":"2026-08-30T05:14:00Z",\n           "end":"2026-08-30T05:19:00Z"}}',
+    field:'retry_amplification_factor = 1.44\nretried_payments           = 22\npayments                   = 50\nattempts                   = 72',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/retry_stats.py"},
+
+  "a-ops": {tool:"operational_metrics", purpose:"Latency, error and timeout rates, and service health.",
+    q:"q_operational_metrics_3a7ad908e89e095e", asOf:"2026-08-30T05:18:00Z",
+    call:'{"target":{"kind":"cohort","provider":"provider-p2"},\n "window":{"start":"2026-08-30T05:14:00Z",\n           "end":"2026-08-30T05:19:00Z"}}',
+    field:'timeout_rate          = 0.3055555556\nlatency_ms.p95        = 8000.0\nlatency_ms.p50        = 400.0\nservice_health.status = "degraded"\nruntime_health.status = "unobserved"  (0 samples)',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/operational_metrics.py"},
+
+  "a-cmp": {tool:"cohort_compare", purpose:"Target against its siblings and parent, to show isolation.",
+    q:"q_cohort_compare_74da9c67dc650dff", asOf:"2026-08-30T05:18:00Z",
+    call:'{"cohort":{"provider":"provider-p2"},\n "window":{"start":"2026-08-30T05:14:00Z",\n           "end":"2026-08-30T05:19:00Z"},\n "compare_dimensions":["provider"]}',
+    field:'target   provider-p2  conversion = 0.52  (26/50)\nsibling  provider-p3  conversion = 0.96  (48/50)\nparent   all traffic  conversion = 0.74  (74/100)',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/cohort_compare.py"},
+
+  "a-conf": {tool:"confounding_check", purpose:"Whether two dimensions are structurally inseparable. A false result is valid.",
+    q:"q_confounding_check_957cc3c4db7b2bc4", asOf:"2026-08-30T05:18:00Z",
+    call:'{"dimension_a":"provider",\n "dimension_b":"issuing_bank",\n "window":{"start":"2026-08-30T05:14:00Z",\n           "end":"2026-08-30T05:19:00Z"}}',
+    field:'structurally_inseparable = false\nprovider-p2 appears with bank-x AND bank-y\nprovider-p3 appears with bank-x AND bank-y\n→ the data CAN discriminate provider from issuer here',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/confounding_check.py"},
+
+  "a-ext": {tool:"external_status", purpose:"Third-party corroboration. Unavailable is a successful response, not a failure.",
+    q:"q_external_status_7a07f76ce8d9371c", asOf:"2026-08-29T10:15:00Z",
+    call:'{"provider":"provider-p2"}',
+    field:'status = "unavailable"\nreason = "The provider status endpoint did not\n          answer within the adapter timeout."\ndiagnostic_effect = first-party evidence remains usable',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/external_status.py"},
+
+  "a-c3": {tool:"C3 incident record", purpose:"The detector's own output, read directly - not a C2 query.",
+    q:"inc-2026-08-30-c2b28a30", asOf:"2026-08-30T05:18:00Z",
+    call:'python3 -m detector detect',
+    field:'onset                        = "2026-08-30T05:14:00Z"\npersistence.observed_for_seconds = 300\nseverity                     = "critical"\nblast_radius.attempted_payments = 50\nchange.absolute_delta        = -0.329744',
+    rerun:"python3 -m detector seed && python3 -m detector detect"},
+
+  "b-c3": {tool:"C3 incident record", purpose:"The Mexico incident, from its own detection sweep.",
+    q:"inc-2026-08-30-fc53ad48", asOf:"2026-08-30T05:18:00Z",
+    call:'python3 -m detector detect',
+    field:'affected_cohort   = {"country":"MX"}\nchange.expected   = 0.914744\nchange.actual     = 0.76\nonset             = "2026-08-30T05:14:00Z"\nseverity          = "high"\npersistence.observed_for_seconds = 240',
+    rerun:"python3 -m detector ingest <events> && python3 -m detector detect"},
+
+  "b-fin": {tool:"financial_impact", purpose:"Business impact for the Mexico incident.",
+    q:"inc-2026-08-30-fc53ad48", asOf:"2026-08-30T05:18:00Z",
+    call:'{"incident_id":"inc-2026-08-30-fc53ad48"}',
+    field:'attempted_value.amount = 42500.0\ngmv_at_risk.amount     = 6576.60\nloss_per_hour.amount   = 78919.23\nestimated_lost_approved_volume.payments = 8',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/financial_impact.py"},
+
+  "c-c3": {tool:"C3 incident record", purpose:"The Provider P3 incident, from its own detection sweep.",
+    q:"inc-2026-08-30-23d18b1e", asOf:"2026-08-30T05:18:00Z",
+    call:'python3 -m detector detect',
+    field:'affected_cohort = {"provider":"provider-p3"}\nchange.expected = 0.899487\nchange.actual   = 0.76\nseverity        = "medium"\npersistence.observed_for_seconds = 180',
+    rerun:"python3 -m detector ingest <events> && python3 -m detector detect"},
+
+  "c-fin": {tool:"financial_impact", purpose:"Business impact for the Provider P3 incident.",
+    q:"inc-2026-08-30-23d18b1e", asOf:"2026-08-30T05:18:00Z",
+    call:'{"incident_id":"inc-2026-08-30-23d18b1e"}',
+    field:'attempted_value.amount = 2000.0\ngmv_at_risk.amount     = 278.97\nloss_per_hour.amount   = 3347.69\nestimated_lost_approved_volume.payments = 7',
+    rerun:"printf '%s' '<input>' | python3 stubs/evidence/financial_impact.py"}
+};
+
+const drawer = document.getElementById('drawer');
+const scrim  = document.getElementById('scrim');
+let openBtn = null;
+
+function openCite(btn){
+  const c = CITES[btn.dataset.cite];
+  if(!c) return;
+  if(openBtn) openBtn.classList.remove('on');
+  openBtn = btn; btn.classList.add('on');
+  document.getElementById('dTool').textContent     = c.tool;
+  document.getElementById('dPurpose').textContent  = c.purpose;
+  document.getElementById('dToolName').textContent = c.tool;
+  document.getElementById('dQuery').textContent    = c.q;
+  document.getElementById('dAsOf').textContent     = c.asOf;
+  document.getElementById('dCall').textContent     = c.call;
+  document.getElementById('dField').textContent    = c.field;
+  document.getElementById('dRerun').textContent    = c.rerun;
+  drawer.classList.add('open'); drawer.setAttribute('aria-hidden','false');
+  scrim.classList.add('on');
+  document.getElementById('dClose').focus();
+}
+function closeCite(){
+  drawer.classList.remove('open'); drawer.setAttribute('aria-hidden','true');
+  scrim.classList.remove('on');
+  if(openBtn){ openBtn.classList.remove('on'); openBtn.focus(); openBtn = null; }
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('button.cite');
+  if(b){ e.preventDefault(); openCite(b); }
+});
+document.getElementById('dClose').addEventListener('click', closeCite);
+scrim.addEventListener('click', closeCite);
+document.addEventListener('keydown', e => { if(e.key === 'Escape') closeCite(); });
+
+// section nav highlight
+const links = [...document.querySelectorAll('nav.jump a')];
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(en => {
+    if(en.isIntersecting){
+      links.forEach(l => l.classList.toggle('on', l.getAttribute('href') === '#'+en.target.id));
+    }
+  });
+}, {rootMargin:'-52px 0px -70% 0px'});
+document.querySelectorAll('section.screen').forEach(s => obs.observe(s));
+</script>
+</body>
+</html>
