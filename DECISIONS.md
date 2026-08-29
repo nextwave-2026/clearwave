@@ -43,3 +43,5 @@ the other side pushed first, run `git pull --no-rebase && git push`; union merge
   -> other side: use `docs/prd.md` as the product authority and correct disagreements by appending here
 - 2026-08-29T18:09Z  derek  build divided into four workstreams W1-W4 with contract ownership in `docs/ownership.md`
   -> other side: keep workstream boundaries and ownership legible from the repository
+- 2026-08-29T18:11Z  derek  the two DECISIONS.md entries timestamped 2026-08-29T18:09Z whose paths render as bare backslashes were corrupted by a tooling error and are void, superseded by the correctly rendered entries of the same timestamp
+  -> other side: disregard the backslash entries and read the entries with backticked paths
