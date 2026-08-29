@@ -5,21 +5,11 @@ a terminal state, the matching payments.closed event
 for in README-FOR-RAUL.md - see worker/registry/*.schema.json for the
 frozen, authoritative field list.
 
-Two generation modes, picked by a flag on the builder:
-
-- "normal": healthy traffic - most payments approve on the first attempt, a
-  minority decline and either retry (mostly succeeding) or get abandoned.
-  Matches the non-stationary baseline W1 owns (PRD section 9).
-- "anomaly": every attempt in the chain is forced to decline with the same
-  reason, so a chain either exhausts all attempts (outcome "failed") rather
-  than recovering on retry - this is what makes retry amplification show up
-  as evidence (PRD section 8) instead of looking like normal noise.
-
-This is the seed for incident injection (PRD section 5, 9, 26, 27), not the
-real thing yet: it only varies enough to produce something detectable, one
-merchant-wide switch rather than a scoped cohort. Which dimensions misbehave,
-for how long, and the hidden ground truth needed to grade a diagnosis are a
-later W1 increment - deliberately not decided here.
+Incident scoping/effects live in worker/helpers/incident.py, not here -
+this module only applies whatever Incident it's given. Unaffected attempts
+always get ordinary baseline behaviour, so one worker run carries both
+healthy and incident traffic at once - what the challenge's trial-by-fire
+scenario actually looks like.
 
 A payment closes ("payments.closed") only once its chain stops - approved,
 all attempts exhausted ("failed"), or given up on before exhausting them
@@ -31,19 +21,14 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from faker import Faker
-
+from worker.helpers.incident import DECLINE, LATENCY, OUTAGE
 from worker.helpers.merchant import Merchant
+from worker.reference.banks import pick_bank
 from worker.reference.geography import City, pick_city
 
-NORMAL = "normal"
-ANOMALY = "anomaly"
-MODES = (NORMAL, ANOMALY)
-
 MAX_ATTEMPTS = 3
-NORMAL_DECLINE_PROBABILITY = 0.12
-ANOMALY_DECLINE_PROBABILITY = 0.95
-RETRY_PROBABILITY = 0.65  # chance a declined/error attempt (normal mode) gets retried
+BASELINE_DECLINE_PROBABILITY = 0.12
+RETRY_PROBABILITY = 0.65  # chance an unaffected declined/error attempt gets retried
 
 CARD_NETWORKS = ["visa", "mastercard", "amex", "diners", "elo", "hipercard"]
 DECLINE_REASONS = [
@@ -53,10 +38,6 @@ DECLINE_REASONS = [
     "processing_error", "provider_timeout", "provider_error", "rate_limited",
     "currency_not_supported", "duplicate", "other",
 ]
-ANOMALY_DECLINE_REASON = "do_not_honor"  # fixed, not random - a real incident
-# looks like the same reason recurring, not noise. See _apply_decline.
-
-fake = Faker()
 
 
 def _now_iso() -> str:
@@ -64,22 +45,31 @@ def _now_iso() -> str:
 
 
 class PaymentAttemptBuilder:
-    def __init__(self, merchant: Merchant, mode: str = NORMAL):
-        if mode not in MODES:
-            raise ValueError(f"unknown mode {mode!r}, expected one of: {MODES}")
+    def __init__(self, merchant: Merchant, incident=None):
         self.merchant = merchant
-        self.mode = mode
+        self.incident = incident
 
-    def build_chain(self) -> list[dict]:
+    def build_chain(self, forced: dict | None = None) -> list[dict]:
         """One payment's full attempt chain: 1..MAX_ATTEMPTS entries,
-        stopping at the first approval, at MAX_ATTEMPTS, or when a declined
-        attempt isn't retried (normal mode only - anomaly mode always
-        retries, since the whole cohort is broken, not one customer).
+        stopping at the first approval, at MAX_ATTEMPTS, or when an
+        unaffected declined attempt isn't retried. An incident-affected
+        attempt always retries (until MAX_ATTEMPTS) - a genuinely broken
+        cohort doesn't recover just because the customer tried again.
+
+        `forced` pins dimensions instead of picking them randomly - used to
+        generate spike volume concentrated on one cohort. Keys match
+        INCIDENT_DIMENSIONS; anything not forced is picked as normal.
         """
+        forced = forced or {}
         payment_id = f"pay_{uuid.uuid4().hex[:16]}"
         city = pick_city(self.merchant.country)
-        payment_method = random.choice(self.merchant.payment_methods)
+        payment_method = forced.get("payment_method") or random.choice(self.merchant.payment_methods)
         amount_minor = random.randint(1000, 50000)
+        card_network = forced.get("card_network") or (
+            random.choice(CARD_NETWORKS) if payment_method == "card" else None
+        )
+        issuing_bank = forced.get("issuing_bank") or pick_bank(self.merchant.country)
+        forced_provider = forced.get("provider")
 
         attempts: list[dict] = []
         previous_attempt_id = None
@@ -93,18 +83,21 @@ class PaymentAttemptBuilder:
                 city=city,
                 payment_method=payment_method,
                 amount_minor=amount_minor,
+                card_network=card_network,
+                issuing_bank=issuing_bank,
+                forced_provider=forced_provider,
             )
             attempts.append(attempt)
 
             if attempt["status"] == "approved":
                 break
-            if self.mode == NORMAL and random.random() > RETRY_PROBABILITY:
+            affected = self.incident is not None and self.incident.matches(attempt)
+            if not affected and random.random() > RETRY_PROBABILITY:
                 break  # gives up early -> "abandoned", not "failed"
 
             previous_attempt_id = attempt["attempt_id"]
             previous_provider = attempt["provider"]
-            # tiny gap so attempt_ts strictly increases within the chain
-            time.sleep(0.05)
+            time.sleep(0.05)  # tiny gap so attempt_ts strictly increases
 
         return attempts
 
@@ -136,6 +129,18 @@ class PaymentAttemptBuilder:
             "currency": last["currency"],
         }
 
+    def _candidate_providers(self, previous_provider: str | None) -> list[str]:
+        providers = self.merchant.providers
+        choices = [p for p in providers if p != previous_provider] or providers
+        if self.incident is not None and self.incident.effect == OUTAGE:
+            outaged = self.incident.scope.get("provider")
+            rerouted = [p for p in choices if p != outaged]
+            if rerouted:
+                return rerouted
+            # no alternative provider exists - traffic is forced through the
+            # outaged one and fails downstream, handled in _build_attempt
+        return choices
+
     def _build_attempt(
         self,
         payment_id: str,
@@ -145,12 +150,18 @@ class PaymentAttemptBuilder:
         city: City,
         payment_method: str,
         amount_minor: int,
+        card_network: str | None,
+        issuing_bank: str,
+        forced_provider: str | None = None,
     ) -> dict:
         now = _now_iso()
-        providers = self.merchant.providers
-        # reroute away from the failing provider on retry, when there's a choice
-        choices = [p for p in providers if p != previous_provider] or providers
-        provider = random.choice(choices)
+        incident = self.incident
+        if incident is not None and incident.confound_bank == issuing_bank:
+            # this bank never appears through any other provider while the
+            # incident is active - that is the confound, not an accident
+            provider = incident.scope["provider"]
+        else:
+            provider = forced_provider or random.choice(self._candidate_providers(previous_provider))
 
         attempt = {
             "schema": "clearwave.attempt.v1",
@@ -169,9 +180,9 @@ class PaymentAttemptBuilder:
             "provider": provider,
             "provider_connection": None,
             "payment_method": payment_method,
-            "card_network": random.choice(CARD_NETWORKS) if payment_method == "card" else None,
+            "card_network": card_network,
             "country": self.merchant.country,
-            "issuing_bank": f"{fake.company()} Bank",
+            "issuing_bank": issuing_bank,
             "bin": None,
 
             "status": "approved",
@@ -193,21 +204,44 @@ class PaymentAttemptBuilder:
             "lon": city.lon,
         }
 
-        decline_probability = (
-            ANOMALY_DECLINE_PROBABILITY if self.mode == ANOMALY else NORMAL_DECLINE_PROBABILITY
-        )
-        if random.random() < decline_probability:
-            self._apply_decline(attempt)
+        affected = incident is not None and incident.matches(attempt)
+        if affected and incident.effect == DECLINE:
+            if random.random() < incident.decline_probability:
+                self._apply_incident_decline(attempt)
+            elif random.random() < BASELINE_DECLINE_PROBABILITY:
+                self._apply_baseline_decline(attempt)
+            if incident.elevated_latency:
+                self._apply_latency_degradation(attempt)
+        elif affected and incident.effect == OUTAGE:
+            # only reachable when no alternative provider exists - the
+            # outaged provider is otherwise excluded before this point
+            self._apply_forced_outage_failure(attempt)
+        elif affected and incident.effect == LATENCY:
+            self._apply_latency_degradation(attempt)
+            if random.random() < BASELINE_DECLINE_PROBABILITY:
+                self._apply_baseline_decline(attempt)
+        elif random.random() < BASELINE_DECLINE_PROBABILITY:
+            self._apply_baseline_decline(attempt)
 
         return attempt
 
-    def _apply_decline(self, attempt: dict) -> None:
-        if self.mode == ANOMALY:
-            attempt["status"] = "declined"
-            attempt["decline_reason"] = ANOMALY_DECLINE_REASON
-            attempt["provider_raw_code"] = "05"
-            return
+    def _apply_incident_decline(self, attempt: dict) -> None:
+        attempt["status"] = "declined"
+        attempt["decline_reason"] = self.incident.decline_reason
+        attempt["provider_raw_code"] = "05"
 
+    def _apply_forced_outage_failure(self, attempt: dict) -> None:
+        attempt["status"] = "error"
+        attempt["decline_reason"] = "provider_timeout"
+        attempt["timed_out"] = True
+        attempt["http_status"] = random.choice([502, 503, 504])
+        attempt["latency_ms"] = random.randint(5000, 12000)
+
+    def _apply_latency_degradation(self, attempt: dict) -> None:
+        attempt["latency_ms"] = self.incident.latency_ms
+        attempt["queue_delay_ms"] = int(self.incident.latency_ms * 0.6)
+
+    def _apply_baseline_decline(self, attempt: dict) -> None:
         is_error = random.random() < 0.2
         if is_error:
             attempt["status"] = "error"

@@ -1,10 +1,10 @@
-"""PagoTotal CO Subscriptions - subscription / recurring. See docs/prd.md section 20."""
+"""Rappi (CO) - subscription / recurring (RappiPrime). See docs/prd.md section 20."""
 
 from worker.schemas.merchant_profile import MerchantProfile
 
 PROFILE = MerchantProfile(
     merchant_id="merchant-b",
-    name="PagoTotal CO Subscriptions",
+    name="Rappi",
     country="CO",
     currency="COP",
     payment_methods=["card", "pse"],

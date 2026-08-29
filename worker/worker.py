@@ -15,22 +15,33 @@ One process = one merchant, selected via a CLI arg (falls back to the
 MERCHANT_TYPE env var) - that is what lets an eventual container image take
 the merchant as its CMD arg, one running container per merchant. Event
 construction lives in worker/helpers/payment.py and
-worker/helpers/telemetry.py; merchant profile lookup in
-worker/helpers/merchant.py.
+worker/helpers/telemetry.py; incident scoping/effects in
+worker/helpers/incident.py; merchant profile lookup in
+worker/helpers/merchant.py; CLI flags in worker/cli.py.
 
 Run from the clearwave/ repo root as a module, not as a bare script, since
 this package uses absolute `worker.*` imports:
 
     python -m worker.worker merchant-a
-    python -m worker.worker merchant-a --mode anomaly --interval-seconds 0.5
+    python -m worker.worker merchant-b --incident-provider adyen --interval-seconds 0.5
+    python -m worker.worker merchant-c --incident-issuing-bank "Nu Brasil"
+    python -m worker.worker merchant-c --scenario provider-issuer-confounded
 
-Loops forever until interrupted (Ctrl+C). No on-the-fly trigger yet - mode is
-fixed for the life of the process. Live triggering (a control topic W4 can
-publish to) is the next W1 increment and must extend this without breaking
-the C1 contract.
+Loops forever until interrupted (Ctrl+C). --incident-* flags set the
+starting incident; while running, it also polls
+worker.helpers.control.CONTROL_TOPIC each tick, so worker/inject.py (or
+eventually W4's judge trigger) can start or stop an incident live without
+restarting this process.
+
+--scenario runs one of the guaranteed scenarios in docs/scenarios.md
+instead: same Incident mechanism underneath, but it also records the C6
+injected configuration to the quarantined ground-truth store
+(worker/ground_truth/) on start and the observation on shutdown. Each
+scenario is pinned to one merchant (worker/ground_truth/scenarios.py) -
+running it against a different merchant_type is a startup error, not a
+silent no-op.
 """
 
-import argparse
 import os
 import time
 from pathlib import Path
@@ -40,9 +51,15 @@ from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.json_schema import JSONSerializer
 from confluent_kafka.serialization import MessageField, SerializationContext, StringSerializer
 
-from worker.helpers.merchant import PROFILES, Merchant
-from worker.helpers.payment import MODES, NORMAL, PaymentAttemptBuilder
+from worker.cli import build_incident, build_scenario_run, parse_args
+from worker.ground_truth.runner import ScenarioRun
+from worker.helpers.control import IncidentControl
+from worker.helpers.incident import SPIKE, Incident
+from worker.helpers.merchant import Merchant
+from worker.helpers.payment import PaymentAttemptBuilder
 from worker.helpers.telemetry import TelemetrySampleBuilder
+
+SPIKE_MULTIPLIER = 3  # extra chains generated per tick while a spike incident is active
 
 REGISTRY_DIR = Path(__file__).parent / "registry"
 
@@ -114,22 +131,43 @@ class Producer:
 
 def run(
     merchant: Merchant,
-    mode: str,
+    incident: Incident | None,
     interval_seconds: float,
     telemetry_every: int,
+    scenario_run: ScenarioRun | None = None,
 ) -> None:
     producer = Producer()
-    payment_builder = PaymentAttemptBuilder(merchant, mode=mode)
-    telemetry_builder = TelemetrySampleBuilder(merchant, mode=mode)
+    control = IncidentControl(merchant.merchant_id, initial=incident)
+    payment_builder = PaymentAttemptBuilder(merchant, incident=incident)
+    telemetry_builder = TelemetrySampleBuilder(merchant, incident=incident)
     tick = 0
     try:
         while True:
+            control.poll()
+            payment_builder.incident = control.incident
+            telemetry_builder.incident = control.incident
+
             attempts = payment_builder.build_chain()
             for attempt in attempts:
                 producer.send("attempt", key=attempt["payment_id"], event=attempt)
 
             closed = payment_builder.build_closed(attempts)
             producer.send("closed", key=closed["payment_id"], event=closed)
+            if scenario_run is not None:
+                scenario_run.observe(attempts, closed)
+
+            active = control.incident
+            if active is not None and active.effect == SPIKE:
+                # no per-attempt effect - extra volume forced into the
+                # scoped cohort is the effect itself
+                for _ in range(SPIKE_MULTIPLIER):
+                    extra_attempts = payment_builder.build_chain(forced=active.scope)
+                    for attempt in extra_attempts:
+                        producer.send("attempt", key=attempt["payment_id"], event=attempt)
+                    extra_closed = payment_builder.build_closed(extra_attempts)
+                    producer.send("closed", key=extra_closed["payment_id"], event=extra_closed)
+                    if scenario_run is not None:
+                        scenario_run.observe(extra_attempts, extra_closed)
 
             tick += 1
             if telemetry_every > 0 and tick % telemetry_every == 0:
@@ -141,45 +179,21 @@ def run(
         print("stopping, flushing pending deliveries...")
     finally:
         producer.flush()
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Continuously simulate and publish payment-attempt, "
-        "payment-closed, and ops-telemetry events for a merchant."
-    )
-    parser.add_argument(
-        "merchant_type",
-        nargs="?",
-        default=os.environ.get("MERCHANT_TYPE", "merchant-a"),
-        help="Merchant profile to simulate (default: env MERCHANT_TYPE or "
-        "merchant-a). One of: " + ", ".join(sorted(PROFILES)),
-    )
-    parser.add_argument(
-        "--mode",
-        choices=MODES,
-        default=os.environ.get("EVENT_MODE", NORMAL),
-        help="Whether to generate normal events or ones that should be "
-        "flagged for review (default: env EVENT_MODE or normal).",
-    )
-    parser.add_argument(
-        "--interval-seconds",
-        type=float,
-        default=float(os.environ.get("EVENT_INTERVAL_SECONDS", "1.0")),
-        help="Delay between payment attempts (default: env "
-        "EVENT_INTERVAL_SECONDS or 1.0).",
-    )
-    parser.add_argument(
-        "--telemetry-every",
-        type=int,
-        default=int(os.environ.get("TELEMETRY_EVERY", "5")),
-        help="Emit one ops.telemetry sample every N attempts (default: env "
-        "TELEMETRY_EVERY or 5). 0 disables telemetry.",
-    )
-    return parser.parse_args()
+        control.close()
+        if scenario_run is not None:
+            scenario_run.close()
+            print(f"ground truth recorded: instance_id={scenario_run.instance_id}")
 
 
 if __name__ == "__main__":
     args = parse_args()
     merchant = Merchant(args.merchant_type)
-    run(merchant, args.mode, args.interval_seconds, args.telemetry_every)
+    scenario_run = build_scenario_run(args)
+    incident = scenario_run.incident if scenario_run else build_incident(args)
+    run(
+        merchant,
+        incident,
+        args.interval_seconds,
+        args.telemetry_every,
+        scenario_run=scenario_run,
+    )
