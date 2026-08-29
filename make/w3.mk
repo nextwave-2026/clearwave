@@ -3,7 +3,7 @@
 .PHONY: test-investigation evaluate
 
 test-investigation:
-	@python3 -m unittest tests.test_investigation
+	@$(PYTHON) -m unittest tests.test_investigation tests.test_agent_loop
 
 evaluate:
-	@python3 evaluator/test_score.py
+	@$(PYTHON) evaluator/test_score.py

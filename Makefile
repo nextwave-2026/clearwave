@@ -18,9 +18,6 @@ lint:
 test:
 	@$(PYTHON) -m unittest discover -s tests -t .
 
-test-investigation:
-	@$(PYTHON) -m unittest tests.test_investigation tests.test_agent_loop
-
 build:
 	@printf '%s\n' 'build: nothing to compile; the detector runs from source'
 
@@ -29,8 +26,5 @@ licences:
 
 slice:
 	@$(PYTHON) stubs/slice.py
-
-evaluate:
-	@$(PYTHON) evaluator/test_score.py
 
 ci: install lint test build licences
