@@ -36,6 +36,7 @@ _TOOL_DESCRIPTIONS = {
     "incident_history": "Read prior incidents for a merchant or filtered cohort.",
     "external_status": "Read optional external provider corroboration.",
     "financial_impact": "Read deterministic financial impact for an incident.",
+    "metric_series": "Read one named metric for a cohort over ordered event-time buckets.",
 }
 TOOL_DEFINITIONS = [
     {

@@ -82,6 +82,24 @@ class GatewayTests(unittest.TestCase):
         gateway.call("cohort_metrics", REQUEST)
         self.assertFalse(gateway.verify_citation("q_never_executed"))
 
+    def test_accepts_metric_series_and_still_refuses_unknown_names(self):
+        calls = []
+
+        def runner(tool, parameters, timeout):
+            calls.append(tool)
+            return {"ok": True}
+
+        gateway = EvidenceGateway(runner=runner)
+        accepted = gateway.call("metric_series", {"cohort": {}, "window": WINDOW})
+        self.assertNotIn("error", accepted)
+        self.assertTrue(accepted["query_id"].startswith("q_metric_series_"))
+        self.assertEqual(calls, ["metric_series"])
+        self.assertTrue(gateway.verify_citation(accepted["query_id"]))
+        refused = gateway.call("not_a_real_tool", REQUEST)
+        self.assertEqual(refused["error"]["code"], "tool_not_allowed")
+        self.assertEqual(calls, ["metric_series"])
+        self.assertFalse(gateway.verify_citation(refused["query_id"]))
+
 
 class StoreTests(unittest.TestCase):
     def test_claiming_an_incident_twice_only_succeeds_once(self):

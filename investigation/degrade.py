@@ -28,6 +28,7 @@ _ALLOWED_TOOLS = {
     "incident_history",
     "external_status",
     "financial_impact",
+    "metric_series",
 }
 
 
