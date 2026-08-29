@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -19,6 +20,13 @@ from tests import synthetic  # noqa: E402
 
 
 _OPEN: list = []
+
+
+def _epoch(iso: str) -> int:
+    """Parse an RFC 3339 UTC timestamp back to epoch seconds."""
+    return int(
+        datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+    )
 
 
 def loaded(events):
@@ -199,6 +207,112 @@ class SeverityTests(unittest.TestCase):
         worsening = detect.severity_of(5_000.0, 500, 10_000, 6, 1)
         recovering = detect.severity_of(5_000.0, 500, 10_000, 6, -1)
         self.assertGreater(worsening["severity_score"], recovering["severity_score"])
+
+
+class BlastRadiusNamingTests(unittest.TestCase):
+    """The C3 blast radius must publish the names the contract publishes.
+
+    Reported by juank in STATUS.md at 2026-08-29T20:49Z: the emitter built its
+    keys as f"affected_{dimension}s", which produces affected_countrys and
+    affected_merchant_ids where docs/contracts/incident.md specifies
+    affected_countries and affected_merchants. Every consumer reading the
+    contract saw those two fields as absent.
+    """
+
+    def test_publishes_the_contract_field_names(self):
+        connection, _, (lo, hi) = loaded(synthetic.healthy())
+        radius = metrics.blast_radius(connection, None, lo, hi + 60)
+        self.assertIn("affected_merchants", radius)
+        self.assertIn("affected_countries", radius)
+        self.assertNotIn("affected_merchant_ids", radius)
+        self.assertNotIn("affected_countrys", radius)
+
+    def test_every_published_dimension_has_a_declared_name(self):
+        """Names are declared per dimension, not generated from it."""
+        self.assertEqual(set(metrics.BLAST_RADIUS_FIELDS), set(schema.DIMENSIONS))
+        # The two the generated plural got wrong, spelled as the contract spells them.
+        self.assertEqual(metrics.BLAST_RADIUS_FIELDS["merchant_id"], "affected_merchants")
+        self.assertEqual(metrics.BLAST_RADIUS_FIELDS["country"], "affected_countries")
+
+
+class OnsetTests(unittest.TestCase):
+    """Onset is the first observed time of the deviation, not the sweep start.
+
+    docs/contracts/incident.md defines onset that way, but it was computed as
+    min(degraded) over a series already clipped to the detection window, so a
+    degradation older than the window always reported the window start. The
+    same clipping capped buckets_sustained, which feeds the persistence term in
+    severity and so under-ranked the longest-running incidents.
+    """
+
+    def test_onset_predates_a_detection_window_that_starts_late(self):
+        events = synthetic.with_provider_incident(onset_minute=65)
+        connection, _, (lo, hi) = loaded(events)
+        true_onset = lo + 65 * 60
+
+        # Sweep only the final few buckets, long after the degradation began.
+        window_start = hi - config.DETECT_WINDOW_BUCKETS * config.BUCKET_SECONDS
+        self.assertGreater(window_start, true_onset, "window must start after onset")
+
+        incident = detect.build_incident(connection, window_start, hi + 60)
+        self.assertIsNotNone(incident)
+        onset_epoch = _epoch(incident["onset"])
+        self.assertLess(
+            onset_epoch,
+            window_start,
+            "onset must reach back before the sweep window, not report its start",
+        )
+        self.assertGreaterEqual(onset_epoch, true_onset - config.BUCKET_SECONDS)
+
+    def test_persistence_is_not_capped_by_the_detection_window(self):
+        events = synthetic.with_provider_incident(onset_minute=65)
+        connection, _, (lo, hi) = loaded(events)
+        window_start = hi - config.DETECT_WINDOW_BUCKETS * config.BUCKET_SECONDS
+        incident = detect.build_incident(connection, window_start, hi + 60)
+        # The degradation runs from minute 65 to the end of the traffic, about
+        # fifteen buckets. Clipped to the sweep window it could only ever report
+        # the window's own length, so anything near that is the old defect.
+        self.assertGreater(
+            incident["detection"]["buckets_sustained"],
+            2 * config.DETECT_WINDOW_BUCKETS,
+            "a degradation older than the window must count its earlier buckets",
+        )
+        self.assertGreater(
+            incident["persistence"]["observed_for_seconds"],
+            2 * config.DETECT_WINDOW_BUCKETS * config.BUCKET_SECONDS,
+        )
+
+    def test_onset_reports_this_episode_not_an_earlier_recovered_dip(self):
+        """An earlier dip that recovered is a different episode, not this onset."""
+        events = []
+        for event in synthetic.with_provider_incident(onset_minute=65):
+            # Add a separate earlier degradation on the same provider that
+            # fully recovers well before the current episode begins.
+            if (
+                event["provider"] == "provider-p2"
+                and "2026-08-30T04:35:00Z" <= event["occurred_at"] < "2026-08-30T04:45:00Z"
+            ):
+                event = dict(event, status="declined", normalized_decline_reason="do_not_honor")
+            events.append(event)
+        connection, _, (lo, hi) = loaded(events)
+
+        window_start = hi - config.DETECT_WINDOW_BUCKETS * config.BUCKET_SECONDS
+        incident = detect.build_incident(connection, window_start, hi + 60)
+        self.assertIsNotNone(incident)
+        onset_epoch = _epoch(incident["onset"])
+        # The recovered stretch between the two episodes must stop the walk, so
+        # onset lands in the current episode rather than back at minute 35.
+        self.assertGreater(onset_epoch, lo + 50 * 60)
+
+    def test_no_qualifying_bucket_invents_no_onset(self):
+        connection, _, (lo, hi) = loaded(synthetic.healthy())
+        window_start = hi - config.DETECT_WINDOW_BUCKETS * config.BUCKET_SECONDS
+        series = metrics.timeseries(connection, None, window_start, hi + 60)
+        onset, sustained = detect._episode_extent(
+            connection, None, window_start, hi + 60, 0.0, series
+        )
+        self.assertEqual(onset, window_start)
+        self.assertEqual(sustained, 0)
 
 
 if __name__ == "__main__":

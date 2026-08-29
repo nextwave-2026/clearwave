@@ -552,6 +552,22 @@ def confounding(
     }
 
 
+# The C3 field name for each dimension's distinct count. Written out rather
+# than built as f"affected_{dimension}s", because that rule produced
+# "affected_countrys" and "affected_merchant_ids" where
+# docs/contracts/incident.md publishes "affected_countries" and
+# "affected_merchants" - a naming drift no test could see, because the same
+# expression generated both the emitter and anything that guessed at it.
+BLAST_RADIUS_FIELDS = {
+    "merchant_id": "affected_merchants",
+    "provider": "affected_providers",
+    "payment_method": "affected_payment_methods",
+    "card_network": "affected_card_networks",
+    "country": "affected_countries",
+    "issuing_bank": "affected_issuing_banks",
+}
+
+
 def blast_radius(
     connection: sqlite3.Connection,
     cohort: dict[str, Any] | None,
@@ -567,7 +583,7 @@ def blast_radius(
         row = connection.execute(
             f"SELECT COUNT(DISTINCT {dimension}) AS n FROM attempt WHERE {where}", params
         ).fetchone()
-        result[f"affected_{dimension}s"] = int(row["n"] or 0)
+        result[BLAST_RADIUS_FIELDS[dimension]] = int(row["n"] or 0)
     return result
 
 

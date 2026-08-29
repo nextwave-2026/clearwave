@@ -304,6 +304,60 @@ def trajectory_of(series: list[dict[str, Any]]) -> int:
 # C3 record
 # --------------------------------------------------------------------------
 
+def _is_degraded(point: dict[str, Any], expected: float) -> bool:
+    """One bucket qualifies when it is measured and drops by at least the floor."""
+    actual = point["approval_conversion"]
+    return actual is not None and expected - actual >= config.ABS_DROP_MIN
+
+
+def _episode_extent(
+    connection: sqlite3.Connection,
+    cohort: dict[str, Any] | None,
+    start: int,
+    end: int,
+    expected: float,
+    series: list[dict[str, Any]],
+) -> tuple[int, int]:
+    """First observed time of this deviation, and how many buckets it has held.
+
+    ``docs/contracts/incident.md`` defines onset as the first observed time of
+    the qualifying deviation. Scanning only the detection window cannot honour
+    that: the window is the last few buckets, so ``min(degraded)`` over it
+    returns the window start whenever the deviation began before the sweep, and
+    a degradation that has run for an hour reports as one that began minutes
+    ago. ``buckets_sustained`` was capped the same way, so persistence - a
+    severity term - saturated at the window length and under-ranked exactly the
+    incidents that had been costing money longest.
+
+    So the run is walked backwards from the window, bucket by bucket, while it
+    stays degraded, bounded by the same trailing span the baseline already
+    reads. The walk stops at the first bucket that is not degraded, which keeps
+    onset the start of *this* episode rather than the start of any earlier dip
+    that has since recovered.
+    """
+    degraded = [p["bucket_start_epoch"] for p in series if _is_degraded(p, expected)]
+    if not degraded:
+        return start, 0
+
+    onset = min(degraded)
+    sustained = len(degraded)
+    if onset > start:
+        # The deviation begins inside the window, so the window already saw it start.
+        return onset, sustained
+
+    lookback = start - config.BASELINE_TRAILING_BUCKETS * config.BUCKET_SECONDS
+    if lookback >= start:
+        return onset, sustained
+
+    earlier = metrics.timeseries(connection, cohort, lookback, start)
+    for point in reversed(earlier):
+        if not _is_degraded(point, expected):
+            break
+        onset = point["bucket_start_epoch"]
+        sustained += 1
+    return onset, sustained
+
+
 def build_incident(
     connection: sqlite3.Connection,
     start: int,
@@ -329,14 +383,9 @@ def build_incident(
     attempts = metrics.attempt_metrics(connection, cohort or None, start, end)
     retries = metrics.retry_profile(connection, cohort or None, start, end)
 
-    degraded = [
-        point["bucket_start_epoch"]
-        for point in series
-        if point["approval_conversion"] is not None
-        and reported["expected"] - point["approval_conversion"] >= config.ABS_DROP_MIN
-    ]
-    onset = min(degraded) if degraded else start
-    buckets_sustained = len(degraded)
+    onset, buckets_sustained = _episode_extent(
+        connection, cohort or None, start, end, reported["expected"], series
+    )
 
     severity = severity_of(
         loss_per_hour=impact["loss_per_hour"]["amount"],
