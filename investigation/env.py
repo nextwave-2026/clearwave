@@ -56,7 +56,7 @@ def load_dotenv(
     loaded = parse_env_file(target.read_text(encoding="utf-8"))
     applied: dict[str, str] = {}
     for key, value in loaded.items():
-        if key in env:
+        if not value.strip() or key in env:
             continue
         env[key] = value
         applied[key] = value

@@ -77,6 +77,19 @@ class LoadDotenvTests(unittest.TestCase):
         self.assertEqual(environ["OPENAI_REASONING_EFFORT"], "medium")
         self.assertEqual(environ["OPENAI_MAX_OUTPUT_TOKENS"], "7000")
 
+    def test_empty_dotenv_values_remain_unset_for_sdk(self):
+        self.path.write_text(
+            "OPENAI_API_KEY=\n"
+            "OPENAI_BASE_URL=  \n"
+            "OPENAI_MODEL=\n"
+            "OPENAI_REASONING_EFFORT=\n"
+            "OPENAI_MAX_OUTPUT_TOKENS=\n",
+            encoding="utf-8",
+        )
+        environ: dict[str, str] = {}
+        self.assertEqual(load_dotenv(self.path, environ=environ), {})
+        self.assertEqual(environ, {})
+
     def test_environment_wins_over_dotenv(self):
         environ = {"OPENAI_API_KEY": "from-env"}
         applied = load_dotenv(self.path, environ=environ)
