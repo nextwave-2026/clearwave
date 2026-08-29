@@ -1,23 +1,46 @@
 # Clearwave
 
-Prompt: Give a one-sentence description of the problem this addresses. Replace this line once the
-problem is known.
+A monitoring and diagnosis system for payment conversion drops: detect the ones that matter,
+isolate the root cause, explain it with evidence, and recommend an action without executing it.
 
 ## Problem
 
-Prompt: Describe who has the problem, why it matters, and the evidence or event context behind it.
+Payment orchestration platforms see every transaction between merchants and providers. Conversion
+- the share of attempted payments that get approved - is the metric that moves the most money. It
+drops silently for a thousand reasons: a degraded provider, an issuing bank over-declining, a
+method down in one country, a change nobody announced. Every lost point is money lost by the
+minute.
+
+Detection today is artisanal: a human watching dashboards. Classic alerts fail at both ends - they
+fire on everything and get ignored, or fire on nothing. By the time someone notices, hours have
+passed. Detection is the easy part. Diagnosis is the hard part, because the answer is scattered
+across thousands of transactions and a tired human assembles it by crossing filters at 3 a.m.
+
+This is Challenge 02, Control Tower, at NextWave Hackathon 2026 (Bogota site, Yuno x Nauta,
+supported by OpenAI). The pick is final. The full brief is in [`docs/challenge.md`](docs/challenge.md).
 
 ## Solution
 
-Prompt: Explain what was built, how it works at a useful level, and what outcome it provides.
+What is decided: a system that watches a live payment stream, detects conversion drops that
+matter, diagnoses the root cause across the transaction dimensions with visible evidence, explains
+it in operations language with an estimated money cost, prioritises concurrent incidents, states
+honestly when evidence is insufficient, and recommends an action without executing it. It
+diagnoses. It does not remediate.
+
+What is still open: language, framework, architecture, detection and diagnosis method, how the
+stream is mocked or shown, and any component breakdown. None of that is decided. Do not add a
+package manifest, lockfile, Dockerfile, or application scaffold until a human decides the stack
+and records it in `DECISIONS.md`.
 
 ## Demonstration
 
-Prompt: Give the commands or steps a reviewer can follow to see the essential behaviour.
+Commands and steps a reviewer can follow will land here once the first end-to-end slice exists.
+Nothing to run yet.
 
 ## Architecture
 
-Prompt: Link to or embed the current Mermaid architecture diagram and call out the important boundaries.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md). The diagram is a placeholder until the architecture is
+decided.
 
 ## Pre-existing components
 
@@ -39,8 +62,20 @@ generated record lives in `LICENCES.md`; run `make licences` before submission.
 
 ## Licence inventory
 
-Prompt: Summarise the generated licence inventory and link to the complete record in `LICENCES.md`.
+No third-party dependencies have been added yet. The generated record lives in
+[`LICENCES.md`](LICENCES.md). Run `make licences` before submission; it works offline.
 
 ## Team
 
-Prompt: List the contributors and their relevant responsibilities for the entry.
+- Derek Sarmiento Loeber - GitHub [`DereKk8`](https://github.com/DereKk8), coordination handle
+  `derek`. Systems engineering student at Pontificia Universidad Javeriana, Bogota; backend and
+  MLOps, ML infrastructure, web development. Repository admin.
+- Andres Felipe Cruz Torres - GitHub [`andresfelipe0711`](https://github.com/andresfelipe0711),
+  coordination handle `andres`. Junior data analyst working toward data science; data science,
+  machine learning and AI. Repository admin.
+- Juan Camilo - GitHub [`juank115`](https://github.com/juank115), coordination handle `juank`.
+  Software engineer from Colombia, currently doing a master's degree in artificial intelligence
+  and computer science. Repository write access.
+- Raul Higuera - GitHub [`raulhiguerac`](https://github.com/raulhiguerac), coordination handle
+  `raul`. Based in Bogota. Repository write access; organisation and repository invitations were
+  pending acceptance when this was written.
