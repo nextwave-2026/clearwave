@@ -1,10 +1,10 @@
-"""PagoTotal BR Marketplace - LATAM marketplace, diverse methods. See docs/prd.md section 20."""
+"""Mercado Livre (BR) - LATAM marketplace, diverse methods. See docs/prd.md section 20."""
 
 from worker.schemas.merchant_profile import MerchantProfile
 
 PROFILE = MerchantProfile(
     merchant_id="merchant-c",
-    name="PagoTotal BR Marketplace",
+    name="Mercado Livre",
     country="BR",
     currency="BRL",
     payment_methods=["card", "pix"],

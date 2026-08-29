@@ -1,10 +1,10 @@
-"""PagoTotal MX Retail - high-volume e-commerce. See docs/prd.md section 20."""
+"""Liverpool (MX) - high-volume e-commerce. See docs/prd.md section 20."""
 
 from worker.schemas.merchant_profile import MerchantProfile
 
 PROFILE = MerchantProfile(
     merchant_id="merchant-a",
-    name="PagoTotal MX Retail",
+    name="Liverpool",
     country="MX",
     currency="MXN",
     payment_methods=["card", "cash"],

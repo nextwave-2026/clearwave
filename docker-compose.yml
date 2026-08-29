@@ -43,6 +43,54 @@ services:
       retries: 10
       start_period: 20s
 
+  worker-merchant-a:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    container_name: clearwave-worker-merchant-a
+    command: ["merchant-a"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+    restart: unless-stopped
+
+  worker-merchant-b:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    container_name: clearwave-worker-merchant-b
+    command: ["merchant-b"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+    restart: unless-stopped
+
+  worker-merchant-c:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    container_name: clearwave-worker-merchant-c
+    command: ["merchant-c"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+    restart: unless-stopped
+
   schema-registry:
     image: confluentinc/cp-schema-registry:7.7.1
     hostname: schema-registry
