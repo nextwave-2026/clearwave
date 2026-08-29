@@ -98,6 +98,12 @@ The stubs are binding seams, not disposable examples: replace only your own laye
 Contracts change only through `INTERFACES.md` and `DECISIONS.md`, with the change announced in `STATUS.md`.
 Do not delete stubs, weaken guards, or silently change a shape.
 
+The C2 evidence tools under `stubs/evidence/` are no longer fixtures: ten of the eleven measure one
+SQLite store, located by `CLEARWAVE_DB` and defaulting to `state/clearwave.db`. Every consumer must
+read that same file or the system gives two answers to one question. `python3 -m detector seed &&
+python3 -m detector detect` fills a store; an empty one answers with zeros rather than failing. The
+behaviour is specified in `docs/contracts/evidence-tools.md`.
+
 ## Working conventions
 
 **Code** goes through a branch and a pull request. Never commit code directly to `main`.

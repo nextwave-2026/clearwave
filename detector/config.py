@@ -72,6 +72,13 @@ LOCALISE_BEAM_WIDTH = 3
 # arbitrary issuer inside it.
 LOCALISE_MIN_SEPARATION = 0.10
 
+# --- operational health ------------------------------------------------------
+# The canonical event stream carries no health-check or CPU signal, so service
+# health is *derived* from what we actually measure: the share of attempts that
+# broke rather than were declined. Stating the criterion in the response is
+# what keeps this a measurement rather than an opinion.
+OPERATIONAL_DEGRADED_RATE = 0.05
+
 # --- currency --------------------------------------------------------------
 # A frozen table, not a live rate: a live rate would make a replay produce a
 # different number than the original run.

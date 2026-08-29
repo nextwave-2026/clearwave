@@ -5,4 +5,4 @@ function, diagnosis is not ours, and every number this package produces must be
 reproducible from the same input.
 """
 
-__all__ = ["config", "mappers", "schema", "store", "metrics", "detect"]
+__all__ = ["config", "mappers", "schema", "store", "metrics", "detect", "evidence"]

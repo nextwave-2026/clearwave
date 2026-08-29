@@ -169,6 +169,11 @@ def normalise(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def iso_utc(epoch: int) -> str:
+    """Render an epoch second as the RFC 3339 UTC form used on every wire."""
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def bucket_of(occurred_epoch: int) -> int:
     """Floor an event time to its bucket. Event time only, never wall clock."""
     return occurred_epoch - (occurred_epoch % config.BUCKET_SECONDS)

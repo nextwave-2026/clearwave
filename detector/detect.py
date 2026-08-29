@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import math
 import sqlite3
-from datetime import datetime, timezone
 from typing import Any
 
 from . import config, metrics, schema
@@ -155,6 +154,7 @@ def localise(
     start: int,
     end: int,
     seed: dict[str, Any] | None = None,
+    dimensions: tuple[str, ...] | list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Walk from the whole platform down to the cohort the evidence supports.
 
@@ -167,7 +167,16 @@ def localise(
 
     Nothing about any particular path is encoded, only the rule for descending
     it, so a dimension combination nobody declared can still be located.
+
+    ``dimensions`` narrows which dimensions may be descended on, for a caller
+    that asked for a specific path. It never widens the space: an unknown name
+    is rejected rather than quietly ignored.
     """
+    considered = tuple(dimensions) if dimensions is not None else schema.DIMENSIONS
+    for dimension in considered:
+        if dimension not in schema.DIMENSIONS:
+            raise ValueError(f"{dimension!r} is not a cohort dimension")
+
     path: list[dict[str, Any]] = []
     current = dict(seed or {})
     path.append(evaluate(connection, current or None, start, end))
@@ -175,7 +184,7 @@ def localise(
     for _ in range(config.LOCALISE_MAX_DEPTH):
         best_split: dict[str, Any] | None = None
 
-        for dimension in (d for d in schema.DIMENSIONS if d not in current):
+        for dimension in (d for d in considered if d not in current):
             siblings = []
             for row in connection.execute(
                 f"SELECT DISTINCT {dimension} AS v FROM attempt "
@@ -295,10 +304,6 @@ def trajectory_of(series: list[dict[str, Any]]) -> int:
 # C3 record
 # --------------------------------------------------------------------------
 
-def _iso(epoch: int) -> str:
-    return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def build_incident(
     connection: sqlite3.Connection,
     start: int,
@@ -358,11 +363,11 @@ def build_incident(
             ),
             "unit": "ratio",
         },
-        "onset": _iso(onset),
+        "onset": schema.iso_utc(onset),
         "persistence": {
             "is_persistent": buckets_sustained >= config.SUSTAIN_BUCKETS,
             "observed_for_seconds": buckets_sustained * config.BUCKET_SECONDS,
-            "last_observed_at": _iso(end),
+            "last_observed_at": schema.iso_utc(end),
         },
         "blast_radius": blast,
         "financial_impact": impact,
@@ -372,6 +377,11 @@ def build_incident(
         # set, and safe for any consumer to ignore.
         "detection": {
             "config_version": config.CONFIG_VERSION,
+            # The unrounded expectation and the exact measured window, so a C2
+            # tool asked about this incident later recomputes the identical
+            # number rather than a re-rounded approximation of it.
+            "expected_conversion": reported["expected"],
+            "window": {"start_epoch": start, "end_epoch": end},
             "severity_score": severity["severity_score"],
             "severity_components": severity["components"],
             "z": round(reported["z"], 4) if reported["z"] is not None else None,
