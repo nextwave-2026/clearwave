@@ -85,3 +85,4 @@ Format: one line per entry.
 - 2026-08-29T21:42Z  derek  the licence question raised at 20:49Z is settled as accepted; `AGENTS.md` now states the policy explicitly, and the licence inventory needs no further change
 - 2026-08-29T21:42Z  derek  FOR RAUL AND ANDRES: the 19:04Z per-merchant-shape wording is released, ADR 0014 is now Accepted, and raul is unblocked; derek moved the record to Accepted directly because the code freeze is close and nobody should wait on a status field
 - 2026-08-29T21:35Z  derek  starting investigation model configuration upgrade: add runtime model discovery, safe reasoning-effort support, configurable output ceiling, and regression coverage; bounds remain unchanged
+- 2026-08-29T22:18Z  derek  ADR 0022 records why L4 uses the bounded OpenAI Responses API loop with strict Pydantic C4 output instead of a general-purpose coding-agent harness, including the real advantages a harness would have for open-ended exploration and remediation

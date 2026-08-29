@@ -134,3 +134,5 @@ another contributor pushed first, run `git pull --no-rebase && git push`; union 
   -> other side: MPL-2.0 is now explicitly allowed; strong copyleft remains prohibited; raise any licence outside the named categories rather than assuming it is acceptable
 - 2026-08-29T21:42Z  derek  ADR 0014: released the 19:04Z per-merchant-shape wording and accepted the existing single uniform event shape for all merchants; raul's existing worker implementation is canonical.
   -> other side: the uniform shape is canonical and nothing in `worker/` gets rebuilt; raul is unblocked.
+- 2026-08-29T22:18Z  derek  ADR 0022: L4 keeps the direct OpenAI Responses API loop with strict Pydantic C4 outputs rather than a general-purpose coding-agent harness, because Detection has already measured and localised the incident and L4 needs bounded, contract-bound interpretation over gateway-issued evidence rather than open-ended task discovery
+  -> other side: treat C4 and its verified query-id trail as the runtime boundary; a coding-agent harness becomes the better fit only if scope expands into open-ended tool discovery or multi-step remediation, which Clearwave does not perform
