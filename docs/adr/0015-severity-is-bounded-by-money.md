@@ -1,4 +1,4 @@
-# 0014 - Severity is bounded by money, not only weighted by it
+# 0015 - Severity is bounded by money, not only weighted by it
 
 ## Status
 

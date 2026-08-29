@@ -8,7 +8,7 @@ Nothing in this layer calls a language model. It establishes **what happened and
 It never decides **why**, and there is no field in its output for a cause, a hypothesis or a
 confidence.
 
-The decisions behind everything below are recorded as [ADRs 0013 to 0019](adr/README.md). The
+The decisions behind everything below are recorded as [ADRs 0014 to 0020](adr/README.md). The
 contracts are [C1b canonical event](contracts/canonical-event.md), [C2 evidence
 tools](contracts/evidence-tools.md) and [C3 incident record](contracts/incident.md).
 
@@ -123,7 +123,7 @@ incident, and an honest crude baseline beats a fabricated seasonal one.
 
 ### L3 - the deviation
 
-A drop qualifies only when all four floors hold together ([ADR 0013](adr/0013-detection-floors-not-a-single-threshold.md)):
+A drop qualifies only when all four floors hold together ([ADR 0014](adr/0014-detection-floors-not-a-single-threshold.md)):
 
 ```
 z <= -Z_MIN                    statistically real
@@ -140,12 +140,12 @@ gmv_at_risk             = expected_approved_value - actual_approved_value
 loss_per_hour           = gmv_at_risk / window_hours
 ```
 
-Priced per payment, never per attempt ([ADR 0017](adr/0017-value-is-priced-per-payment.md)), and
+Priced per payment, never per attempt ([ADR 0018](adr/0018-value-is-priced-per-payment.md)), and
 labelled GMV at risk rather than platform revenue. Every response carries its assumptions.
 
 ### L5 - the severity
 
-Four components, then a money ceiling ([ADR 0014](adr/0014-severity-is-bounded-by-money.md)):
+Four components, then a money ceiling ([ADR 0015](adr/0015-severity-is-bounded-by-money.md)):
 
 ```
 impact      = log10(1 + loss/floor) / log10(1 + cap/floor)
@@ -194,7 +194,7 @@ the issuer discriminates nothing and the descent stops - reporting a bank there 
 coincidence dressed up as a diagnosis.
 
 Both obvious alternatives fail, and both failed in practice before this rule replaced them
-([ADR 0015](adr/0015-localisation-descends-on-contrast.md)):
+([ADR 0016](adr/0016-localisation-descends-on-contrast.md)):
 
 | Ranking rule | Failure |
 |---|---|
@@ -258,7 +258,7 @@ Five properties, each demonstrable on demand.
 
 | Property | Mechanism |
 |---|---|
-| Replay equals live | every bucket, window and onset is computed from event time behind a watermark ([ADR 0016](adr/0016-event-time-bucketing.md)); the same log replayed produces an identical incident |
+| Replay equals live | every bucket, window and onset is computed from event time behind a watermark ([ADR 0017](adr/0017-event-time-bucketing.md)); the same log replayed produces an identical incident |
 | Closed question space | the agent asks only the published C2 tools over a fixed dimension set; its exploration is free, its facts are not |
 | Every number is addressable | each response carries a `query_id` derived from the exact `{tool, input}`, so any claim can be re-run and reproduced |
 | Thresholds are versioned config | `CONFIG_VERSION` travels with every incident, so "why did it fire" is always answerable |

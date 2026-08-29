@@ -1,4 +1,4 @@
-# 0015 - Localisation descends on sibling contrast, not on depth
+# 0016 - Localisation descends on sibling contrast, not on depth
 
 ## Status
 

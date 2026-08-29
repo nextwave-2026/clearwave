@@ -1,4 +1,4 @@
-# 0017 - Value is priced per payment, never per attempt
+# 0018 - Value is priced per payment, never per attempt
 
 ## Status
 
