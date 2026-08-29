@@ -90,3 +90,7 @@ another contributor pushed first, run `git pull --no-rebase && git push`; union 
   -> other side: register native shapes with their own decline codes and W2 maps them; never collapse attempts into payments upstream, and never rely on free-text decline reasons surviving into the canonical model
 - 2026-08-29T19:38Z  andres  build order: W2 lands a minimum operational backend first - the thinnest path that ingests, detects, prices, ranks and hands off - and deepens the functions and metrics only once that path is confirmed working
   -> other side: W2's first landed detector uses a trailing-window baseline and single-level localisation against the already-published C2 and C3 contracts; the seasonal baseline and deeper search arrive as later increments behind the same contracts, so build against the contracts and not against the first implementation
+- 2026-08-29T19:43Z  derek  incident handoff: L4 consumes no Kafka; it polls the relational SQLite store for detected incidents, claims one, and moves it to diagnosed when the result is persisted
+  -> other side: W2 must durably write every C3 record with `lifecycle_state: detected`; that state is the sole handoff signal, so W2 does not call L4
+- 2026-08-29T19:43Z  derek  C2 proposal: add a `metric_series` evidence tool for one named metric and cohort over ordered event-time buckets behind the lateness watermark, because onset, severity trajectory and L4 narrative need a consistent trend
+  -> other side: this is a proposal awaiting W2's acceptance; W2 owns C2 and may accept or reject it
