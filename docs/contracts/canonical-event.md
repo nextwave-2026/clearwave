@@ -65,6 +65,20 @@ distribution into noise, and decline mix is one of the strongest discriminators 
 problem and an issuer problem. The provider's own code travels alongside in `provider_raw_code`,
 preserved verbatim for evidence and never parsed for arithmetic.
 
+A native code reaches that vocabulary through `NATIVE_DECLINE_REASONS` in `detector/mappers.py`,
+which maps every value of W1's frozen enum in `worker/registry/payment_attempt.schema.json` onto a
+canonical one. Most map to themselves. The one real translation is `provider_timeout`, which C1b
+spells `timeout`; the mapper renames it and, where the record carries no provider code of its own,
+records the native spelling in `provider_raw_code` so nothing is lost. Widening C1b to swallow a
+native code is not an option: two names for one thing in the decline mix is exactly the noise the
+closed vocabulary exists to prevent.
+
+The two vocabularies drifting apart is a silent failure - an unmapped reason is dead-lettered, so
+the affected attempts simply vanish from the counts - so `tests/test_mappers.py` reads W1's
+registered enum and fails if any value is unmapped, if a mapping points outside `DECLINE_REASONS`,
+or if the map names a code W1 no longer emits. A native code with no sensible canonical target is a
+question for W1 in `STATUS.md`, never a guess.
+
 **A failed status requires a reason, and a successful one forbids it.** `declined`, `error` and
 `timeout` must carry a reason; `approved` and `pending` must not.
 
@@ -99,6 +113,25 @@ If it ever stops normalising, whoever built to it is broken and the test says so
 
 Minor-unit conversion uses the ISO 4217 exponent for the currency, not a hardcoded two, because two
 is wrong for JPY and CLP. An unregistered exponent is an error.
+
+## The other two topics
+
+`payments.attempts` carries the measurement, and only it becomes a C1b canonical event. W1 publishes
+two more topics, and W2 normalises and persists each with the same discipline - a closed set of
+required fields, event time only, dedupe on `event_id`, and a dead-letter with its reason rather
+than a repair. They are separate record types, not variants of an attempt.
+
+| Topic | Schema | Normaliser | Table |
+|---|---|---|---|
+| `ops.telemetry` | `clearwave.ops.v1` | `schema.normalise_telemetry` | `telemetry_sample` |
+| `payments.closed` | `clearwave.payment_closed.v1` | `schema.normalise_closed` | `payment_closed` |
+
+A telemetry sample carries no payment identity and never enters a conversion count; it is the only
+first-party source of service-level runtime health, which the attempt stream cannot carry. A closed
+record is observed terminality, converted on the same frozen FX table as an attempt so the two can
+never disagree about what a payment was worth.
+
+Running the live path is documented in [`docs/live-ingestion.md`](../live-ingestion.md).
 
 ## What W1 needs to provide
 

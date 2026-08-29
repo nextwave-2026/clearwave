@@ -1,8 +1,13 @@
-"""Operator entry point: ingest canonical events, then detect.
+"""Operator entry point: get events in, then detect.
 
     python3 -m detector seed                      # deterministic demo traffic
-    python3 -m detector ingest events.json
-    python3 -m detector detect
+    python3 -m detector ingest events.json        # a file of canonical events
+    python3 -m detector consume                   # W1's live Kafka topics
+    python3 -m detector detect                    # one detection sweep
+
+`consume` is the live path and `seed`/`ingest` the offline one. They are two
+front doors onto the same normalisation, the same store and the same detection,
+which is why the demo has a fallback that needs no broker at all.
 
 Every subcommand reads and writes one SQLite file. It is located by the
 ``CLEARWAVE_DB`` environment variable, defaulting to ``state/clearwave.db``
@@ -16,10 +21,11 @@ import argparse
 import hashlib
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
-from . import config, detect, evidence, metrics, schema, store
+from . import config, consumer, detect, evidence, metrics, schema, store
 
 SCENARIOS = ("healthy", "provider_incident", "confounded")
 
@@ -88,6 +94,39 @@ def incident_id_for(incident: dict[str, Any]) -> str:
     return f"inc-{incident['onset'][:10]}-{digest[:8]}"
 
 
+def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
+    """One detection sweep over the stored window, in the shape the CLI prints.
+
+    Shared by `detect` and by `consume --detect` so that live traffic and a
+    replayed file reach detection through exactly the same call.
+    """
+    bounds = store.window_bounds(connection)
+    if bounds is None:
+        return {"incident": None, "reason": "no events stored"}
+    # The sweep measures the trailing detection window behind the lateness
+    # watermark, not the whole store. A degradation in the last few minutes is
+    # invisible when it is averaged against every hour that preceded it.
+    end = evidence.watermark(connection) + config.BUCKET_SECONDS
+    start = bounds[0]
+    if window_buckets > 0:
+        start = max(start, end - window_buckets * config.BUCKET_SECONDS)
+    incident = detect.build_incident(connection, start, end)
+    stored = False
+    if incident is not None:
+        incident["incident_id"] = incident_id_for(incident)
+        if persist:
+            # lifecycle_state 'detected' is the sole handoff signal to L4
+            # (DECISIONS.md, 2026-08-29T19:43Z), so detection writes it durably
+            # rather than calling investigation.
+            stored = store.save_incident(connection, incident)
+    return {
+        "incident": incident,
+        "stored": stored,
+        "window": {"start": schema.iso_utc(start), "end": schema.iso_utc(end)},
+        "config_version": config.CONFIG_VERSION,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="detector", description=__doc__)
     parser.add_argument("--db", default=None, help="SQLite store path (default: $CLEARWAVE_DB)")
@@ -98,6 +137,49 @@ def main(argv: list[str] | None = None) -> int:
 
     seed = sub.add_parser("seed", help="load deterministic synthetic events into the store")
     seed.add_argument("--scenario", choices=SCENARIOS, default="provider_incident")
+
+    consume_command = sub.add_parser(
+        "consume", help="read W1's live Kafka topics into the store, then optionally detect"
+    )
+    consume_command.add_argument(
+        "--bootstrap-servers",
+        default=None,
+        help=f"Kafka bootstrap servers (default: ${consumer.BOOTSTRAP_ENV_VAR} "
+             f"or {consumer.DEFAULT_BOOTSTRAP})",
+    )
+    consume_command.add_argument(
+        "--group-id", default=consumer.DEFAULT_GROUP_ID,
+        help="consumer group; the same group resumes where it left off",
+    )
+    consume_command.add_argument(
+        "--topics", nargs="+", default=sorted(consumer.TOPICS),
+        choices=sorted(consumer.TOPICS),
+        help="which of W1's topics to read (default: all three)",
+    )
+    consume_command.add_argument(
+        "--from-latest", action="store_true",
+        help="start at the end of each topic instead of replaying it from the beginning",
+    )
+    consume_command.add_argument(
+        "--seconds", type=float, default=None,
+        help="stop after this many seconds; omit to stop when the topics go quiet",
+    )
+    consume_command.add_argument(
+        "--max-messages", type=int, default=None, help="stop after this many messages",
+    )
+    consume_command.add_argument(
+        "--batch-size", type=int, default=200,
+        help="records written per transaction before offsets advance",
+    )
+    consume_command.add_argument(
+        "--idle-polls", type=int, default=3,
+        help="consecutive empty polls that end the run",
+    )
+    consume_command.add_argument(
+        "--detect", action="store_true",
+        help="run a detection sweep on what was consumed, so one command goes "
+             "from live traffic to a stored C3 record",
+    )
 
     detect_command = sub.add_parser("detect", help="run one detection sweep over the stored window")
     detect_command.add_argument(
@@ -125,33 +207,41 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"scenario": args.scenario, **summary}, indent=2, sort_keys=True))
         return 0
 
-    bounds = store.window_bounds(connection)
-    if bounds is None:
-        print(json.dumps({"incident": None, "reason": "no events stored"}, indent=2))
+    if args.command == "consume":
+        source = consumer.KafkaSource(
+            bootstrap_servers=args.bootstrap_servers,
+            group_id=args.group_id,
+            topics=tuple(args.topics),
+            from_beginning=not args.from_latest,
+        )
+        deadline = None if args.seconds is None else time.monotonic() + args.seconds
+        try:
+            progress = consumer.consume(
+                connection,
+                source,
+                batch_size=args.batch_size,
+                idle_polls=args.idle_polls,
+                max_messages=args.max_messages,
+                deadline=deadline,
+            )
+        except KeyboardInterrupt:
+            # Whatever the last completed batch wrote is already durable and
+            # already acknowledged. Stopping here loses nothing and duplicates
+            # nothing.
+            progress = None
+        finally:
+            source.close()
+        summary = {
+            "consumed": (progress.as_dict() if progress is not None else "interrupted"),
+            "stored": store.stored_counts(connection),
+        }
+        if args.detect:
+            summary["detection"] = _sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
+        print(json.dumps(summary, indent=2, sort_keys=True))
         return 0
-    # The sweep measures the trailing detection window behind the lateness
-    # watermark, not the whole store. A degradation in the last few minutes is
-    # invisible when it is averaged against every hour that preceded it.
-    end = evidence.watermark(connection) + config.BUCKET_SECONDS
-    start = bounds[0]
-    if args.window_buckets > 0:
-        start = max(start, end - args.window_buckets * config.BUCKET_SECONDS)
-    incident = detect.build_incident(connection, start, end)
-    stored = False
-    if incident is not None:
-        incident["incident_id"] = incident_id_for(incident)
-        if not args.no_persist:
-            # lifecycle_state 'detected' is the sole handoff signal to L4
-            # (DECISIONS.md, 2026-08-29T19:43Z), so detection writes it durably
-            # rather than calling investigation.
-            stored = store.save_incident(connection, incident)
+
     print(json.dumps(
-        {
-            "incident": incident,
-            "stored": stored,
-            "window": {"start": schema.iso_utc(start), "end": schema.iso_utc(end)},
-            "config_version": config.CONFIG_VERSION,
-        },
+        _sweep(connection, args.window_buckets, persist=not args.no_persist),
         indent=2,
         sort_keys=True,
     ))

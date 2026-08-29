@@ -1,0 +1,8 @@
+# W2 detection plane. Only the live Kafka consumer needs anything at all: the
+# file-based path (seed, ingest, detect) and every C2 evidence tool run on the
+# standard library alone, which is what keeps the demo fallback broker-free.
+#
+# Pinned to the exact version W1 already resolves in worker/requirements.txt so
+# one client library serves both sides of the topic. Apache-2.0, permissive, and
+# already in the inventory - see LICENCES.md.
+confluent-kafka==2.15.0
