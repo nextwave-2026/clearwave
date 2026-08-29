@@ -76,11 +76,19 @@ PRD section 32 requires one canonical definition for the event contract, the inc
 6. Cite, never recompute. Any number displayed or reasoned about carries the contract call that produced it.
 7. Stub first, then replace. The vertical slice lands stubs at every seam; each workstream replaces its own stub in place, so nobody is blocked waiting for another workstream to become real.
 
+### Working method inside a workstream
+
+What binds everyone is the seams: the contracts, the ownership boundaries, the coordination files, and the numbered rules in this document. How each contributor works inside their own workstream - tooling, branching cadence, whether and how they use agents, and review habits - is their own choice and is deliberately not specified here. Nothing in this document should be read as requiring a shared internal workflow. It is not structurally defined, on purpose.
+
 ## Integration before parallelism
 
 PRD section 32's sequencing gate applies: before the four workstreams run in parallel, one thin end-to-end path must exist - simulator to detector to incident to investigator to surface - with a stub at every seam. The gate for opening parallel work is that C1 through C4 are written down in `INTERFACES.md` and the stubbed path runs end to end. Parallel work that starts before that gate produces the exact incompatible-contract failure PRD section 32 warns about.
 
 W1 has no upstream dependency and is on the critical path for everyone else, which is why it starts first and why its contract is frozen earliest.
+
+### Integration ownership
+
+Integration across all four workstreams is owned by `derek`, in addition to W3. This covers the end-to-end path, the stubbed vertical slice, keeping the four contracts coherent with each other, and continuous end-to-end validation as components land. It is cross-cutting and transfers no ownership of any workstream internals: each workstream still owns its own tree and its own contracts. A disagreement about a contract is still raised and settled the way this document already specifies - `INTERFACES.md` for the shape, `DECISIONS.md` for the call. Integration ownership adds no new authority over that.
 
 ## Open decisions
 

@@ -47,3 +47,5 @@ the other side pushed first, run `git pull --no-rebase && git push`; union merge
   -> other side: disregard the backslash entries and read the entries with backticked paths
 - 2026-08-29T18:15Z  derek  workstream assignment decided: W1 Simulated World and Ground Truth to raul, W2 Detection Plane to andres, W3 Investigation Agent to derek, W4 Surfaces and Escalation to juank
   -> other side: each person must read their workstream's Owns and Hard rule entries in docs/ownership.md and the contracts they own or consume; the stack decision is now the only remaining gate on starting parallel implementation
+- 2026-08-29T18:16Z  derek  integration across the four workstreams is owned by derek alongside W3; each contributor's internal working method is deliberately unspecified while the seam rules bind everyone
+  -> other side: preserve the documented seams and rules, while choosing your own internal workflow; integration ownership adds no authority over contract disputes
