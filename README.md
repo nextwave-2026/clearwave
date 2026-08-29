@@ -24,13 +24,19 @@ supported by OpenAI). The pick is final. The full brief is in [`docs/challenge.m
 What is decided: a system that watches a live payment stream, detects conversion drops that
 matter, diagnoses the root cause across the transaction dimensions with visible evidence, explains
 it in operations language with an estimated money cost, prioritises concurrent incidents, states
-honestly when evidence is insufficient, and recommends an action without executing it. It
-diagnoses. It does not remediate.
+honestly when evidence is insufficient, and recommends an action without executing it. It has two
+cooperating planes: deterministic detection and agentic investigation. It diagnoses, not remediates;
+severity is independent of diagnostic confidence; and honest uncertainty is required behaviour.
 
-What is still open: language, framework, architecture, detection and diagnosis method, how the
-stream is mocked or shown, and any component breakdown. None of that is decided. Do not add a
-package manifest, lockfile, Dockerfile, or application scaffold until a human decides the stack
-and records it in `DECISIONS.md`.
+What is still open: the stack, transport, persistence, and the items listed in
+[`docs/ownership.md`](docs/ownership.md). The detection and diagnosis approach is settled by the
+PRD. Do not add a package manifest, lockfile, Dockerfile, or application scaffold until a human
+decides the stack and records it in `DECISIONS.md`.
+
+### Product baseline
+
+[`docs/prd.md`](docs/prd.md) is the authoritative product baseline. [`docs/ownership.md`](docs/ownership.md)
+defines the four-way work division.
 
 ## Demonstration
 
@@ -39,8 +45,7 @@ Nothing to run yet.
 
 ## Architecture
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md). The diagram is a placeholder until the architecture is
-decided.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the settled product architecture; technology choices remain open.
 
 ## Pre-existing components
 

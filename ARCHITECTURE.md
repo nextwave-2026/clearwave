@@ -1,11 +1,22 @@
 # Architecture
 
-Prompt: Replace the placeholder nodes and connections with the entry's current architecture; keep the diagram as Mermaid so it remains reviewable as text.
-
-<!-- PLACEHOLDER - replace this diagram during the event. -->
 ```mermaid
 flowchart LR
-    Client[User or client] --> Submission[Replace with submission]
-    Submission --> Data[Replace with chosen data store]
-    Submission --> Integrations[Replace with external integrations]
+    World[Simulated world] --> Stream[Observable event stream]
+    World --> Truth[Quarantined hidden ground truth]
+    Truth --> Evaluator[Evaluator]
+    Stream --> Detection[Deterministic detection plane]
+    Detection --> Incidents[Incident store]
+    Incidents --> Investigator[Investigation agent]
+    External[External corroboration] --> Investigator
+    Investigator --> Diagnosis[Investigation result]
+    Incidents --> Dashboard[Dashboard]
+    Diagnosis --> Dashboard
+    Diagnosis --> Escalation[Escalation binding]
+    Escalation --> Slack[Slack notification]
+    Escalation --> Phone[Phone escalation]
+    Diagnosis --> Evaluator
 ```
+
+This shows the settled product architecture. The technology choices behind each node are open.
+Node boundaries correspond to the workstreams in [`docs/ownership.md`](docs/ownership.md).
