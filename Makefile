@@ -5,16 +5,22 @@
 
 -include make/*.mk
 
+PYTHON ?= .venv/bin/python
+
 install:
-	@python3 -c 'import sys; assert sys.version_info >= (3, 11), sys.version' \
-	  && printf '%s\n' 'install: standard library only, no third-party dependencies to install'
+	@test -x "$(PYTHON)" || python3 -m venv .venv
+	@for manifest in $$(find . -name requirements.txt -not -path './.venv/*' -not -path './.git/*'); do \
+	       echo "install: pip install -r $$manifest"; \
+	       $(PYTHON) -m pip install --disable-pip-version-check --quiet -r "$$manifest" || exit 1; \
+	     done
+	@printf '%s\n' 'install: dependencies installed from every requirements.txt'
 
 lint:
-	@python3 -m compileall -q detector investigation tests stubs \
+	@$(PYTHON) -m compileall -q detector investigation tests stubs \
 	  && printf '%s\n' 'lint: all Python sources compile'
 
 test:
-	@python3 -m unittest discover -s tests -t .
+	@$(PYTHON) -m unittest discover -s tests -t .
 
 build:
 	@printf '%s\n' 'build: nothing to compile; the detector runs from source'
@@ -23,6 +29,6 @@ licences:
 	@python3 scripts/licences.py
 
 slice:
-	@python3 stubs/slice.py
+	@$(PYTHON) stubs/slice.py
 
 ci: install lint test build licences

@@ -19,16 +19,46 @@ from typing import Any
 from . import config, schema
 
 
+# Columns a measurement filter may be built on. The six cohort dimensions are
+# the published slice space; the two operational columns are here because
+# `operational_metrics` can be asked about a service rather than a cohort. The
+# published C2 surface still validates a *cohort* against schema.DIMENSIONS
+# alone, so this list widens what can be measured, never what a cohort means.
+FILTERABLE = schema.DIMENSIONS + ("service_id", "deployment_id")
+
+
 def _where(cohort: dict[str, Any] | None, start: int, end: int) -> tuple[str, list[Any]]:
     """Build the shared time-and-cohort predicate. Half-open window."""
     clauses = ["occurred_epoch >= ?", "occurred_epoch < ?"]
     params: list[Any] = [start, end]
     for dimension, value in sorted((cohort or {}).items()):
-        if dimension not in schema.DIMENSIONS:
-            raise ValueError(f"{dimension!r} is not a cohort dimension")
+        if dimension not in FILTERABLE:
+            raise ValueError(f"{dimension!r} is not a filterable dimension")
         clauses.append(f"{dimension} = ?")
         params.append(value)
     return " AND ".join(clauses), params
+
+
+def dimension_values(
+    connection: sqlite3.Connection,
+    dimension: str,
+    cohort: dict[str, Any] | None,
+    start: int,
+    end: int,
+) -> list[Any]:
+    """Distinct observed values of one dimension inside a cohort and window.
+
+    Ordered, so a sibling comparison built from it is the same on every run.
+    """
+    if dimension not in schema.DIMENSIONS:
+        raise ValueError(f"{dimension!r} is not a cohort dimension")
+    where, params = _where(cohort, start, end)
+    rows = connection.execute(
+        f"SELECT DISTINCT {dimension} AS value FROM attempt "
+        f"WHERE {where} AND {dimension} IS NOT NULL ORDER BY {dimension}",
+        params,
+    ).fetchall()
+    return [row["value"] for row in rows]
 
 
 def cohort_key(cohort: dict[str, Any] | None) -> str:
@@ -217,7 +247,18 @@ def operational_metrics(
             params,
         ).fetchall()
     ]
+    services = [
+        service["service_id"]
+        for service in connection.execute(
+            f"SELECT DISTINCT service_id FROM attempt WHERE {where} "
+            "AND service_id IS NOT NULL ORDER BY service_id",
+            params,
+        ).fetchall()
+    ]
     return {
+        "attempts": attempts,
+        "errors": int(row["errors"] or 0),
+        "timeouts": int(row["timeouts"] or 0),
         "latency_ms": {
             "p50": _percentile(latencies, 0.50),
             "p95": _percentile(latencies, 0.95),
@@ -230,6 +271,7 @@ def operational_metrics(
             "delay_max_ms": row["queue_delay_max"],
         },
         "deployments": deployments,
+        "services": services,
     }
 
 
@@ -239,6 +281,85 @@ def _percentile(ordered: list[float], fraction: float) -> float | None:
         return None
     index = max(0, min(len(ordered) - 1, int(round(fraction * (len(ordered) - 1)))))
     return ordered[index]
+
+
+def queue_profile(
+    connection: sqlite3.Connection,
+    cohort: dict[str, Any] | None,
+    start: int,
+    end: int,
+) -> dict[str, Any]:
+    """Queue depth at the window edges and its peak, plus delay percentiles.
+
+    Edges are taken from the first and last *observed* sample in event-time
+    order, tie-broken on ``event_id``, so a replay in another arrival order
+    reads the same two rows.
+    """
+    where, params = _where(cohort, start, end)
+    edges = connection.execute(
+        f"SELECT queue_depth FROM attempt WHERE {where} AND queue_depth IS NOT NULL "
+        "ORDER BY occurred_epoch, event_id",
+        params,
+    ).fetchall()
+    row = connection.execute(
+        f"SELECT MAX(queue_depth) AS peak FROM attempt WHERE {where}", params
+    ).fetchone()
+    delays = [
+        float(sample["queue_delay_ms"])
+        for sample in connection.execute(
+            f"SELECT queue_delay_ms FROM attempt WHERE {where} AND queue_delay_ms IS NOT NULL "
+            "ORDER BY queue_delay_ms",
+            params,
+        ).fetchall()
+    ]
+    return {
+        "depth_start": edges[0]["queue_depth"] if edges else None,
+        "depth_end": edges[-1]["queue_depth"] if edges else None,
+        "depth_peak": row["peak"],
+        "delay_p50_ms": _percentile(delays, 0.50),
+        "delay_p95_ms": _percentile(delays, 0.95),
+    }
+
+
+def attempt_timeseries(
+    connection: sqlite3.Connection,
+    cohort: dict[str, Any] | None,
+    start: int,
+    end: int,
+    bucket_seconds: int = config.BUCKET_SECONDS,
+) -> list[dict[str, Any]]:
+    """Attempt-level counters per bucket, oldest first.
+
+    The attempt-level companion to ``timeseries``. An attempt falls in the
+    bucket of its own event time, while a payment falls in the bucket of its
+    first attempt, which is what keeps a retry from moving a payment forward
+    in time.
+    """
+    where, params = _where(cohort, start, end)
+    rows = connection.execute(
+        f"""
+        SELECT occurred_epoch - (occurred_epoch % ?) AS bucket_ts,
+               COUNT(*) AS attempts,
+               SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved
+        FROM attempt WHERE {where}
+        GROUP BY bucket_ts ORDER BY bucket_ts
+        """,
+        [bucket_seconds] + params,
+    ).fetchall()
+    series = []
+    for row in rows:
+        attempts = int(row["attempts"] or 0)
+        approved = int(row["approved"] or 0)
+        series.append(
+            {
+                "bucket_start_epoch": int(row["bucket_ts"]),
+                "attempts": attempts,
+                "approved_attempts": approved,
+                "failed_attempts": attempts - approved,
+                "approval_conversion": (approved / attempts) if attempts else None,
+            }
+        )
+    return series
 
 
 def timeseries(

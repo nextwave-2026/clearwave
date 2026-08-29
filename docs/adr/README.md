@@ -20,6 +20,10 @@ The layer sequence is L1 merchant emission, L2 ingestion and normalisation, L3 d
 - [0012 - Scenario identifiers never reach L4](0012-scenario-identifiers-never-reach-l4.md)
 - [0013 - Hand-rolled OpenAI loop is the constrained agent runtime](0013-hand-rolled-openai-loop-agent-runtime.md)
 
+## W1 records - `raul`
+
+- [0014 - W1 raw events share one schema per topic, not one per merchant](0014-w1-raw-events-share-one-schema-per-topic.md) - W1 (`raul`), Proposed
+
 ## L2 and L3 Detection plane records - `andres`
 
 The layer they describe is documented in [detection-plane.md](../detection-plane.md), with diagrams.

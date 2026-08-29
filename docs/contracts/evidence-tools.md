@@ -2,8 +2,12 @@
 
 C2 is the read surface used by the investigation agent. Each tool is a standalone Python 3
 subprocess: it reads one JSON object from stdin, writes one JSON object to stdout, and writes no
-human-oriented output. The reference stubs are in `stubs/evidence/` and are fixture-backed so they
-run offline.
+human-oriented output. The entry points are in `stubs/evidence/`.
+
+C2 is an interface contract, not an implementation roster. Ten of the eleven tools measure the
+canonical events W2 has stored and are implemented by W2. `external_status` corroborates from a
+third-party source, so W3 implements it and it remains fixture-backed here; implementation
+ownership follows the data source. Nothing on the wire distinguishes them.
 
 ## Common protocol
 
@@ -297,6 +301,97 @@ estimates, not platform-revenue claims.
 ```json
 {"query_id":"q_financial_impact_f73da703f566fa22","as_of":"2026-08-29T10:15:00Z","incident_id":"inc-2026-08-29-001","attempted_value":{"amount":100000.0,"currency":"USD"},"expected_approval_rate":0.92,"actual_approval_rate":0.64,"estimated_lost_approved_volume":{"payments":280,"amount":28000.0,"currency":"USD"},"gmv_at_risk":{"amount":28000.0,"currency":"USD"},"loss_per_hour":{"amount":112000.0,"currency":"USD"}}
 ```
+
+## 11. `metric_series`
+
+**Purpose:** Return one named metric for one cohort over ordered event-time buckets. This is the
+only tool that answers "since when": incident onset, a severity trajectory and any statement about
+a trend read it rather than deriving a series from repeated point queries.
+
+It is deliberately a separate tool rather than a mode of `cohort_metrics`. Folding a series into
+`cohort_metrics` would change the response shape of a tool two workstreams already build against,
+and rule 4 of `docs/ownership.md` keeps contract changes additive during the build window.
+
+**Input:**
+
+- `cohort` (object, optional) - dimension equality filters; omitted or `{}` means all traffic.
+- `window` (object, required) - `start` and `end` timestamps.
+- `metric` (string, optional) - defaults to `payment_approval_conversion`. The published set is
+  `payment_approval_conversion`, `attempt_approval_conversion`, `attempted_payments`,
+  `approved_payments`, `attempts`, `failed_attempts`, `attempted_value_usd`, and
+  `retry_amplification_factor`. Any other name is refused by the error envelope with the supported
+  set in its message, never silently replaced by a default.
+- `bucket_seconds` (positive integer, optional) - defaults to the detector's bucket width, 60.
+
+**Output fields:** `cohort`, `window`, `metric`, `bucket_seconds`, `watermark`, `measured_through`,
+and `points`. Each point is `{bucket_start, bucket_end, value, samples}`, oldest first.
+`value` is `null` where the metric is undefined for that bucket, for instance a conversion with no
+payments in it. `samples` is the denominator the value was computed over, so a point that moved on
+three payments is not read as a collapse.
+
+Buckets are cut on event time and only fully closed buckets behind the lateness watermark are
+returned: `watermark` is the point measurement is complete to, and `measured_through` is the end of
+the last bucket reported. A trailing partial bucket is omitted rather than reported low, because a
+minute that is not over yet always looks like a drop. A payment falls in the bucket of its first
+attempt and an attempt falls in the bucket of its own event time, so a retry never moves a payment
+forward in time.
+
+**Example call:**
+
+```json
+{"cohort":{"provider":"provider-p2","country":"CO"},"window":{"start":"2026-08-29T10:00:00Z","end":"2026-08-29T10:15:00Z"},"metric":"payment_approval_conversion"}
+```
+
+**Example response:**
+
+```json
+{"query_id":"q_metric_series_eb6e1d7e3022d329","as_of":"2026-08-29T10:14:00Z","cohort":{"provider":"provider-p2","country":"CO"},"metric":"payment_approval_conversion","bucket_seconds":60,"watermark":"2026-08-29T10:14:00Z","measured_through":"2026-08-29T10:14:00Z","points":[{"bucket_start":"2026-08-29T10:00:00Z","bucket_end":"2026-08-29T10:01:00Z","value":0.92,"samples":50},{"bucket_start":"2026-08-29T10:01:00Z","bucket_end":"2026-08-29T10:02:00Z","value":0.64,"samples":48}]}
+```
+
+## Measurement notes
+
+These hold for every measured tool. They are implementation behaviour a caller can rely on, not new
+fields.
+
+**Where the data comes from.** Each tool reads one SQLite store, located by the `CLEARWAVE_DB`
+environment variable and defaulting to `state/clearwave.db` relative to the working directory. A
+caller that sets it once points the whole system - detector CLI and every tool - at one file. The
+store is created empty if it does not exist, so a tool never fails merely because nothing has been
+ingested yet. `python3 -m detector seed` fills a store with the repository's own deterministic
+synthetic events for a demo or a manual call.
+
+**`as_of` is the measurement watermark, not the wall clock.** It is the latest observed event time,
+less the lateness grace, floored to a bucket, and clamped to the end of the window asked about. Two
+runs over the same events therefore return the same `as_of`, which is what makes a cited response
+reproducible; a store that has observed nothing reports the epoch.
+
+**An empty store answers honestly.** Counters are zero, an undefined rate is `null`, a list is
+empty, and a tool asked about an incident that is not stored says so in `stop_reason` or in
+`assumptions` and claims no money. No response ever falls back to a fixture number. Malformed input
+is still a refusal through the error envelope, with `invalid_input` for an unsupported dimension,
+an unpublished metric name, or a missing required field.
+
+**Cohort vocabulary.** A `cohort` is validated against the six published dimensions and anything
+else is refused. `operational_metrics` additionally accepts `service` on a `target` of
+`kind: "service"`, because a service is not a cohort.
+
+**Derived and unobserved values.** `operational_metrics.service_health` is derived from first-party
+attempts - degraded once the combined error and timeout rate reaches the configured threshold - and
+carries the criterion that produced it. `runtime_health` reports `unobserved` with its reason,
+because the canonical event carries no runtime signal and W2 does not infer one.
+
+**Comparison shapes.** In `cohort_compare`, a sibling replaces exactly one dimension of the target
+with another observed value of that dimension, and a sibling with no traffic in the window is
+omitted rather than reported as zero. The parent is the target's merchant across all its other
+dimensions, or all traffic when the target is already merchant-wide or platform-wide.
+
+**Recurrence matching.** In `incident_history`, an incident whose affected cohort names no merchant
+is platform-wide and therefore matches every merchant asked about; one that names a different
+merchant never matches. Any `cohort` filter supplied alongside `merchant_id` must match the stored
+cohort exactly.
+
+**Baselines.** Where a tool reports a baseline without being given one, it is the detector's own
+trailing window on the same cohort, and the window it used is stated in the response.
 
 ## Caller rules
 

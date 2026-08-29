@@ -15,13 +15,20 @@ us and a working demo, and the file itself is evidence a judge can be handed.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
 
-from . import schema
+from . import mappers, schema
 
 DEFAULT_DB = Path("state/clearwave.db")
+
+# One environment variable locates the store for every W2 entry point: the CLI
+# and each C2 evidence tool. Without it the default is a repository-relative
+# path, so a tool invoked from the repository root works with no configuration
+# at all - which is what CI does.
+DB_ENV_VAR = "CLEARWAVE_DB"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS attempt (
@@ -74,6 +81,11 @@ CREATE TABLE IF NOT EXISTS dead_letter (
 """
 
 
+def database_path() -> Path:
+    """Where the store lives: ``CLEARWAVE_DB`` if set, else the default path."""
+    return Path(os.environ.get(DB_ENV_VAR) or DEFAULT_DB)
+
+
 def connect(path: Path | str = DEFAULT_DB) -> sqlite3.Connection:
     """Open the store, creating it and its parent directory if needed."""
     target = Path(path)
@@ -97,8 +109,8 @@ def ingest(connection: sqlite3.Connection, events: Iterable[dict[str, Any]]) -> 
     columns = None
     for raw in events:
         try:
-            row = schema.normalise(raw)
-        except schema.InvalidEvent as exc:
+            row = schema.normalise(mappers.to_canonical(raw))
+        except (schema.InvalidEvent, mappers.UnknownShape) as exc:
             connection.execute(
                 "INSERT INTO dead_letter (reason, payload) VALUES (?, ?)",
                 (str(exc), json.dumps(raw, sort_keys=True, default=str)),
@@ -137,3 +149,82 @@ def dimension_values(connection: sqlite3.Connection, dimension: str) -> list[str
         f"WHERE {dimension} IS NOT NULL ORDER BY {dimension}"
     ).fetchall()
     return [row["value"] for row in rows]
+
+
+def save_incident(
+    connection: sqlite3.Connection,
+    incident: dict[str, Any],
+    lifecycle_state: str = "detected",
+) -> bool:
+    """Durably record one C3 record. Returns False if it was already stored.
+
+    ``lifecycle_state: detected`` is the sole handoff signal to investigation
+    (DECISIONS.md, 2026-08-29T19:43Z), so the write must never clobber a state
+    another runner has already moved on - hence INSERT OR IGNORE rather than a
+    replace.
+    """
+    record = dict(incident)
+    record["lifecycle_state"] = lifecycle_state
+    detection = record.get("detection") or {}
+    financial = record.get("financial_impact") or {}
+    onset = schema.parse_timestamp(record["onset"])
+    last_seen_at = (record.get("persistence") or {}).get("last_observed_at")
+    last_seen = schema.parse_timestamp(last_seen_at) if last_seen_at else onset
+    with connection:
+        cursor = connection.execute(
+            """INSERT OR IGNORE INTO incident
+               (incident_id, created_at, record, cohort_key, severity, severity_score,
+                lifecycle_state, onset_epoch, last_seen_epoch, config_version)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(record["incident_id"]),
+                record["onset"],
+                json.dumps(record, sort_keys=True, default=str),
+                _cohort_key(record.get("affected_cohort") or {}),
+                str(record.get("severity", "low")),
+                float(detection.get("severity_score") or 0.0),
+                lifecycle_state,
+                int(onset.timestamp()),
+                int(last_seen.timestamp()),
+                str(detection.get("config_version") or "unknown"),
+            ),
+        )
+    return cursor.rowcount == 1
+
+
+def _cohort_key(cohort: dict[str, Any]) -> str:
+    """Local copy of the readable cohort identity, to keep store import-light."""
+    if not cohort:
+        return "*"
+    return "|".join(f"{key}={cohort[key]}" for key in sorted(cohort))
+
+
+def load_incident(connection: sqlite3.Connection, incident_id: str) -> dict[str, Any] | None:
+    """Return one stored C3 record, or None when it is not in the store."""
+    row = connection.execute(
+        "SELECT record, lifecycle_state FROM incident WHERE incident_id = ?", (incident_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    return _record_of(row)
+
+
+def list_incidents(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Every stored C3 record, most recent onset first. Deterministic order."""
+    rows = connection.execute(
+        "SELECT record, lifecycle_state FROM incident "
+        "ORDER BY onset_epoch DESC, incident_id ASC"
+    ).fetchall()
+    return [record for record in (_record_of(row) for row in rows) if record is not None]
+
+
+def _record_of(row: sqlite3.Row) -> dict[str, Any] | None:
+    """Decode a stored record, tolerating a row another writer shaped."""
+    try:
+        record = json.loads(row["record"])
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    record["lifecycle_state"] = row["lifecycle_state"]
+    return record

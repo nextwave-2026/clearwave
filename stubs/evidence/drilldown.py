@@ -1,4 +1,4 @@
 #!/usr/bin/env python3
-from _common import run
+from _common import run_measured
 
-raise SystemExit(run("drilldown", "drilldown.json"))
+raise SystemExit(run_measured("drilldown"))

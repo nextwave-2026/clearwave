@@ -77,9 +77,34 @@ is tested at all and how the evaluator can rerun a scenario.
 rate would make a replay produce a different number than the original run. An unknown currency is
 an error rather than a silent pass-through.
 
+## Native shapes and the mapper registry
+
+W1 emits a native shape per merchant and registers it. A mapper is a pure function from one native
+record to a canonical one, and `detector/mappers.py` holds the registry. Adding a source is adding a
+mapper; nothing downstream changes.
+
+Two mappers ship today because two shapes already exist:
+
+| Registered name | Shape | Differences from C1b |
+|---|---|---|
+| `canonical` | already C1b | none; tolerates `attempt_ts`, `timestamp` and `event_time` as aliases for `occurred_at`, and `decline_reason` for `normalized_decline_reason` |
+| `clearwave.attempt.v1` | the envelope circulated to W1 before normalisation moved to W2 | `attempt_ts` for event time, integer minor units in `amount_minor`, `decline_reason`, and a `timed_out` flag that becomes the `timeout` status |
+
+A record's own `schema` field selects its mapper; a source that declares itself is never guessed at.
+Otherwise the shape is inferred from the two fields that actually differ. An unregistered shape is
+refused rather than coerced.
+
+`tests/fixtures/native_attempt_v1.sample.json` is the envelope that was circulated, kept verbatim.
+If it ever stops normalising, whoever built to it is broken and the test says so immediately.
+
+Minor-unit conversion uses the ISO 4217 exponent for the currency, not a hardcoded two, because two
+is wrong for JPY and CLP. An unregistered exponent is an error.
+
 ## What W1 needs to provide
 
-1. Register each native merchant shape so W2 can write and version its mapper.
+1. Register each native merchant shape so W2 can write and version its mapper. If a simulator
+   already emits the circulated `clearwave.attempt.v1` envelope, that shape is registered and works
+   as-is; nothing needs redoing.
 2. Key the raw payment topics so every attempt of one payment stays on one partition, in order.
    Without it, assembling retry chains becomes cross-partition coordination.
 3. Emit an event timestamp on every record.

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "clearwave.payment_closed.v1",
+  "title": "C1 payment closed event",
+  "description": "One record per customer payment when it reaches a terminal state, on the payments.closed topic. This is what lets W2 measure payment-level conversion without guessing terminality from a quiet window. It is observable orchestrator state, not hidden ground truth.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema", "event_id", "payment_id", "closed_ts", "outcome", "total_attempts", "merchant_id", "amount_minor", "currency"],
+  "properties": {
+    "schema":     { "const": "clearwave.payment_closed.v1" },
+    "event_id":   { "type": "string" },
+    "emitted_at": { "type": "string", "format": "date-time" },
+
+    "payment_id": { "type": "string", "description": "Same partition key as the attempts topic." },
+    "closed_ts":  { "type": "string", "format": "date-time", "description": "EVENT time." },
+
+    "outcome":    { "enum": ["approved", "failed", "abandoned"] },
+    "final_attempt_id": { "type": ["string", "null"] },
+    "total_attempts":   { "type": "integer", "minimum": 1 },
+
+    "merchant_id":    { "type": "string" },
+    "country":        { "type": ["string", "null"], "pattern": "^[A-Z]{2}$" },
+    "payment_method": { "type": ["string", "null"] },
+
+    "amount_minor": { "type": "integer", "minimum": 0 },
+    "currency":     { "type": "string", "pattern": "^[A-Z]{3}$" }
+  }
+}

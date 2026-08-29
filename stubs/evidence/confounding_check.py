@@ -1,4 +1,4 @@
 #!/usr/bin/env python3
-from _common import run
+from _common import run_measured
 
-raise SystemExit(run("confounding_check", "confounding_check.json"))
+raise SystemExit(run_measured("confounding_check"))
