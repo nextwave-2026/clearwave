@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 
 from worker.helpers.merchant import Merchant
-from worker.helpers.payment import ANOMALY, MODES, NORMAL
+from worker.helpers.payment import Incident
 
 
 def _now_iso() -> str:
@@ -17,17 +17,15 @@ def _now_iso() -> str:
 
 
 class TelemetrySampleBuilder:
-    def __init__(self, merchant: Merchant, mode: str = NORMAL):
-        if mode not in MODES:
-            raise ValueError(f"unknown mode {mode!r}, expected one of: {MODES}")
+    def __init__(self, merchant: Merchant, incident: Incident | None = None):
         self.merchant = merchant
-        self.mode = mode
+        self.incident = incident
         self.service_id = f"w1-worker-{merchant.merchant_type}"
         self.deployment_id = "worker-local"
 
     def build(self) -> dict:
         now = _now_iso()
-        degraded = self.mode == ANOMALY
+        degraded = self.incident is not None
         return {
             "schema": "clearwave.ops.v1",
             "event_id": f"evt_{uuid.uuid4().hex}",

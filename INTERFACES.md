@@ -44,5 +44,5 @@ file is NOT union-merged, so it can genuinely conflict. A conflict here means an
 
 - **Boundary name:** C6 Hidden ground truth and evaluator verdict
 - **Owner:** W1 - Simulated World and Ground Truth (`raul`); evaluator: `derek` (integration)
-- **Current shape:** Hidden ground truth remains quarantined in W1. The evaluator compares diagnosis against it after the fact; detection and investigation have no read path to the ground truth.
-- **Last changed:** 2026-08-29T19:04Z
+- **Current shape:** Specified in full in `docs/contracts/hidden-truth.md`, which is the single definition. Implementation: `worker/ground_truth/store.py` is the quarantined SQLite store (local to W1's own process, never mounted or exposed to W2/W3); `worker/ground_truth/scenarios.py` maps the three guaranteed scenarios in `docs/scenarios.md` onto real merchant/provider/bank data; `worker/ground_truth/runner.py` records the injected configuration on start and the observed magnitude on close. Detection and investigation have no read path to it - only the evaluator, only after a diagnosis exists.
+- **Last changed:** 2026-08-29T22:15Z

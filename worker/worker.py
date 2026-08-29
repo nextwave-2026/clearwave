@@ -22,12 +22,23 @@ Run from the clearwave/ repo root as a module, not as a bare script, since
 this package uses absolute `worker.*` imports:
 
     python -m worker.worker merchant-a
-    python -m worker.worker merchant-a --mode anomaly --interval-seconds 0.5
+    python -m worker.worker merchant-b --incident-provider adyen --interval-seconds 0.5
+    python -m worker.worker merchant-c --incident-issuing-bank "Nu Brasil"
+    python -m worker.worker merchant-c --scenario provider-issuer-confounded
 
-Loops forever until interrupted (Ctrl+C). No on-the-fly trigger yet - mode is
-fixed for the life of the process. Live triggering (a control topic W4 can
-publish to) is the next W1 increment and must extend this without breaking
-the C1 contract.
+Loops forever until interrupted (Ctrl+C). --incident-* flags set the
+starting incident; while running, it also polls
+worker.helpers.control.CONTROL_TOPIC each tick, so worker/inject.py (or
+eventually W4's judge trigger) can start or stop an incident live without
+restarting this process.
+
+--scenario runs one of the guaranteed scenarios in docs/scenarios.md
+instead: same Incident mechanism underneath, but it also records the C6
+injected configuration to the quarantined ground-truth store
+(worker/ground_truth/) on start and the observation on shutdown. Each
+scenario is pinned to one merchant (worker/ground_truth/scenarios.py) -
+running it against a different merchant_type is a startup error, not a
+silent no-op.
 """
 
 import argparse
@@ -40,9 +51,22 @@ from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.json_schema import JSONSerializer
 from confluent_kafka.serialization import MessageField, SerializationContext, StringSerializer
 
+from worker.ground_truth.runner import ScenarioRun
+from worker.ground_truth.scenarios import SCENARIOS
+from worker.helpers.control import IncidentControl
 from worker.helpers.merchant import PROFILES, Merchant
-from worker.helpers.payment import MODES, NORMAL, PaymentAttemptBuilder
+from worker.helpers.payment import (
+    DECLINE,
+    DEFAULT_INCIDENT_DECLINE_REASON,
+    DEFAULT_INCIDENT_LATENCY_MS,
+    EFFECTS,
+    SPIKE,
+    Incident,
+    PaymentAttemptBuilder,
+)
 from worker.helpers.telemetry import TelemetrySampleBuilder
+
+SPIKE_MULTIPLIER = 3  # extra chains generated per tick while a spike incident is active
 
 REGISTRY_DIR = Path(__file__).parent / "registry"
 
@@ -114,22 +138,43 @@ class Producer:
 
 def run(
     merchant: Merchant,
-    mode: str,
+    incident: Incident | None,
     interval_seconds: float,
     telemetry_every: int,
+    scenario_run: ScenarioRun | None = None,
 ) -> None:
     producer = Producer()
-    payment_builder = PaymentAttemptBuilder(merchant, mode=mode)
-    telemetry_builder = TelemetrySampleBuilder(merchant, mode=mode)
+    control = IncidentControl(merchant.merchant_id, initial=incident)
+    payment_builder = PaymentAttemptBuilder(merchant, incident=incident)
+    telemetry_builder = TelemetrySampleBuilder(merchant, incident=incident)
     tick = 0
     try:
         while True:
+            control.poll()
+            payment_builder.incident = control.incident
+            telemetry_builder.incident = control.incident
+
             attempts = payment_builder.build_chain()
             for attempt in attempts:
                 producer.send("attempt", key=attempt["payment_id"], event=attempt)
 
             closed = payment_builder.build_closed(attempts)
             producer.send("closed", key=closed["payment_id"], event=closed)
+            if scenario_run is not None:
+                scenario_run.observe(attempts, closed)
+
+            active = control.incident
+            if active is not None and active.effect == SPIKE:
+                # no per-attempt effect - extra volume forced into the
+                # scoped cohort is the effect itself
+                for _ in range(SPIKE_MULTIPLIER):
+                    extra_attempts = payment_builder.build_chain(forced=active.scope)
+                    for attempt in extra_attempts:
+                        producer.send("attempt", key=attempt["payment_id"], event=attempt)
+                    extra_closed = payment_builder.build_closed(extra_attempts)
+                    producer.send("closed", key=extra_closed["payment_id"], event=extra_closed)
+                    if scenario_run is not None:
+                        scenario_run.observe(extra_attempts, extra_closed)
 
             tick += 1
             if telemetry_every > 0 and tick % telemetry_every == 0:
@@ -141,6 +186,10 @@ def run(
         print("stopping, flushing pending deliveries...")
     finally:
         producer.flush()
+        control.close()
+        if scenario_run is not None:
+            scenario_run.close()
+            print(f"ground truth recorded: instance_id={scenario_run.instance_id}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -156,11 +205,68 @@ def parse_args() -> argparse.Namespace:
         "merchant-a). One of: " + ", ".join(sorted(PROFILES)),
     )
     parser.add_argument(
-        "--mode",
-        choices=MODES,
-        default=os.environ.get("EVENT_MODE", NORMAL),
-        help="Whether to generate normal events or ones that should be "
-        "flagged for review (default: env EVENT_MODE or normal).",
+        "--scenario",
+        choices=sorted(SCENARIOS),
+        default=os.environ.get("SCENARIO"),
+        help="Run a named guaranteed scenario (docs/scenarios.md) instead of "
+        "a manual --incident-*: builds the right Incident, records the C6 "
+        "injected configuration in the quarantined ground-truth store on "
+        "start, and the observation on shutdown. Requires running the "
+        "scenario's own merchant - mismatched merchant_type is an error. "
+        "Mutually exclusive with --incident-*.",
+    )
+    parser.add_argument(
+        "--scenario-duration-seconds",
+        type=int,
+        default=int(os.environ.get("SCENARIO_DURATION_SECONDS", "900")),
+        help="C6 injection window length (default: env "
+        "SCENARIO_DURATION_SECONDS or 900 - the catalogue's typical window).",
+    )
+    parser.add_argument(
+        "--incident-provider",
+        default=os.environ.get("INCIDENT_PROVIDER"),
+        help="Scope an incident to this provider (e.g. stripe). Combine "
+        "with the other --incident-* flags to narrow further; omit all of "
+        "them for fully normal traffic.",
+    )
+    parser.add_argument(
+        "--incident-issuing-bank",
+        default=os.environ.get("INCIDENT_ISSUING_BANK"),
+        help="Scope an incident to this issuing bank (e.g. 'Banco Real').",
+    )
+    parser.add_argument(
+        "--incident-payment-method",
+        default=os.environ.get("INCIDENT_PAYMENT_METHOD"),
+        help="Scope an incident to this payment method (e.g. card).",
+    )
+    parser.add_argument(
+        "--incident-card-network",
+        default=os.environ.get("INCIDENT_CARD_NETWORK"),
+        help="Scope an incident to this card network (e.g. mastercard).",
+    )
+    parser.add_argument(
+        "--incident-effect",
+        choices=EFFECTS,
+        default=os.environ.get("INCIDENT_EFFECT", DECLINE),
+        help="What the incident does to matching traffic: decline (elevated "
+        "decline rate), outage (provider excluded from routing, volume to "
+        "zero - provider scope only), latency (approves/declines normally "
+        "but latency/queue spike), or spike (extra volume, no per-attempt "
+        f"change). Default: env INCIDENT_EFFECT or {DECLINE!r}.",
+    )
+    parser.add_argument(
+        "--incident-decline-reason",
+        default=os.environ.get("INCIDENT_DECLINE_REASON", DEFAULT_INCIDENT_DECLINE_REASON),
+        help="decline_reason attached to incident-affected attempts when "
+        "effect=decline (default: env INCIDENT_DECLINE_REASON or "
+        f"{DEFAULT_INCIDENT_DECLINE_REASON!r}).",
+    )
+    parser.add_argument(
+        "--incident-latency-ms",
+        type=int,
+        default=int(os.environ.get("INCIDENT_LATENCY_MS", str(DEFAULT_INCIDENT_LATENCY_MS))),
+        help="latency_ms attached to incident-affected attempts when "
+        f"effect=latency (default: env INCIDENT_LATENCY_MS or {DEFAULT_INCIDENT_LATENCY_MS}).",
     )
     parser.add_argument(
         "--interval-seconds",
@@ -179,7 +285,54 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def build_incident(args: argparse.Namespace) -> Incident | None:
+    scope = {
+        "provider": args.incident_provider,
+        "issuing_bank": args.incident_issuing_bank,
+        "payment_method": args.incident_payment_method,
+        "card_network": args.incident_card_network,
+    }
+    scope = {dimension: value for dimension, value in scope.items() if value}
+    if not scope:
+        return None
+    return Incident(
+        scope=scope,
+        effect=args.incident_effect,
+        decline_reason=args.incident_decline_reason,
+        latency_ms=args.incident_latency_ms,
+    )
+
+
+def build_scenario_run(args: argparse.Namespace) -> ScenarioRun | None:
+    if not args.scenario:
+        return None
+    manual_flags = (
+        args.incident_provider,
+        args.incident_issuing_bank,
+        args.incident_payment_method,
+        args.incident_card_network,
+    )
+    if any(manual_flags):
+        raise SystemExit("--scenario and --incident-* are mutually exclusive")
+    definition = SCENARIOS[args.scenario]
+    if args.merchant_type != definition.merchant_id:
+        raise SystemExit(
+            f"scenario {args.scenario!r} runs on {definition.merchant_id!r}, "
+            f"not {args.merchant_type!r} - run: "
+            f"python -m worker.worker {definition.merchant_id} --scenario {args.scenario}"
+        )
+    return ScenarioRun(args.scenario, duration_seconds=args.scenario_duration_seconds)
+
+
 if __name__ == "__main__":
     args = parse_args()
     merchant = Merchant(args.merchant_type)
-    run(merchant, args.mode, args.interval_seconds, args.telemetry_every)
+    scenario_run = build_scenario_run(args)
+    incident = scenario_run.incident if scenario_run else build_incident(args)
+    run(
+        merchant,
+        incident,
+        args.interval_seconds,
+        args.telemetry_every,
+        scenario_run=scenario_run,
+    )
