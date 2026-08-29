@@ -90,6 +90,14 @@ That protection depends on two things staying true:
 2. **The declarations must survive.** The first commit message and the README "Pre-existing components"
    section both declare the provenance. Never remove or weaken either.
 
+## Integration contract - read before building
+
+Before changing anything under `stubs/` or implementing any layer, read `docs/integration-guide.md`.
+The stubs are binding seams, not disposable examples: replace only your own layer in place.
+`python3 stubs/slice.py` must keep running and printing all five stages at every commit.
+Contracts change only through `INTERFACES.md` and `DECISIONS.md`, with the change announced in `STATUS.md`.
+Do not delete stubs, weaken guards, or silently change a shape.
+
 ## Working conventions
 
 **Code** goes through a branch and a pull request. Never commit code directly to `main`.
