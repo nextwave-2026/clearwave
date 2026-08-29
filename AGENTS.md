@@ -1,27 +1,25 @@
 # Clearwave - agent orientation
 
 Read this before touching anything. It is the orientation file for every agent working in this
-repository, on either side of the team.
+repository.
 
 ## What this is
 
-Clearwave is a competition entry repository. Two developers work on it from two independent machines,
-each running their own supervisor and their own workers. There is no shared supervisor between the two
-sides, so **this repository is the only coordination channel that exists.**
+Clearwave is a competition entry repository. Four people work on it from independent machines,
+each running their own supervisor and their own workers. There is no shared supervisor across
+machines, so **this repository is the only coordination channel that exists.**
 
 The name is deliberately product-like and domain-agnostic. Do not rename it to match the problem.
 
-## The challenge is not known yet
+## Challenge 02 is the committed pick
 
-Nothing in this repository commits to a language, framework, or architecture, and that is intentional.
-The problem statement is revealed at the start of the build window. Until then:
+The team is committed to Challenge 02, Control Tower. The pick is final under the event protocol
+SYS.A (pick one). The full brief is in `docs/challenge.md`.
 
-- Do not add a package manifest, lockfile, deploy configuration, or Dockerfile.
-- Do not add domain logic.
-- Do not "helpfully" scaffold an application.
-
-If you believe something in that list is now needed, it is because the challenge has been revealed and
-a human decided the stack. Confirm that before adding it.
+Nothing in this repository commits to a language, framework, or architecture yet. The prohibition
+on package manifests, lockfiles, deploy configuration, Dockerfiles, and application scaffolding
+lifts only once a human has decided the stack. The stack is not decided. Confirm that decision
+before adding anything that commits us to a language or framework.
 
 ## The four coordination files, and why they differ
 
@@ -41,9 +39,9 @@ one by appending a new one.
 interface, leaving the file asserting two contradictory things at once. A conflict there is a genuine
 signal that both sides are editing the same boundary and must reconcile.
 
-**Every entry names who wrote it**, using that person's GitHub username - `derek` or `andres`. With two
-independent sides and no shared supervisor, an unattributed line is close to useless, and a real name
-tells you who to go and talk to.
+**Every entry names who wrote it**, using that person's handle - `derek`, `andres`, `juank`, or
+`raul`. With independent machines and no shared supervisor, an unattributed line is close to
+useless, and a real name tells you who to go and talk to.
 
 ### When to write to which
 

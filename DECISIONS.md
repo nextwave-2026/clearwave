@@ -23,3 +23,9 @@ the other side pushed first, run `git pull --no-rebase && git push`; union merge
   -> other side: once they land here they fire automatically - claim before build, stop on an INTERFACES.md conflict rather than resolving it, capture decisions, and verify a working claim by testing it as a stranger would. Say now if you want any of them changed, before they are copied in
 - 2026-08-26T23:43Z  derek  availability: I plan to be offline roughly 03:00-07:00 on Sunday
   -> other side: do not leave an interface decision pending across that gap, and expect no reply until 07:00 - with no messaging channel, a blocked question costs you the whole window
+- 2026-08-29T16:52Z  derek  challenge: committed the team to Challenge 02, Control Tower; the pick is final under SYS.A and cannot be revisited
+  -> other side: all work targets the Control Tower objective; the full brief is in `docs/challenge.md`
+- 2026-08-29T16:52Z  derek  team: now four people; `juank` (Juan Camilo, GitHub `juank115`) and `raul` (Raul Higuera, GitHub `raulhiguerac`) added
+  -> other side: every coordination entry must be attributed with the writer's handle (`derek`, `andres`, `juank`, or `raul`); the "two sides" model in older entries now means four contributors who may be on separate machines
+- 2026-08-29T16:52Z  derek  stack and architecture remain deliberately open
+  -> other side: nobody adds a package manifest, lockfile, Dockerfile, or application scaffold until a human decides the stack, and that decision gets its own entry here when it is made
