@@ -127,12 +127,19 @@ One record per channel per incident, persisted by `surfaces/store.py` in the sha
 - **Phone** (`surfaces/escalation.py:twilio_provider`, `twiml_for`): places one Twilio
   Programmable Voice call via `urllib` against the Calls REST resource, authenticated with HTTP
   Basic Auth from `CLEARWAVE_TWILIO_ACCOUNT_SID` / `CLEARWAVE_TWILIO_AUTH_TOKEN` /
-  `CLEARWAVE_TWILIO_FROM_NUMBER` / `CLEARWAVE_TWILIO_TO_NUMBER`. TwiML is supplied inline (no
-  hosted webhook URL required) as a bounded `<Pause length="20"/>` - the call occurring is the
-  signal PRD section 19 asks for; it deliberately does not speak, because a trial Twilio account
-  prepends its own "trial account" announcement before any TwiML runs regardless. No `twilio` SDK
-  dependency. When credentials are incomplete, the call is skipped and recorded as
-  `fallback_dashboard` rather than raising.
+  `CLEARWAVE_TWILIO_FROM_NUMBER` / `CLEARWAVE_TWILIO_TO_NUMBER`. TwiML is a bounded
+  `<Pause length="20"/>` - the call occurring is the signal PRD section 19 asks for; it
+  deliberately does not speak, because a trial Twilio account prepends its own "trial account"
+  announcement before any TwiML runs regardless. No `twilio` SDK dependency. When credentials are
+  incomplete, the call is skipped and recorded as `fallback_dashboard` rather than raising.
+  - **Verified against a real Twilio trial account (2026-08-29):** the Calls API rejects the
+    inline `Twiml` parameter on trial accounts with HTTP 400 - "trial accounts have limited
+    parameter access, upgrade your account to unlock full functionality". Trial calls must
+    instead point the `Url` parameter at a Twilio-hosted TwiML Bin containing the exact
+    `twiml_for()` string. `twilio_provider` now accepts a `twiml_url` argument (env var
+    `CLEARWAVE_TWILIO_TWIML_URL`): when set, the call uses `Url`; when unset, it falls back to
+    inline `Twiml`, which only a paid account accepts. Set the Bin URL for the demo, since the
+    team is on a trial account.
 - **Dashboard**: always `delivered`; the dashboard has no external failure mode of its own.
 
 ## Degradation (PRD section 29)
@@ -145,7 +152,7 @@ other channels still fire.
 ## Credentials
 
 `CLEARWAVE_SLACK_WEBHOOK_URL`, `CLEARWAVE_SLACK_CHANNEL`, `CLEARWAVE_TWILIO_ACCOUNT_SID`,
-`CLEARWAVE_TWILIO_AUTH_TOKEN`, `CLEARWAVE_TWILIO_FROM_NUMBER`, `CLEARWAVE_TWILIO_TO_NUMBER` are
-environment variables only, never committed. None of them appear in `docs/contracts/` as a
-cross-workstream boundary field, because they are W4's external infrastructure, not part of any
-interface another workstream reads.
+`CLEARWAVE_TWILIO_AUTH_TOKEN`, `CLEARWAVE_TWILIO_FROM_NUMBER`, `CLEARWAVE_TWILIO_TO_NUMBER`,
+`CLEARWAVE_TWILIO_TWIML_URL` are environment variables only, never committed. None of them appear
+in `docs/contracts/` as a cross-workstream boundary field, because they are W4's external
+infrastructure, not part of any interface another workstream reads.
