@@ -67,8 +67,7 @@ start. `licences` already works.
 
 ## Licences - a hard rule, not hygiene
 
-Strongly copyleft licences are prohibited: **no GPL, no AGPL**, no licence that would force the
-organisers to release their own code. Permissive licences are fine (MIT, Apache-2.0, BSD, ISC).
+Permissive licences are fine (MIT, Apache-2.0, BSD, ISC, and similar licences). Weak, file-level copyleft - specifically MPL-2.0 - is accepted. The obligation attaches to modifications of the MPL-licensed files themselves; it does not reach our own code and does not oblige the organisers to release theirs. Strong copyleft remains prohibited: **no GPL, no AGPL**, and no licence that would force the organisers to release their own code. Any licence outside these named categories must be raised rather than assumed acceptable.
 
 Every third-party component must be identified in the documentation - that is a graded deliverable, not
 a nicety. Run `make licences` to regenerate the inventory in `LICENCES.md`; it works offline and never
