@@ -3,19 +3,21 @@
 
 .PHONY: install lint test build licences ci slice evaluate test-investigation
 
+PYTHON ?= .venv/bin/python
+
 install:
-	@python3 -c 'import sys; assert sys.version_info >= (3, 11), sys.version' \
-	  && printf '%s\n' 'install: standard library only, no third-party dependencies to install'
+	@test -x "$(PYTHON)" || python3 -m venv .venv
+	@$(PYTHON) -m pip install --disable-pip-version-check --requirement requirements.txt
 
 lint:
-	@python3 -m compileall -q detector investigation tests stubs \
+	@$(PYTHON) -m compileall -q detector investigation tests stubs \
 	  && printf '%s\n' 'lint: all Python sources compile'
 
 test:
-	@python3 -m unittest discover -s tests -t .
+	@$(PYTHON) -m unittest discover -s tests -t .
 
 test-investigation:
-	@python3 -m unittest tests.test_investigation
+	@$(PYTHON) -m unittest tests.test_investigation tests.test_agent_loop
 
 build:
 	@printf '%s\n' 'build: nothing to compile; the detector runs from source'
@@ -24,9 +26,9 @@ licences:
 	@python3 scripts/licences.py
 
 slice:
-	@python3 stubs/slice.py
+	@$(PYTHON) stubs/slice.py
 
 evaluate:
-	@python3 evaluator/test_score.py
+	@$(PYTHON) evaluator/test_score.py
 
 ci: install lint test build licences
