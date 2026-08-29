@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clearwave Control Tower</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip" href="#workspace">Skip to board</a>
+  <header class="mast">
+    <div class="wordmark">
+      <p class="kicker">Local TAM board</p>
+      <h1>Clearwave <span>Control Tower</span></h1>
+    </div>
+    <p class="clock" id="clock" aria-live="polite"></p>
+    <form id="judge-form" class="judge">
+      <button type="submit" id="judge-trigger">Fire hidden incident</button>
+      <p id="judge-status" role="status">Judge trigger ready. The scenario stays hidden.</p>
+    </form>
+  </header>
+
+  <div class="shell">
+    <nav class="rail" aria-label="Views">
+      <button type="button" class="rail-btn is-active" data-view="overview">Overview</button>
+      <button type="button" class="rail-btn" data-view="queue">Incident queue</button>
+      <button type="button" class="rail-btn" data-view="detail">Incident detail</button>
+      <button type="button" class="rail-btn" data-view="evidence">Evidence trail</button>
+      <p class="rail-note">Queue is ordered by business priority. Recency is not a ranking. Severity and diagnostic confidence never share a badge.</p>
+    </nav>
+
+    <main id="workspace" class="workspace">
+      <section id="view-overview" class="view is-active" data-view="overview">
+        <header class="view-head">
+          <h2>Business overview</h2>
+          <p>Figures are copied from the highest-priority active incident. Nothing here is computed in the UI.</p>
+        </header>
+        <div id="overview-board" class="overview-board"></div>
+      </section>
+
+      <section id="view-queue" class="view" data-view="queue" hidden>
+        <header class="view-head">
+          <h2>Incident queue</h2>
+          <p>Ordered by stored severity. A CRITICAL incident with LOW confidence is valid and expected.</p>
+        </header>
+        <div id="queue-board" class="queue-board"></div>
+      </section>
+
+      <section id="view-detail" class="view" data-view="detail" hidden>
+        <header class="view-head">
+          <h2>Incident detail</h2>
+          <p>Six questions a TAM should be able to answer without opening a warehouse.</p>
+        </header>
+        <div id="detail-board" class="detail-board"></div>
+      </section>
+
+      <section id="view-evidence" class="view" data-view="evidence" hidden>
+        <header class="view-head">
+          <h2>Evidence trail</h2>
+          <p>The queries that ran, in order, with what came back. This is a product surface, not a log.</p>
+        </header>
+        <div id="evidence-board" class="evidence-board"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="incoming-call" class="incoming" hidden>
+    <div class="incoming-panel" role="alertdialog" aria-labelledby="incoming-title" aria-describedby="incoming-copy">
+      <p class="incoming-kicker">Critical escalation</p>
+      <h2 id="incoming-title">Incoming call</h2>
+      <p id="incoming-copy" class="incoming-copy"></p>
+      <button type="button" id="answer-call">Answer</button>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
