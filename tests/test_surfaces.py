@@ -587,6 +587,47 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("scope_label", js)
         self.assertIn("incidentScope", js)
 
+    def test_incoming_hidden_attribute_overrides_display_grid(self):
+        css = (ROOT / "surfaces" / "static" / "styles.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r"\.incoming\[hidden\][^}]*display:\s*none")
+
+    def test_incoming_copy_preserves_newlines(self):
+        css = (ROOT / "surfaces" / "static" / "styles.css").read_text(encoding="utf-8")
+        self.assertRegex(css, r"\.incoming-copy[^}]*white-space:\s*pre-line")
+
+    def test_missing_recommended_action_is_honest_absence(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn(
+            "Operator narrative is the stored recommended action, or unavailable if the agent failed.",
+            js,
+        )
+        self.assertIn("Recommended action not in store", js)
+
+    def test_missing_investigation_is_not_labelled_agent_unavailable(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn('outcome || "agent_unavailable"', js)
+        self.assertNotIn("unavailableCopy", js)
+        self.assertIn("Investigation has not run yet.", js)
+        self.assertIn("Investigation is running.", js)
+        self.assertIn("Narrative unavailable because the investigation agent failed.", js)
+
+    def test_missing_confidence_is_not_labelled_none(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn('confidence || "none"', js)
+        self.assertIn('return "not in store"', js)
+        self.assertIn("awaiting investigation", js)
+        self.assertIn('"confidence " + confValue', js)
+
+    def test_answered_call_is_not_reshown_from_a_stale_refresh(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("dismissedCalls", js)
+        self.assertIn("state.dismissedCalls[incidentId] = true", js)
+
+    def test_investigation_outcome_is_shown_beside_lifecycle(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("const outcome = investigation.outcome", js)
+        self.assertIn('(outcome ? " · " + outcome : "")', js)
+
 
 if __name__ == "__main__":
     unittest.main()

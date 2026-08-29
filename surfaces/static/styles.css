@@ -332,6 +332,10 @@ html, body {
   z-index: 30;
 }
 
+.incoming[hidden] {
+  display: none;
+}
+
 .incoming-panel {
   width: min(640px, calc(100vw - 32px));
   padding: 36px;
@@ -358,6 +362,7 @@ html, body {
   color: var(--paper);
   line-height: 1.5;
   min-height: 4.5em;
+  white-space: pre-line;
 }
 
 @keyframes pulse {
