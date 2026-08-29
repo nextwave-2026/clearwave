@@ -17,26 +17,21 @@ try:
 except (OSError, subprocess.CalledProcessError):
     fail("Makefile: cannot locate the repository. Run this guard from the repository and restore the target names.")
 
-path = root / "Makefile"
-try:
-    lines = path.read_text(encoding="utf-8").splitlines()
-except OSError as error:
-    fail(f"Makefile: cannot read the target contract ({error}). Restore it before rerunning CI.")
-
-found = set()
-for line in lines:
-    if not line or line[0].isspace() or ":" not in line:
-        continue
-    names = line.split(":", 1)[0].split()
-    found.update(name for name in names if name and not name.startswith("."))
-
 required = ("install", "lint", "test", "build", "licences", "ci")
-missing = [target for target in required if target not in found]
-if missing:
-    for target in missing:
-        print(
-            f"Makefile: required target '{target}' is missing. Restore the '{target}:' target because CI calls it by name.",
-            file=sys.stderr,
+for target in required:
+    result = subprocess.run(
+        ["make", "--always-make", "--dry-run", "--no-print-directory", target],
+        cwd=root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    output = result.stdout.strip()
+    commands = [line for line in output.splitlines() if not line.startswith("make: ")]
+    if result.returncode or not commands:
+        detail = f" ({output})" if output else ""
+        fail(
+            f"Makefile: required target '{target}' is not reachable from Makefile and included fragments. "
+            f"Restore the '{target}:' target because CI calls it by name.{detail}"
         )
-    raise SystemExit(1)
 PY

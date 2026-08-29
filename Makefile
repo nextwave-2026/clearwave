@@ -1,7 +1,9 @@
 # Contract: fill in target bodies on competition day, but never rename these targets.
 # The CI workflow calls them by name.
 
-.PHONY: install lint test build licences ci slice evaluate test-investigation
+.PHONY: install lint test build licences ci slice
+
+-include make/*.mk
 
 PYTHON ?= .venv/bin/python
 

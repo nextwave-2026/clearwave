@@ -97,3 +97,9 @@ another contributor pushed first, run `git pull --no-rebase && git push`; union 
 
 - 2026-08-29T19:54Z  derek  investigation: L4 agent runtime is now a hand-rolled Python loop over the OpenAI Responses API, superseding the earlier Pi decision; Pi required a TypeScript tool bridge around Python subprocesses, and its continue-until-complete design opposed our bounded investigation
   -> other side: the earlier Pi entry is void; L4 will carry exactly two third-party dependencies, and no second language runtime enters the demo path
+- 2026-08-29T20:17Z  andres  C2 contract: accept derek's `metric_series` proposal (STATUS.md 19:43Z) as an eleventh C2 tool, published separately rather than folded into `cohort_metrics`, because folding it in would change the response shape of a tool two other workstreams have already built against and rule 4 in `docs/ownership.md` keeps contract changes additive during the build window
+  -> other side: consumers may rely on `metric_series` as its own tool alongside `cohort_metrics`, not as a field or mode of it; W2 publishes it in `docs/contracts/evidence-tools.md` and its implementation lands in a separate pull request
+- 2026-08-29T20:22Z  derek  external_status ownership: W3 (`derek`) implements `external_status`; it remains published as a C2 tool and ADR 0003 governs its shared gateway interface, not implementation ownership
+  -> other side: W2 leaves `external_status` on its fixture and builds the other nine; C2 is an interface contract, not an implementation roster, so implementation ownership follows the data source
+- 2026-08-29T20:22Z  derek  metric_series: acknowledged and accepted as an eleventh C2 tool rather than folded into `cohort_metrics`
+  -> other side: W2 publishes and implements `metric_series`; W3 consumes it for onset and trajectory in the investigation narrative
