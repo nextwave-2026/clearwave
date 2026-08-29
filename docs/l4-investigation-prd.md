@@ -152,14 +152,14 @@ These materially different outputs require no scenario-specific branch. In accor
 flowchart LR
     subgraph Runtime["L4 runtime boundary"]
         IncidentStore[(Relational SQLite incident store)]
-        Runner[Investigation runner\nclaim, lifecycle, timeout, concurrency]
-        Adapter[Agent adapter\nprompt, tools, validation, retry, degrade]
-        Agent[Headless pi-coding-agent\nJSON print mode]
-        Gateway[Evidence gateway\nsole tool caller and query-id authority]
+        Runner[Investigation runner<br/>claim, lifecycle, timeout, concurrency]
+        Adapter[Agent adapter<br/>prompt, tools, validation, retry, degrade]
+        Agent[Headless pi-coding-agent<br/>JSON print mode]
+        Gateway[Evidence gateway<br/>sole tool caller and query-id authority]
         Trail[(Product evidence trail)]
         Validate[Validate C4 JSON]
         Retry[Retry invalid output once]
-        Degrade[Visible degrade\nagent unavailable]
+        Degrade[Visible degrade<br/>agent unavailable]
         Persisted[(Persisted investigation result)]
 
         subgraph Tools["Ten gateway-backed evidence tools"]
@@ -171,7 +171,7 @@ flowchart LR
             Operational[operational_metrics]
             Confounding[confounding_check]
             History[incident_history]
-            ExternalStatus[external_status\nexternal corroboration]
+            ExternalStatus[external_status<br/>external corroboration]
             Financial[financial_impact]
         end
 
@@ -207,7 +207,7 @@ flowchart LR
     Persisted -->|stable result| Surfaces
 
     HiddenTruth[(Quarantined hidden truth)]
-    Evaluator[Evaluator\noutside runtime boundary]
+    Evaluator[Evaluator<br/>outside runtime boundary]
     HiddenTruth -. after-the-fact truth .-> Evaluator
     Persisted -. diagnosis for scoring only .-> Evaluator
 ```
