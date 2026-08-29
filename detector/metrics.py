@@ -275,6 +275,88 @@ def operational_metrics(
     }
 
 
+def runtime_health(
+    connection: sqlite3.Connection,
+    services: list[str] | None,
+    start: int,
+    end: int,
+) -> dict[str, Any]:
+    """Service-level runtime health, measured from W1's `ops.telemetry` samples.
+
+    This is the one signal the attempt stream cannot carry: an attempt tells us
+    what a provider did, never whether our own router was healthy. Until a
+    sample arrives the honest answer stays `unobserved` with its reason, which
+    is exactly what the file-based demo path reports.
+
+    Bucketed on `sample_ts` like everything else, so a replay reproduces it.
+    """
+    where = ["sample_epoch >= ?", "sample_epoch < ?"]
+    params: list[Any] = [start, end]
+    if services:
+        where.append(f"service_id IN ({', '.join('?' for _ in services)})")
+        params.extend(services)
+    clause = " AND ".join(where)
+
+    row = connection.execute(
+        f"""
+        SELECT COUNT(*) AS samples,
+               SUM(CASE WHEN healthy = 0 THEN 1 ELSE 0 END) AS unhealthy,
+               MAX(queue_depth) AS queue_depth_peak,
+               MAX(queue_delay_p95_ms) AS queue_delay_p95_max,
+               MAX(cpu_pct) AS cpu_pct_peak,
+               MAX(error_rate) AS error_rate_peak,
+               MAX(restarts_total) AS restarts_total
+        FROM telemetry_sample WHERE {clause}
+        """,
+        params,
+    ).fetchone()
+    samples = int(row["samples"] or 0)
+    if samples == 0:
+        return {
+            "status": "unobserved",
+            "reason": (
+                "no operational telemetry sample has been observed for this target in this "
+                "window, so W2 reports none rather than inferring one from attempts"
+            ),
+            "samples": 0,
+        }
+
+    unhealthy = int(row["unhealthy"] or 0)
+    observed = [
+        service["service_id"]
+        for service in connection.execute(
+            f"SELECT DISTINCT service_id FROM telemetry_sample WHERE {clause} ORDER BY service_id",
+            params,
+        ).fetchall()
+    ]
+    deployments = [
+        deployment["deployment_id"]
+        for deployment in connection.execute(
+            f"SELECT DISTINCT deployment_id FROM telemetry_sample WHERE {clause} "
+            "AND deployment_id IS NOT NULL ORDER BY deployment_id",
+            params,
+        ).fetchall()
+    ]
+    return {
+        "status": "degraded" if unhealthy else "healthy",
+        "criterion": (
+            "reported by the service itself on ops.telemetry: degraded when any sample in the "
+            "window reports healthy=false"
+        ),
+        "samples": samples,
+        "unhealthy_samples": unhealthy,
+        "queue_depth_peak": row["queue_depth_peak"],
+        "queue_delay_p95_max_ms": row["queue_delay_p95_max"],
+        "cpu_pct_peak": row["cpu_pct_peak"],
+        "error_rate_peak": row["error_rate_peak"],
+        "restarts_total": row["restarts_total"],
+        "observed_services": observed,
+        # A change of value between samples is the deployment marker W1's schema
+        # names. More than one id in a window is that change, observed.
+        "observed_deployment_ids": deployments,
+    }
+
+
 def _percentile(ordered: list[float], fraction: float) -> float | None:
     """Nearest-rank percentile over a pre-sorted list."""
     if not ordered:

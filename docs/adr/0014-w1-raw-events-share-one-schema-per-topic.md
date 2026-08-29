@@ -2,13 +2,14 @@
 
 ## Status
 
-Proposed - pending andres's confirmation (see STATUS.md, 2026-08-29T20:09Z entry)
+Accepted - 2026-08-29 (derek released the per-merchant-shape wording)
 
 ## Context
 
-derek's DECISIONS.md entry at 2026-08-29T19:04Z commits W1 to per-merchant heterogeneous
+derek's DECISIONS.md entry at 2026-08-29T19:04Z had committed W1 to per-merchant heterogeneous
 raw event shapes, deliberately mirroring how a real orchestrator sees a different native
-format from each merchant, with W2 normalising them into one canonical model (C1b).
+format from each merchant, with W2 normalising them into one canonical model (C1b). That
+wording has since been released.
 
 Separately, andres handed W1 a concrete C1 request (`README-FOR-RAUL.md`, delivered outside
 git) asking for one uniform shape per event type shared across all three merchants: three
@@ -30,19 +31,19 @@ history.
 
 ## Decision
 
-W1 keeps the already-built uniform contract as its working implementation, pending andres's
-explicit confirmation. It already satisfies the three requirements andres says survive:
-schemas are registered (one per topic, JSON Schema in the Schema Registry), the two payment
-topics are keyed by `payment_id` so a payment's chain stays ordered on one partition, and
-backfill remains the one open gap - tracked separately, not yet built.
+W1 keeps the already-built uniform contract as its working implementation, now accepted as
+C1. It already satisfies the three requirements andres says survive: schemas are registered
+(one per topic, JSON Schema in the Schema Registry), the two payment topics are keyed by
+`payment_id` so a payment's chain stays ordered on one partition, and backfill remains the
+one open gap - tracked separately, not yet built.
 
-W1 is not rebuilding three artificially different native shapes unless derek's heterogeneity
-requirement is confirmed as firm regardless of the above.
+W1 will not rebuild three artificially different native shapes; derek's heterogeneity wording
+has been released.
 
 ## Alternatives considered
 
 - Three genuinely different per-merchant native shapes, per derek's literal 19:04Z wording -
-  not adopted for now. No concrete spec exists for what "merchant-b's native shape" should
+  not adopted. No concrete spec exists for what "merchant-b's native shape" should
   look like, so W1 would have to invent the differences itself with no product value: the
   heterogeneity is not visible anywhere in the judged demo. It would also mean andres writes
   three mapper functions instead of consuming one already-clean, already-working format - real
@@ -51,8 +52,7 @@ requirement is confirmed as firm regardless of the above.
 
 ## Consequences
 
-If andres confirms, the uniform contract in `worker/registry/*.schema.json` stands as C1, and
-`INTERFACES.md`'s C1 entry needs correcting - it still describes the abandoned
-per-merchant-topic-naming plan from an earlier session, not what was actually built. If derek's
-heterogeneity requirement is firm regardless, W1 rebuilds against three distinct native shapes
-and this ADR is superseded.
+The uniform contract in `worker/registry/*.schema.json` stands as C1, and `INTERFACES.md`'s
+C1 entry needs correcting - it still describes the abandoned per-merchant-topic-naming plan
+from an earlier session, not what was actually built. Derek's heterogeneity wording is
+released, so W1 does not rebuild against three distinct native shapes.

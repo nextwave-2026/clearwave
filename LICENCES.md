@@ -9,6 +9,12 @@ The inventory is generated locally from dependency manifests and available local
 
 Licence values come only from metadata already present on this machine; no network lookup was performed.
 
+### `detector/requirements.txt` (Python)
+
+| Dependency | Declaration | Licence |
+| --- | --- | --- |
+| confluent-kafka | confluent-kafka==2.15.0 | Apache-2.0 |
+
 ### `requirements.txt` (Python)
 
 | Dependency | Declaration | Licence |

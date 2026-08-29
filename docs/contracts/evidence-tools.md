@@ -377,8 +377,13 @@ else is refused. `operational_metrics` additionally accepts `service` on a `targ
 
 **Derived and unobserved values.** `operational_metrics.service_health` is derived from first-party
 attempts - degraded once the combined error and timeout rate reaches the configured threshold - and
-carries the criterion that produced it. `runtime_health` reports `unobserved` with its reason,
-because the canonical event carries no runtime signal and W2 does not infer one.
+carries the criterion that produced it. `runtime_health` is measured from W1's `ops.telemetry`
+samples for the services observed on the target: it reports `degraded` when any sample in the window
+declares itself unhealthy, `healthy` otherwise, with the gauges and the criterion behind the verdict.
+Where no sample has been observed it reports `unobserved` with its reason, which is what the
+file-based path returns, because the canonical attempt event carries no runtime signal and W2 does
+not infer one from attempts. The two never merge: `service_health` stays derived from attempts and
+`runtime_health` stays reported by the service.
 
 **Comparison shapes.** In `cohort_compare`, a sibling replaces exactly one dimension of the target
 with another observed value of that dimension, and a sibling with no traffic in the window is

@@ -25,6 +25,7 @@ EvidenceTool = Literal[
     "incident_history",
     "external_status",
     "financial_impact",
+    "metric_series",
 ]
 
 

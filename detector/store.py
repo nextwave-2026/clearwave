@@ -1,12 +1,18 @@
 """SQLite persistence for the detection plane.
 
-Three tables, each earning its place:
+Five tables, each earning its place:
 
 * ``attempt`` holds raw normalised rows. Drill-down is a GROUP BY over this,
   which is what lets us localise to a cohort nobody pre-declared.
-* ``bucket`` holds pre-aggregated per-minute counters for the materialised
-  cohorts, so the detector's sweep is a handful of integer divisions.
+* ``telemetry_sample`` holds W1's per-service gauges, the only first-party
+  source of runtime health; the attempt stream carries none.
+* ``payment_closed`` holds observed terminality, so "did this payment end, and
+  how" never has to be guessed from a quiet window.
 * ``incident`` holds C3 records and their lifecycle.
+* ``dead_letter`` holds what we refused, with the reason and where it came from.
+
+Every one of the three event tables is keyed on ``event_id``, which is what
+turns at-least-once delivery into exactly-once counting.
 
 Relational and embedded on purpose: one file, no daemon, no container between
 us and a working demo, and the file itself is evidence a judge can be handed.
@@ -76,9 +82,50 @@ CREATE INDEX IF NOT EXISTS incident_cohort ON incident (cohort_key);
 CREATE TABLE IF NOT EXISTS dead_letter (
     rowid_alias INTEGER PRIMARY KEY AUTOINCREMENT,
     reason      TEXT NOT NULL,
-    payload     TEXT NOT NULL
+    payload     TEXT NOT NULL,
+    source      TEXT NOT NULL DEFAULT 'ingest'
 );
+
+CREATE TABLE IF NOT EXISTS telemetry_sample (
+    event_id           TEXT PRIMARY KEY,
+    sample_at          TEXT NOT NULL,
+    sample_epoch       INTEGER NOT NULL,
+    service_id         TEXT NOT NULL,
+    deployment_id      TEXT,
+    healthy            INTEGER,
+    queue_depth        REAL,
+    queue_delay_p95_ms REAL,
+    cpu_pct            REAL,
+    error_rate         REAL,
+    restarts_total     REAL
+);
+CREATE INDEX IF NOT EXISTS telemetry_service_time
+    ON telemetry_sample (service_id, sample_epoch);
+
+CREATE TABLE IF NOT EXISTS payment_closed (
+    event_id         TEXT PRIMARY KEY,
+    payment_id       TEXT NOT NULL,
+    closed_at        TEXT NOT NULL,
+    closed_epoch     INTEGER NOT NULL,
+    outcome          TEXT NOT NULL,
+    final_attempt_id TEXT,
+    total_attempts   INTEGER NOT NULL,
+    merchant_id      TEXT NOT NULL,
+    country          TEXT,
+    payment_method   TEXT,
+    amount_usd       REAL NOT NULL,
+    currency         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS closed_time ON payment_closed (closed_epoch);
 """
+
+# One record kind per topic W1 publishes. The kind decides which normaliser and
+# which table a record reaches; nothing else in the pipeline branches on topic.
+KINDS = {
+    "attempt": "attempt",
+    "telemetry": "telemetry_sample",
+    "closed": "payment_closed",
+}
 
 
 def database_path() -> Path:
@@ -96,38 +143,111 @@ def connect(path: Path | str = DEFAULT_DB) -> sqlite3.Connection:
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA synchronous=NORMAL")
     connection.executescript(SCHEMA)
+    _add_missing_columns(connection)
     return connection
 
 
-def ingest(connection: sqlite3.Connection, events: Iterable[dict[str, Any]]) -> dict[str, int]:
-    """Normalise and store events. Returns accepted/rejected/duplicate counts.
+def _add_missing_columns(connection: sqlite3.Connection) -> None:
+    """Bring a store created by an earlier build up to the current shape.
 
-    Duplicates are ignored rather than counted twice, which is what makes
-    at-least-once delivery safe to consume.
+    ``CREATE TABLE IF NOT EXISTS`` leaves an existing table alone, so a column
+    added later has to be added explicitly. The demo store is a checked-in file
+    and deleting it to pick up a schema change is exactly the sort of step that
+    gets skipped at 03:00.
     """
-    accepted = rejected = 0
-    columns = None
-    for raw in events:
-        try:
-            row = schema.normalise(mappers.to_canonical(raw))
-        except (schema.InvalidEvent, mappers.UnknownShape) as exc:
-            connection.execute(
-                "INSERT INTO dead_letter (reason, payload) VALUES (?, ?)",
-                (str(exc), json.dumps(raw, sort_keys=True, default=str)),
-            )
-            rejected += 1
-            continue
-        if columns is None:
-            columns = sorted(row)
-        placeholders = ", ".join("?" for _ in columns)
+    existing = {
+        row["name"] for row in connection.execute("PRAGMA table_info(dead_letter)").fetchall()
+    }
+    if existing and "source" not in existing:
         connection.execute(
-            f"INSERT OR IGNORE INTO attempt ({', '.join(columns)}) VALUES ({placeholders})",
+            "ALTER TABLE dead_letter ADD COLUMN source TEXT NOT NULL DEFAULT 'ingest'"
+        )
+        connection.commit()
+
+
+def normalise_record(raw: Any, kind: str = "attempt") -> dict[str, Any]:
+    """Normalise one record of a given kind, raising on anything untrustworthy.
+
+    Attempts go through the mapper registry and C1b exactly as they always have.
+    There is one normalisation path per record kind and no second one anywhere:
+    the file loader and the Kafka consumer both arrive here.
+    """
+    if kind == "attempt":
+        return schema.normalise(mappers.to_canonical(raw))
+    if kind == "telemetry":
+        return schema.normalise_telemetry(raw)
+    if kind == "closed":
+        return schema.normalise_closed(raw)
+    if kind == "unroutable":
+        # Already known bad on arrival - an undecodable payload or a topic we do
+        # not consume. It still reaches the dead-letter table with its reason,
+        # because a message dropped without trace is indistinguishable from one
+        # that never arrived.
+        raise schema.InvalidEvent(str((raw or {}).get("reason") or "unroutable record"))
+    raise mappers.UnknownShape(f"no normaliser registered for record kind {kind!r}")
+
+
+def write_batch(
+    connection: sqlite3.Connection,
+    records: Iterable[tuple[str, Any]],
+    source: str = "ingest",
+) -> dict[str, int]:
+    """Stage one batch of ``(kind, raw)`` records inside the caller's transaction.
+
+    Deliberately does **not** commit. The consumer needs the store write to be
+    durable strictly before it advances a Kafka offset, and it can only order
+    those two if it owns the commit.
+
+    Duplicates are ignored rather than counted twice: `event_id` is the primary
+    key, so ``INSERT OR IGNORE`` is what turns at-least-once delivery into
+    exactly-once counting, and `rowcount` tells us which of the two happened.
+    """
+    counts = {"accepted": 0, "duplicates": 0, "rejected": 0}
+    for kind, raw in records:
+        try:
+            row = normalise_record(raw, kind)
+            table = KINDS[kind]
+        except (schema.InvalidEvent, mappers.UnknownShape, KeyError) as exc:
+            connection.execute(
+                "INSERT INTO dead_letter (reason, payload, source) VALUES (?, ?, ?)",
+                (str(exc), json.dumps(raw, sort_keys=True, default=str), source),
+            )
+            counts["rejected"] += 1
+            continue
+        columns = sorted(row)
+        placeholders = ", ".join("?" for _ in columns)
+        cursor = connection.execute(
+            f"INSERT OR IGNORE INTO {table} ({', '.join(columns)}) VALUES ({placeholders})",
             [row[column] for column in columns],
         )
-        accepted += 1
+        counts["duplicates" if cursor.rowcount == 0 else "accepted"] += 1
+    return counts
+
+
+def stored_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    """How many rows of each kind the store holds. The honest total, post-dedupe."""
+    return {
+        kind: connection.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
+        for kind, table in KINDS.items()
+    }
+
+
+def ingest(connection: sqlite3.Connection, events: Iterable[dict[str, Any]]) -> dict[str, int]:
+    """Normalise and store canonical attempt events from a file or generator.
+
+    The demo's offline path. It stays independent of Kafka on purpose: if the
+    broker will not come up on the morning, `seed`, `ingest` and `detect` are
+    still a complete demonstration.
+    """
+    counts = write_batch(connection, (("attempt", event) for event in events))
     connection.commit()
     stored = connection.execute("SELECT COUNT(*) AS n FROM attempt").fetchone()["n"]
-    return {"accepted": accepted, "rejected": rejected, "stored": stored}
+    return {
+        "accepted": counts["accepted"] + counts["duplicates"],
+        "duplicates": counts["duplicates"],
+        "rejected": counts["rejected"],
+        "stored": stored,
+    }
 
 
 def window_bounds(connection: sqlite3.Connection) -> tuple[int, int] | None:

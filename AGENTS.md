@@ -67,8 +67,7 @@ start. `licences` already works.
 
 ## Licences - a hard rule, not hygiene
 
-Strongly copyleft licences are prohibited: **no GPL, no AGPL**, no licence that would force the
-organisers to release their own code. Permissive licences are fine (MIT, Apache-2.0, BSD, ISC).
+Permissive licences are fine (MIT, Apache-2.0, BSD, ISC, and similar licences). Weak, file-level copyleft - specifically MPL-2.0 - is accepted. The obligation attaches to modifications of the MPL-licensed files themselves; it does not reach our own code and does not oblige the organisers to release theirs. Strong copyleft remains prohibited: **no GPL, no AGPL**, and no licence that would force the organisers to release their own code. Any licence outside these named categories must be raised rather than assumed acceptable.
 
 Every third-party component must be identified in the documentation - that is a graded deliverable, not
 a nicety. Run `make licences` to regenerate the inventory in `LICENCES.md`; it works offline and never
@@ -76,6 +75,11 @@ needs network access.
 
 **If you are about to add a dependency, check its licence first.** Reaching for a convenient AGPL
 library late at night is the realistic way this goes wrong.
+
+Regenerate with `python3 -S scripts/licences.py`, not a bare `make licences`. The generator reads licence
+metadata from whatever interpreter runs it, so a machine with packages installed in the system Python emits
+transitive rows CI's clean interpreter will not, and `scripts/ci/licences_current.sh` then fails on an
+inventory that looked right locally.
 
 ## Pre-existing intellectual property - do not break this
 
@@ -103,6 +107,10 @@ SQLite store, located by `CLEARWAVE_DB` and defaulting to `state/clearwave.db`. 
 read that same file or the system gives two answers to one question. `python3 -m detector seed &&
 python3 -m detector detect` fills a store; an empty one answers with zeros rather than failing. The
 behaviour is specified in `docs/contracts/evidence-tools.md`.
+
+W2 also consumes W1's three live Kafka topics into that same store (`python3 -m detector consume --detect`).
+The live and file-based paths share one normalisation and one store; the file-based path imports no Kafka
+client and is the broker-free demo fallback. Operator detail: `docs/live-ingestion.md`.
 
 ## Working conventions
 

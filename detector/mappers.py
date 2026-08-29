@@ -19,17 +19,46 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-# ISO 4217 exponents for the currencies in the frozen FX table. Minor units are
-# only meaningful against the right exponent, and assuming 2 everywhere is
-# wrong for JPY, KRW and friends.
-MINOR_UNIT_EXPONENT = {
-    "USD": 2,
-    "COP": 2,
-    "BRL": 2,
-    "MXN": 2,
-    "EUR": 2,
-    "JPY": 0,
-    "CLP": 0,
+from . import schema
+
+# The ISO 4217 exponent table lives in `detector/schema.py`, beside the FX
+# conversion it feeds. Re-exported here because this is where callers look for
+# it.
+MINOR_UNIT_EXPONENT = schema.MINOR_UNIT_EXPONENT
+
+
+# W1's frozen native decline vocabulary, mapped onto C1b's closed one. Every
+# value of the enum in `worker/registry/payment_attempt.schema.json` appears
+# here exactly once, and `tests/test_mappers.py` fails if the two vocabularies
+# ever drift apart again - which is the only way this class of bug is visible,
+# because the symptom is a quiet dead-letter rather than a crash.
+#
+# Most values are identical in both vocabularies and map to themselves. The one
+# real translation is `provider_timeout`, which W1 emits under exactly the
+# provider degradation the demo turns on: C1b spells that `timeout`, so the
+# mapper renames it and carries the native spelling through in
+# `provider_raw_code`. Widening C1b to swallow the native code instead would
+# leave two names for one thing in the decline distribution, and decline mix is
+# the discriminator the whole diagnosis leans on.
+NATIVE_DECLINE_REASONS = {
+    "insufficient_funds": "insufficient_funds",
+    "do_not_honor": "do_not_honor",
+    "expired_card": "expired_card",
+    "invalid_card": "invalid_card",
+    "incorrect_cvc": "incorrect_cvc",
+    "lost_or_stolen_card": "lost_or_stolen_card",
+    "restricted_card": "restricted_card",
+    "suspected_fraud": "suspected_fraud",
+    "issuer_unavailable": "issuer_unavailable",
+    "authentication_required": "authentication_required",
+    "authentication_failed": "authentication_failed",
+    "processing_error": "processing_error",
+    "provider_timeout": "timeout",
+    "provider_error": "provider_error",
+    "rate_limited": "rate_limited",
+    "currency_not_supported": "currency_not_supported",
+    "duplicate": "duplicate",
+    "other": "other",
 }
 
 
@@ -53,10 +82,27 @@ def canonical(record: dict[str, Any]) -> dict[str, Any]:
         mapped["occurred_at"] = occurred
     reason = _first(record, "normalized_decline_reason", "decline_reason")
     if reason is not None:
-        mapped["normalized_decline_reason"] = reason
+        mapped["normalized_decline_reason"] = normalise_decline_reason(reason)
+        if mapped["normalized_decline_reason"] != reason and not mapped.get("provider_raw_code"):
+            # The native spelling is evidence. It is preserved unparsed rather
+            # than lost to the rename, exactly as C1b requires.
+            mapped["provider_raw_code"] = reason
     mapped.pop("decline_reason", None)
     mapped.pop("attempt_ts", None)
     return mapped
+
+
+def normalise_decline_reason(reason: Any) -> Any:
+    """Translate one native decline code into the C1b closed vocabulary.
+
+    An unmapped value is returned unchanged so that `detector/schema.py` refuses
+    it by name and dead-letters the record. Guessing a canonical target here
+    would turn an unknown code into a plausible-looking count, which is the one
+    outcome worse than a visible rejection.
+    """
+    if not isinstance(reason, str):
+        return reason
+    return NATIVE_DECLINE_REASONS.get(reason, reason)
 
 
 def attempt_v1(record: dict[str, Any]) -> dict[str, Any]:
@@ -69,10 +115,10 @@ def attempt_v1(record: dict[str, Any]) -> dict[str, Any]:
     minor = record.get("amount_minor")
     currency = record.get("currency")
     if minor is not None and currency:
-        exponent = MINOR_UNIT_EXPONENT.get(currency)
-        if exponent is None:
-            raise UnknownShape(f"no minor-unit exponent registered for currency {currency!r}")
-        mapped["amount"] = int(minor) / (10 ** exponent)
+        try:
+            mapped["amount"] = schema.minor_to_major(minor, currency)
+        except schema.UnknownMinorUnit as exc:
+            raise UnknownShape(str(exc)) from exc
         mapped.pop("amount_minor", None)
     if record.get("timed_out") and mapped.get("status") in (None, "error"):
         mapped["status"] = "timeout"
