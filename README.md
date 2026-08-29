@@ -3,6 +3,12 @@
 A monitoring and diagnosis system for payment conversion drops: detect the ones that matter,
 isolate the root cause, explain it with evidence, and recommend an action without executing it.
 
+**Simulated demo data.** All merchants, banks, payments, incidents and outages shown in this
+repository and in the live demo are simulated data produced by this project's simulator for
+demonstration. Nothing shown represents or implies a real incident, outage, or service problem at
+any named company. Real company names are used only to make the demonstration recognisable and
+realistic.
+
 ## Problem
 
 Payment orchestration platforms see every transaction between merchants and providers. Conversion
