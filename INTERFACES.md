@@ -8,7 +8,10 @@ file is NOT union-merged, so it can genuinely conflict. A conflict here means an
 - **Boundary name:** C1 Raw per-merchant event shapes
 - **Owner:** W1 - Simulated World and Ground Truth (`raul`)
 - **Current shape:** Each merchant simulator emits its own native event shape; the deliberate heterogeneity mirrors the real orchestrator problem. W1 registers each raw shape in the schema registry. W2 consumes the registered raw topics for normalisation.
-- **Last changed:** 2026-08-29T19:04Z
+  - Topic naming: one raw topic per merchant, `raw.<merchant_id>` (e.g. `raw.merchant-a`), so andres can subscribe by pattern (`raw.*`) instead of hardcoding names, and topic name alone identifies provenance without inspecting the payload.
+  - Per derek's `DECISIONS.md` entry at 19:04Z ("do not introduce Avro or parallel canonical models"), raw shapes register as JSON Schema, not Avro. The earlier Avro-based single shared schema (`payment_attempt.avsc`, one shape for all three merchants) is being replaced by this raw/canonical split - superseded, not carried forward.
+  - `city`/`lat`/`lon` (geography, reference-table-driven per country so it stays consistent) was proposed as an additional dimension beyond the set named in `docs/challenge.md`/PRD section 12. Under the new split this is W1's call within whichever merchant's raw shape carries it; whether it survives into C1b is andres's call, not assumed here.
+- **Last changed:** 2026-08-29T19:44Z
 
 - **Boundary name:** C1b Canonical ingestion schema
 - **Owner:** W2 - Detection Plane (`andres`)

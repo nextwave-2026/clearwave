@@ -1,0 +1,2 @@
+confluent-kafka[json]>=2.5.0
+Faker>=30.0.0

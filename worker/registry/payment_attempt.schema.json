@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "clearwave.attempt.v1",
+  "title": "C1 payment attempt event",
+  "description": "One record per provider attempt on the payments.attempts topic. Owned by W1. Consumed by W2. Flat by design: W2 slices on cross products of the dimension fields.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema", "event_id", "payment_id", "attempt_id", "attempt_number",
+    "attempt_ts", "merchant_id", "provider", "payment_method", "country",
+    "issuing_bank", "status", "amount_minor", "currency"
+  ],
+  "properties": {
+    "schema":       { "const": "clearwave.attempt.v1" },
+    "event_id":     { "type": "string", "description": "Globally unique. W2 dedupes on this, which turns at-least-once delivery into exactly-once counting." },
+    "emitted_at":   { "type": "string", "format": "date-time" },
+
+    "payment_id":   { "type": "string", "description": "The customer's ONE payment. Also the Kafka partition key." },
+    "attempt_id":   { "type": "string" },
+    "attempt_number": { "type": "integer", "minimum": 1, "description": "1-based within the payment." },
+    "is_retry":     { "type": "boolean" },
+    "previous_attempt_id": { "type": ["string", "null"] },
+
+    "attempt_ts":   { "type": "string", "format": "date-time", "description": "EVENT time, ISO-8601 UTC with milliseconds. W2 buckets on this, never on arrival time." },
+
+    "merchant_id":  { "type": "string" },
+    "provider":     { "type": "string" },
+    "provider_connection": { "type": ["string", "null"] },
+    "payment_method": { "enum": ["card", "pse", "wallet", "pix", "cash", "bank_transfer"] },
+    "card_network": { "type": ["string", "null"], "enum": ["visa", "mastercard", "amex", "diners", "elo", "hipercard", null] },
+    "country":      { "type": "string", "pattern": "^[A-Z]{2}$", "description": "ISO-3166 alpha-2." },
+    "issuing_bank": { "type": ["string", "null"] },
+    "bin":          { "type": ["string", "null"], "pattern": "^[0-9]{6,8}$" },
+
+    "status":       { "enum": ["approved", "declined", "error", "pending"] },
+    "decline_reason": {
+      "type": ["string", "null"],
+      "description": "REQUIRED when status is declined or error. Must come from this closed vocabulary, frozen by W1. Free text here turns W2's decline-mix distribution into noise, and decline mix is one of the strongest discriminators between a provider problem and an issuer problem.",
+      "enum": [
+        "insufficient_funds", "do_not_honor", "expired_card", "invalid_card",
+        "incorrect_cvc", "lost_or_stolen_card", "restricted_card", "suspected_fraud",
+        "issuer_unavailable", "authentication_required", "authentication_failed",
+        "processing_error", "provider_timeout", "provider_error", "rate_limited",
+        "currency_not_supported", "duplicate", "other", null
+      ]
+    },
+    "provider_raw_code": { "type": ["string", "null"], "description": "Preserved verbatim. W2 never parses it." },
+
+    "amount_minor": { "type": "integer", "minimum": 0, "description": "Integer minor units. No floats." },
+    "currency":     { "type": "string", "pattern": "^[A-Z]{3}$" },
+
+    "latency_ms":   { "type": ["number", "null"], "minimum": 0 },
+    "timed_out":    { "type": ["boolean", "null"] },
+    "http_status":  { "type": ["integer", "null"] },
+    "queue_delay_ms": { "type": ["number", "null"], "minimum": 0 },
+    "service_id":   { "type": ["string", "null"] },
+    "deployment_id": { "type": ["string", "null"] }
+  },
+  "allOf": [
+    {
+      "if":   { "properties": { "status": { "enum": ["declined", "error"] } }, "required": ["status"] },
+      "then": { "required": ["decline_reason"], "properties": { "decline_reason": { "type": "string" } } }
+    },
+    {
+      "if":   { "properties": { "payment_method": { "const": "card" } }, "required": ["payment_method"] },
+      "then": { "required": ["card_network"], "properties": { "card_network": { "type": "string" } } }
+    }
+  ]
+}

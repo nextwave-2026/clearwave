@@ -19,3 +19,4 @@ L4 is the Investigation layer, owned by `derek` and corresponding to W3. The lay
 - [0011 - One versioned run per incident](0011-one-versioned-run-per-incident.md)
 - [0012 - Scenario identifiers never reach L4](0012-scenario-identifiers-never-reach-l4.md)
 - [0013 - Hand-rolled OpenAI loop is the constrained agent runtime](0013-hand-rolled-openai-loop-agent-runtime.md)
+- [0014 - W1 raw events share one schema per topic, not one per merchant](0014-w1-raw-events-share-one-schema-per-topic.md) - W1 (`raul`), Proposed
