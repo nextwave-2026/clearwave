@@ -7,5 +7,12 @@ The inventory is generated locally from dependency manifests and available local
 <!-- BEGIN GENERATED LICENCE INVENTORY -->
 ## Generated dependency inventory
 
-No dependency manifests found.
+Licence values come only from metadata already present on this machine; no network lookup was performed.
+
+### `worker/requirements.txt` (Python)
+
+| Dependency | Declaration | Licence |
+| --- | --- | --- |
+| confluent-kafka | confluent-kafka[json]>=2.5.0 | OSI Approved :: Apache Software License |
+| Faker | Faker>=30.0.0 | MIT License |
 <!-- END GENERATED LICENCE INVENTORY -->
