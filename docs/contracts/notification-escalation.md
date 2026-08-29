@@ -156,3 +156,36 @@ other channels still fire.
 `CLEARWAVE_TWILIO_TWIML_URL` are environment variables only, never committed. None of them appear
 in `docs/contracts/` as a cross-workstream boundary field, because they are W4's external
 infrastructure, not part of any interface another workstream reads.
+
+They are listed in `.env.example` for discoverability, but that file is **not** read for them:
+`investigation/env.py` loads `.env` for the OpenAI settings only, while `surfaces/escalation.py`
+reads the process environment directly. Export them in the shell that runs the demo.
+
+## Setting up the phone channel
+
+The section above explains *why* a TwiML Bin is required on a trial account. These are the steps.
+
+1. **Credentials.** From [console.twilio.com](https://console.twilio.com), copy the Account SID and
+   Auth Token into `CLEARWAVE_TWILIO_ACCOUNT_SID` and `CLEARWAVE_TWILIO_AUTH_TOKEN`.
+2. **Numbers.** Set `CLEARWAVE_TWILIO_FROM_NUMBER` to the Twilio number (Phone Numbers → Manage →
+   Active numbers) and `CLEARWAVE_TWILIO_TO_NUMBER` to the destination, both in E.164 form. On a
+   trial account the destination must appear under Verified Caller IDs first; verifying it takes a
+   confirmation code, so do it before demo day rather than during it.
+3. **TwiML Bin.** Developer tools → TwiML Bins → Create new. Name it anything; the body must be
+   exactly the string `twiml_for()` returns:
+
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?><Response><Pause length="20"/></Response>
+   ```
+
+   Set `CLEARWAVE_TWILIO_TWIML_URL` to the Bin's URL (`https://handler.twilio.com/twiml/EH...`).
+4. **Verify.** `python3 scripts/check_phone_channel.py --dry-run` prints the exact request and
+   names any missing variable without calling anyone. Drop `--dry-run`, or run `make check-phone`,
+   to place a real call.
+
+That script exists because `place_call` swallows channel exceptions by design, which is correct for
+production and unhelpful when diagnosing a call that never arrived; it calls `twilio_provider`
+directly so Twilio's own error text surfaces. Skipping step 3 is the failure worth knowing about:
+the four credential variables alone are enough for the channel to auto-wire
+(`surfaces/escalation.py:_default_phone_provider`), so an unset Bin URL fails only at call time,
+recorded as a `failed` outcome with the HTTP 400 buried in its detail field.
