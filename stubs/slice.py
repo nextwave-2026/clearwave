@@ -9,6 +9,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from surfaces.escalation import escalate  # noqa: E402
+from surfaces.present import detail as present_detail  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "stubs" / "fixtures"
@@ -290,12 +294,30 @@ def main() -> int:
     print("This stands in for W3's fixed, model-free investigation result.")
 
     stage("5 - surface summary and escalation")
-    print("Merchant A: payment approval 92.0% -> 64.0% in the P2 / Colombia / Mastercard cohort.")
-    print("Impact: $28,000 GMV at risk in 15 minutes; estimated loss rate $112,000/hour.")
-    print("Diagnosis: Provider P2 is the leading hypothesis; Bank X remains confounded.")
-    print("Diagnostic confidence: medium. Recommended action: investigate before broad rerouting.")
-    print("Escalation channels for critical severity: dashboard + Slack-style notification + phone call.")
-    print("This stands in for W4's surface and escalation layer.")
+    investigation = {"outcome": "diagnosed", "version": 1, "result": result, "trail": []}
+    escalation_events = escalate(incident, investigation)
+    view = present_detail(incident, investigation, escalation_events)
+    questions = view["questions"]
+    change = incident["change"]
+    print(
+        f"{incident['affected_cohort']['merchant_id']}: {change['metric']} "
+        f"{change['expected'] * 100:.1f}% -> {change['actual'] * 100:.1f}% "
+        f"in the {incident['affected_cohort']['provider']} / {incident['affected_cohort']['country']} / "
+        f"{incident['affected_cohort']['card_network']} cohort."
+    )
+    impact = incident["financial_impact"]
+    print(
+        f"Impact: ${impact['gmv_at_risk']['amount']:,.0f} GMV at risk; "
+        f"estimated loss rate ${impact['loss_per_hour']['amount']:,.0f}/hour."
+    )
+    print(f"Diagnosis: {questions['what_probably_caused_it']['statement']}")
+    print(
+        f"Diagnostic confidence: {result['diagnostic_confidence']}. "
+        f"Recommended action: {questions['what_the_operator_should_do']['action']}"
+    )
+    channels = ", ".join(f"{event['channel']}={event['status']}" for event in escalation_events)
+    print(f"Escalation channels for {incident['severity']} severity: {channels}.")
+    print("This is W4's real surface and escalation layer: surfaces.escalation + surfaces.present.")
     return 0
 
 

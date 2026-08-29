@@ -11,7 +11,15 @@ import urllib.request
 from pathlib import Path
 
 from investigation.store import insert_incident, persist_result
-from surfaces.escalation import escalate, notify_slack
+from surfaces.escalation import (
+    TWILIO_ENV_VARS,
+    escalate,
+    notify_slack,
+    place_call,
+    slack_blocks,
+    twiml_for,
+    twilio_provider,
+)
 from surfaces.inject import fire_hidden_incident
 from surfaces.server import SurfacesApp, make_server
 from surfaces.store import connect, list_incidents
@@ -102,12 +110,12 @@ class SurfacesTests(unittest.TestCase):
         return connection
 
     def test_queue_orders_by_business_priority_not_recency(self):
-        self._seed(
+        connection = self._seed(
             _incident("inc-recent-low", "low", "2026-08-29T12:00:00Z"),
             _incident("inc-old-critical", "critical", "2026-08-29T08:00:00Z"),
             _incident("inc-mid-high", "high", "2026-08-29T11:00:00Z"),
         )
-        ordered = [item["incident_id"] for item in list_incidents(connect(self.db))]
+        ordered = [item["incident_id"] for item in list_incidents(connection)]
         self.assertEqual(ordered, ["inc-old-critical", "inc-mid-high", "inc-recent-low"])
         api_order = [item["incident_id"] for item in self.app.queue()["incidents"]]
         self.assertEqual(api_order, ["inc-old-critical", "inc-mid-high", "inc-recent-low"])
@@ -271,6 +279,126 @@ class SurfacesTests(unittest.TestCase):
             page = response.read().decode("utf-8")
         self.assertIn("Control Tower", page)
         self.assertIn("Fire hidden incident", page)
+
+
+class SlackBlockKitTests(unittest.TestCase):
+    def test_severity_and_confidence_render_in_separate_blocks(self):
+        payload = {
+            "incident_id": "inc-2026-08-29-001",
+            "severity": "critical",
+            "change": {
+                "metric": "payment_approval_conversion",
+                "expected": 0.92,
+                "actual": 0.64,
+            },
+            "affected_cohort": {"merchant_id": "merchant-a", "provider": "provider-p2"},
+            "financial_impact": {
+                "gmv_at_risk": {"amount": 28000.0, "currency": "USD"},
+                "loss_per_hour": {"amount": 112000.0, "currency": "USD"},
+            },
+            "onset": "2026-08-29T10:00:00Z",
+            "diagnostic_confidence": "medium",
+            "leading_hypothesis": {"statement": "Provider P2 degradation is the leading explanation."},
+            "competing_explanations": [{"explanation": "Bank X over-decline cannot be ruled out."}],
+            "recommended_next_action": {"action": "Investigate Provider P2.", "urgency": "now"},
+        }
+        message = slack_blocks(payload)
+        self.assertEqual(message["channel"], "#control-tower")
+        rendered = json.dumps(message)
+        self.assertIn("CRITICAL", rendered)
+        self.assertIn("inc-2026-08-29-001", rendered)
+        self.assertIn("28,000", rendered)
+        self.assertIn("112,000", rendered)
+        severity_block = next(b for b in message["blocks"] if b["type"] == "header")
+        hypothesis_block = next(
+            b for b in message["blocks"] if "Leading hypothesis" in json.dumps(b)
+        )
+        self.assertIn("CRITICAL", severity_block["text"]["text"])
+        self.assertNotIn("medium", severity_block["text"]["text"])
+        self.assertIn("medium confidence", hypothesis_block["text"]["text"])
+        self.assertIn("Bank X over-decline", hypothesis_block["text"]["text"])
+
+    def test_sparse_payload_never_raises(self):
+        message = slack_blocks({"incident_id": "inc-x"})
+        self.assertEqual(message["channel"], "#control-tower")
+        self.assertTrue(any(b["type"] == "header" for b in message["blocks"]))
+
+    def test_notify_slack_posts_block_kit_when_configured(self):
+        captured = {}
+
+        def poster(url, message):
+            captured["url"] = url
+            captured["message"] = message
+
+        payload = {"incident_id": "inc-x", "severity": "high", "change": {}}
+        outcome = notify_slack(payload, webhook_url="https://hooks.slack.test/x", poster=poster)
+        self.assertEqual(outcome["status"], "delivered")
+        self.assertEqual(captured["url"], "https://hooks.slack.test/x")
+        self.assertIn("blocks", captured["message"])
+
+
+class TwilioPhoneTests(unittest.TestCase):
+    def setUp(self):
+        for name in TWILIO_ENV_VARS:
+            os.environ.pop(name, None)
+
+    def test_twiml_is_silent_and_well_formed(self):
+        body = twiml_for({"incident_id": "inc-x"})
+        self.assertIn("<Pause", body)
+        self.assertNotIn("<Say", body)
+
+    def test_twilio_provider_posts_call_with_basic_auth(self):
+        captured = {}
+
+        def poster(account_sid, body, headers):
+            captured["account_sid"] = account_sid
+            captured["body"] = body
+            captured["headers"] = headers
+
+        provider = twilio_provider(
+            account_sid="ACtest",
+            auth_token="secret",
+            from_number="+15550000001",
+            to_number="+15550000002",
+            poster=poster,
+        )
+        provider({"incident_id": "inc-x"}, {"incident_id": "inc-x"})
+        self.assertEqual(captured["account_sid"], "ACtest")
+        self.assertIn("Authorization", captured["headers"])
+        self.assertTrue(captured["headers"]["Authorization"].startswith("Basic "))
+        body_text = captured["body"].decode("utf-8")
+        self.assertIn("To=%2B15550000002", body_text)
+        self.assertIn("Pause", body_text)
+
+    def test_twilio_provider_raises_when_credentials_incomplete(self):
+        provider = twilio_provider(account_sid="ACtest", auth_token="", from_number="", to_number="")
+        with self.assertRaises(RuntimeError):
+            provider({"incident_id": "inc-x"}, {"incident_id": "inc-x"})
+
+    def test_place_call_auto_wires_twilio_from_environment(self):
+        os.environ["CLEARWAVE_TWILIO_ACCOUNT_SID"] = "ACtest"
+        os.environ["CLEARWAVE_TWILIO_AUTH_TOKEN"] = "secret"
+        os.environ["CLEARWAVE_TWILIO_FROM_NUMBER"] = "+15550000001"
+        os.environ["CLEARWAVE_TWILIO_TO_NUMBER"] = "+15550000002"
+        self.addCleanup(lambda: [os.environ.pop(name, None) for name in TWILIO_ENV_VARS])
+        captured = {}
+
+        def fake_urlopen_poster(account_sid, body, headers):
+            captured["account_sid"] = account_sid
+
+        import surfaces.escalation as escalation_module
+
+        original = escalation_module._post_twilio_call
+        escalation_module._post_twilio_call = fake_urlopen_poster
+        self.addCleanup(setattr, escalation_module, "_post_twilio_call", original)
+
+        outcome = place_call({"incident_id": "inc-x"}, {"incident_id": "inc-x"})
+        self.assertEqual(outcome["status"], "delivered")
+        self.assertEqual(captured["account_sid"], "ACtest")
+
+    def test_place_call_falls_back_without_credentials(self):
+        outcome = place_call({"incident_id": "inc-x"}, {"incident_id": "inc-x"})
+        self.assertEqual(outcome["status"], "fallback_dashboard")
 
 
 class StaticContractTests(unittest.TestCase):
