@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from pydantic import ValidationError
 
-from investigation.agent import InvestigationAgent
+from investigation.agent import InvestigationAgent, _strict_schema
 from investigation.contracts import InvestigationResult
 from investigation.gateway import EvidenceGateway
 from investigation.ledger import HypothesisLedger, LedgerError
@@ -101,6 +103,104 @@ def valid_result(gateway: EvidenceGateway, *, competing: bool = False):
 
 
 class AgentLoopTests(unittest.TestCase):
+    def test_strict_schema_requires_every_property_at_every_nesting_level(self):
+        schema = _strict_schema(InvestigationResult.model_json_schema())
+
+        def assert_required(value):
+            if isinstance(value, dict):
+                properties = value.get("properties")
+                if isinstance(properties, dict):
+                    self.assertEqual(set(value.get("required", [])), set(properties))
+                for nested in value.values():
+                    assert_required(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    assert_required(nested)
+
+        assert_required(schema)
+
+    def test_timeout_default_is_configurable_without_changing_turn_or_query_bounds(self):
+        with mock.patch.dict(os.environ, {"OPENAI_TIMEOUT_SECONDS": "180"}):
+            agent = InvestigationAgent(FakeClient(lambda **kwargs: {}))
+        self.assertEqual(agent.timeout_seconds, 180.0)
+        self.assertEqual(agent.max_turns, 6)
+        self.assertEqual(agent.query_budget, 6)
+
+    def test_request_omits_unset_reasoning_and_uses_output_ceiling(self):
+        gateway = gateway_for()
+        calls = []
+
+        def create(**kwargs):
+            calls.append(kwargs)
+            return {"output_text": json.dumps(valid_result(gateway))}
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "OPENAI_REASONING_EFFORT": "",
+                "OPENAI_MAX_OUTPUT_TOKENS": "7000",
+                "OPENAI_MODEL": "gpt-4.1-mini",
+            },
+        ):
+            run = InvestigationAgent(FakeClient(create), max_turns=0, timeout_seconds=2).investigate(
+                INCIDENT, gateway
+            )
+        self.assertEqual(run.outcome, "diagnosed")
+        self.assertEqual(calls[0]["max_output_tokens"], 7000)
+        self.assertNotIn("reasoning", calls[0])
+
+    def test_verified_default_uses_luna_with_high_reasoning(self):
+        gateway = gateway_for()
+        calls = []
+
+        def create(**kwargs):
+            calls.append(kwargs)
+            return {"output_text": json.dumps(valid_result(gateway))}
+
+        with mock.patch.dict(
+            os.environ,
+            {"OPENAI_MODEL": "", "OPENAI_REASONING_EFFORT": "", "OPENAI_MAX_OUTPUT_TOKENS": ""},
+        ):
+            run = InvestigationAgent(FakeClient(create), max_turns=0, timeout_seconds=2).investigate(
+                INCIDENT, gateway
+            )
+        self.assertEqual(run.outcome, "diagnosed")
+        self.assertEqual(calls[0]["model"], "gpt-5.6-luna")
+        self.assertEqual(calls[0]["reasoning"], {"effort": "high"})
+
+    def test_request_includes_configured_reasoning_for_unclassified_model(self):
+        gateway = gateway_for()
+        calls = []
+
+        def create(**kwargs):
+            calls.append(kwargs)
+            return {"output_text": json.dumps(valid_result(gateway))}
+
+        with mock.patch.dict(os.environ, {"OPENAI_REASONING_EFFORT": "medium"}):
+            run = InvestigationAgent(
+                FakeClient(create), model="captain-selected-model", max_turns=0, timeout_seconds=2
+            ).investigate(INCIDENT, gateway)
+        self.assertEqual(run.outcome, "diagnosed")
+        self.assertEqual(calls[0]["reasoning"], {"effort": "medium"})
+
+    def test_unsupported_reasoning_is_retried_without_parameter(self):
+        gateway = gateway_for()
+        calls = []
+
+        def create(**kwargs):
+            calls.append(kwargs)
+            if "reasoning" in kwargs:
+                raise RuntimeError("reasoning is not supported for this model")
+            return {"output_text": json.dumps(valid_result(gateway))}
+
+        with mock.patch.dict(os.environ, {"OPENAI_REASONING_EFFORT": "high"}):
+            run = InvestigationAgent(
+                FakeClient(create), model="captain-selected-model", max_turns=0, timeout_seconds=2
+            ).investigate(INCIDENT, gateway)
+        self.assertEqual(run.outcome, "diagnosed")
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("reasoning", calls[1])
+
     def test_loop_stops_at_turn_budget(self):
         gateway = gateway_for()
         calls = []

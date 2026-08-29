@@ -16,6 +16,16 @@ from typing import Any
 
 _EPSILON = 0.01
 
+# Compatibility shim for the C3 naming mismatch; remove after the emitter is fixed.
+_AFFECTED_RADIUS_KEYS = {
+    "merchant_id": ("affected_merchants", "affected_merchant_ids"),
+    "provider": ("affected_providers",),
+    "payment_method": ("affected_payment_methods",),
+    "card_network": ("affected_card_networks",),
+    "country": ("affected_countries", "affected_countrys"),
+    "issuing_bank": ("affected_issuing_banks",),
+}
+
 
 def compute_signature(
     incident: Mapping[str, Any],
@@ -434,15 +444,17 @@ def _largest_shift(decline: Mapping[str, Any]) -> dict[str, Any] | None:
 
 def _cohort_scope(incident: Mapping[str, Any], cohort: Mapping[str, Any]) -> dict[str, Any]:
     radius = _mapping(incident.get("blast_radius"))
-    counts = [
-        radius.get("affected_merchants"),
-        radius.get("affected_countries"),
-        radius.get("affected_card_networks"),
-        radius.get("affected_providers"),
-    ]
+    counts = [_affected_count(radius, dimension) for dimension in _AFFECTED_RADIUS_KEYS]
     broad_dimensions = sum(1 for count in counts if isinstance(count, (int, float)) and count > 1)
     width = broad_dimensions or len(cohort)
     return {"scope": "broad" if broad_dimensions or not cohort else "narrow", "width": width}
+
+
+def _affected_count(radius: Mapping[str, Any], dimension: str) -> Any:
+    for key in _AFFECTED_RADIUS_KEYS[dimension]:
+        if key in radius:
+            return radius[key]
+    return None
 
 
 def _target_isolated(compare: Mapping[str, Any]) -> bool:

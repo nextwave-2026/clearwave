@@ -29,6 +29,7 @@ TWILIO_ACCOUNT_SID_ENV = "CLEARWAVE_TWILIO_ACCOUNT_SID"
 TWILIO_AUTH_TOKEN_ENV = "CLEARWAVE_TWILIO_AUTH_TOKEN"
 TWILIO_FROM_ENV = "CLEARWAVE_TWILIO_FROM_NUMBER"
 TWILIO_TO_ENV = "CLEARWAVE_TWILIO_TO_NUMBER"
+TWILIO_TWIML_URL_ENV = "CLEARWAVE_TWILIO_TWIML_URL"
 TWILIO_ENV_VARS = (TWILIO_ACCOUNT_SID_ENV, TWILIO_AUTH_TOKEN_ENV, TWILIO_FROM_ENV, TWILIO_TO_ENV)
 
 SEVERITY_EMOJI = {"low": "⚪", "medium": "🟡", "high": "🟠", "critical": "🔴"}
@@ -297,7 +298,10 @@ def twiml_for(payload: Mapping[str, Any]) -> str:  # noqa: ARG001 - payload kept
     Trial Twilio accounts prepend their own "trial account" announcement before
     any TwiML runs, which would contradict a spoken script anyway. A bounded
     pause keeps the call itself the deterministic, verifiable signal PRD
-    section 19 asks for, without depending on room audio or a hosted TwiML URL.
+    section 19 asks for, without depending on room audio.
+
+    This exact string is also what belongs in a Twilio TwiML Bin - see
+    twilio_provider's docstring for why a Bin is required on trial accounts.
     """
     return '<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="20"/></Response>'
 
@@ -308,27 +312,36 @@ def twilio_provider(
     auth_token: str | None = None,
     from_number: str | None = None,
     to_number: str | None = None,
+    twiml_url: str | None = None,
     poster: Callable[[str, bytes, dict[str, str]], None] | None = None,
 ) -> PhoneProvider:
     """Build a phone provider that places one real Twilio Programmable Voice call.
 
     Reads credentials from CLEARWAVE_TWILIO_* environment variables when not
     passed explicitly. No twilio SDK dependency: one urllib POST against the
-    Calls REST resource, with TwiML supplied inline so no publicly reachable
-    webhook URL is required.
+    Calls REST resource.
+
+    Trial Twilio accounts reject the inline `Twiml` parameter on the Calls API
+    with a 400 ("trial accounts have limited parameter access") - verified
+    against a real trial account. Trial calls must instead point at a `Url`
+    Twilio already hosts, such as a TwiML Bin containing the exact string
+    twiml_for() returns. When CLEARWAVE_TWILIO_TWIML_URL (or the twiml_url
+    argument) is set, that URL is used via the `Url` parameter; otherwise this
+    falls back to sending TwiML inline via `Twiml`, which only paid accounts
+    accept.
     """
     sid = account_sid if account_sid is not None else os.environ.get(TWILIO_ACCOUNT_SID_ENV, "")
     token = auth_token if auth_token is not None else os.environ.get(TWILIO_AUTH_TOKEN_ENV, "")
     caller = from_number if from_number is not None else os.environ.get(TWILIO_FROM_ENV, "")
     callee = to_number if to_number is not None else os.environ.get(TWILIO_TO_ENV, "")
+    bin_url = twiml_url if twiml_url is not None else os.environ.get(TWILIO_TWIML_URL_ENV, "")
     send = poster or _post_twilio_call
 
     def _call(incident: Mapping[str, Any], payload: Mapping[str, Any]) -> None:  # noqa: ARG001
         if not (sid and token and caller and callee):
             raise RuntimeError("Twilio credentials are not fully configured")
-        body = urllib.parse.urlencode(
-            {"To": callee, "From": caller, "Twiml": twiml_for(payload)}
-        ).encode("utf-8")
+        instruction = {"Url": bin_url} if bin_url else {"Twiml": twiml_for(payload)}
+        body = urllib.parse.urlencode({"To": callee, "From": caller, **instruction}).encode("utf-8")
         credentials = base64.b64encode(f"{sid}:{token}".encode("ascii")).decode("ascii")
         headers = {
             "Authorization": f"Basic {credentials}",

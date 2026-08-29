@@ -14,16 +14,25 @@ from pydantic import ValidationError
 
 from .contracts import InvestigationResult, result_dict
 from .degrade import degrade_result
-from .env import openai_client_kwargs, openai_model, redact_secrets
+from .env import (
+    openai_client_kwargs,
+    openai_max_output_tokens,
+    openai_model,
+    openai_reasoning_effort,
+    openai_timeout_seconds,
+    redact_secrets,
+)
 from .gateway import ALLOWED_TOOLS, EvidenceGateway
 from .ledger import HypothesisLedger
 from .prefilter import prefilter
 from .prompt import SYSTEM_PROMPT, assemble_prompt, assert_prompt_safe
 from .trail import EvidenceTrail
 
-DEFAULT_MODEL = "gpt-4.1-mini"
+DEFAULT_MODEL = "gpt-5.6-luna"
+DEFAULT_REASONING_EFFORT = "high"
+DEFAULT_MAX_OUTPUT_TOKENS = 6000
 DEFAULT_MAX_TURNS = 6
-DEFAULT_TIMEOUT_SECONDS = 30.0
+DEFAULT_TIMEOUT_SECONDS = 300.0
 
 _TOOL_DESCRIPTIONS = {
     "cohort_metrics": "Measure payment-level and attempt-level conversion for a cohort.",
@@ -98,7 +107,7 @@ class InvestigationAgent:
         model: str | None = None,
         max_turns: int = DEFAULT_MAX_TURNS,
         query_budget: int = 6,
-        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        timeout_seconds: float | None = None,
         turn_budget: int | None = None,
         wall_clock_timeout: float | None = None,
     ) -> None:
@@ -106,12 +115,17 @@ class InvestigationAgent:
             max_turns = turn_budget
         if wall_clock_timeout is not None:
             timeout_seconds = wall_clock_timeout
+        elif timeout_seconds is None:
+            timeout_seconds = openai_timeout_seconds(DEFAULT_TIMEOUT_SECONDS)
         if max_turns < 0:
             raise ValueError("max_turns must be non-negative")
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self.client = client
         self.model = model or openai_model(DEFAULT_MODEL)
+        self.max_output_tokens = openai_max_output_tokens(DEFAULT_MAX_OUTPUT_TOKENS)
+        self.reasoning_effort = openai_reasoning_effort(DEFAULT_REASONING_EFFORT)
+        self._reasoning_supported = _reasoning_support(self.model)
         self.max_turns = int(max_turns)
         self.query_budget = int(query_budget)
         self.timeout_seconds = float(timeout_seconds)
@@ -358,8 +372,10 @@ class InvestigationAgent:
             "model": self.model,
             "instructions": SYSTEM_PROMPT,
             "input": conversation,
-            "max_output_tokens": 2000,
+            "max_output_tokens": self.max_output_tokens,
         }
+        if self.reasoning_effort and self._reasoning_supported is not False:
+            kwargs["reasoning"] = {"effort": self.reasoning_effort}
         if with_tools:
             kwargs["tools"] = TOOL_DEFINITIONS
             kwargs["parallel_tool_calls"] = False
@@ -376,10 +392,20 @@ class InvestigationAgent:
         create = getattr(responses, "create", None)
         if not callable(create):
             raise TypeError("injected client must expose responses.create")
-        return self._bounded(
-            lambda: create(**kwargs),
-            self._remaining(started_clock),
-        )
+        try:
+            return self._bounded(
+                lambda: create(**kwargs),
+                self._remaining(started_clock),
+            )
+        except Exception as exc:
+            if "reasoning" not in kwargs or not _is_reasoning_unsupported_error(exc):
+                raise
+            self._reasoning_supported = False
+            kwargs.pop("reasoning")
+            return self._bounded(
+                lambda: create(**kwargs),
+                self._remaining(started_clock),
+            )
 
     def _bounded(self, callback: Any, timeout: float) -> Any:
         if timeout <= 0:
@@ -448,18 +474,36 @@ def run_investigation(
 
 def _strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """Adapt Pydantic defaults to the Responses strict-schema requirement."""
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        schema["required"] = list(properties)
+        schema.pop("default", None)
     for value in schema.values():
         if isinstance(value, dict):
-            properties = value.get("properties")
-            if isinstance(properties, dict):
-                value["required"] = list(properties)
-                value.pop("default", None)
             _strict_schema(value)
         elif isinstance(value, list):
             for item in value:
                 if isinstance(item, dict):
                     _strict_schema(item)
     return schema
+
+
+def _reasoning_support(model: str) -> bool | None:
+    """Use verified capability facts and probe models not yet classified."""
+    if model == DEFAULT_MODEL:
+        return True
+    if model == "gpt-4.1-mini":
+        return False
+    return None
+
+
+def _is_reasoning_unsupported_error(error: BaseException) -> bool:
+    """Recognise an API rejection of the optional reasoning parameter."""
+    message = str(error).lower()
+    return "reasoning" in message and any(
+        marker in message
+        for marker in ("unsupported", "not supported", "unknown", "unrecognized", "invalid", "not allowed")
+    )
 
 
 def _function_calls(response: Any) -> list[dict[str, Any]]:
@@ -602,6 +646,8 @@ def _utc_now() -> str:
 
 
 __all__ = [
+    "DEFAULT_MAX_OUTPUT_TOKENS",
+    "DEFAULT_REASONING_EFFORT",
     "DEFAULT_MAX_TURNS",
     "DEFAULT_MODEL",
     "DEFAULT_TIMEOUT_SECONDS",
