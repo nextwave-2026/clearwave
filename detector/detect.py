@@ -158,8 +158,16 @@ def localise(
 ) -> list[dict[str, Any]]:
     """Walk from the whole platform down to the cohort the evidence supports.
 
-    The rule is contrast, not depth. We descend on a dimension only when one of
-    its values is materially worse than its siblings inside the current cohort.
+    Contrast is the normal descent rule: one value must be materially worse
+    than its siblings inside the current cohort. When a parent does not pass
+    the detection floors, a unique child that does pass them is also a valid
+    localisation - dilution by healthy traffic must not hide a real incident.
+    When a qualified parent has only one observed value for a dimension that
+    varies elsewhere in the window, that observed singleton may be retained as
+    part of the joint affected slice. It records what the data contains, not a
+    causal claim about that dimension; the investigation layer still tests
+    whether the dimensions are structurally inseparable.
+
     If every issuing bank behind a degraded provider is equally degraded, the
     issuer is not part of the story and adding it would be a coincidence
     dressed up as a diagnosis - which is exactly the over-specification PRD
@@ -183,13 +191,17 @@ def localise(
 
     for _ in range(config.LOCALISE_MAX_DEPTH):
         best_split: dict[str, Any] | None = None
+        children: dict[str, list[dict[str, Any]]] = {}
+        global_value_counts: dict[str, int] = {}
 
         for dimension in (d for d in considered if d not in current):
-            siblings = []
-            for row in connection.execute(
+            values = connection.execute(
                 f"SELECT DISTINCT {dimension} AS v FROM attempt "
                 f"WHERE {dimension} IS NOT NULL ORDER BY {dimension}"
-            ).fetchall():
+            ).fetchall()
+            global_value_counts[dimension] = len(values)
+            siblings = []
+            for row in values:
                 child = dict(current)
                 child[dimension] = row["v"]
                 evaluation = evaluate(connection, child, start, end)
@@ -198,9 +210,8 @@ def localise(
                 if evaluation["observed"]["attempted_payments"] < config.N_PAYMENTS_MIN:
                     continue
                 siblings.append(evaluation)
+            children[dimension] = siblings
 
-            # One value is no contrast: the child would just be the parent
-            # wearing an extra label.
             if len(siblings) < 2:
                 continue
 
@@ -214,17 +225,66 @@ def localise(
                     "dimension": dimension,
                 }
 
-        if best_split is None or best_split["separation"] < config.LOCALISE_MIN_SEPARATION:
-            break
+        if best_split is not None and best_split["separation"] >= config.LOCALISE_MIN_SEPARATION:
+            winner = best_split["winner"]
+            winner["split"] = {
+                "dimension": best_split["dimension"],
+                "separation_from_next": round(best_split["separation"], 6),
+                "runner_up": best_split["runner_up"]["cohort_key"],
+            }
+            path.append(winner)
+            current = dict(winner["cohort"])
+            continue
 
-        winner = best_split["winner"]
-        winner["split"] = {
-            "dimension": best_split["dimension"],
-            "separation_from_next": round(best_split["separation"], 6),
-            "runner_up": best_split["runner_up"]["cohort_key"],
-        }
-        path.append(winner)
-        current = dict(winner["cohort"])
+        # A parent can be diluted below the floors while a child still has a
+        # real, persistent signal. Descend only to the unique qualifying child
+        # for a dimension, then choose the strongest such child deterministically.
+        if not path[-1]["qualifies"]:
+            qualifying_children = [
+                (dimension, child)
+                for dimension, siblings in children.items()
+                if sum(item["qualifies"] for item in siblings) == 1
+                for child in siblings
+                if child["qualifies"]
+            ]
+            if qualifying_children:
+                dimension, winner = min(
+                    qualifying_children,
+                    key=lambda item: (-item[1]["absolute_drop"], item[1]["cohort_key"]),
+                )
+                winner["split"] = {
+                    "dimension": dimension,
+                    "kind": "qualifying_child",
+                }
+                path.append(winner)
+                current = dict(winner["cohort"])
+                continue
+
+        # A one-to-one confounder has no sibling inside the qualified parent,
+        # but the singleton value is still the observed affected joint slice.
+        # Only retain it when that dimension has another value elsewhere, so a
+        # globally constant field is never added as decorative specificity.
+        if path[-1]["qualifies"]:
+            singleton_children = [
+                (dimension, siblings[0])
+                for dimension, siblings in children.items()
+                if global_value_counts[dimension] > 1 and len(siblings) == 1
+                and siblings[0]["qualifies"]
+            ]
+            if singleton_children:
+                dimension, winner = min(
+                    singleton_children,
+                    key=lambda item: (-item[1]["absolute_drop"], item[1]["cohort_key"]),
+                )
+                winner["split"] = {
+                    "dimension": dimension,
+                    "kind": "observed_singleton",
+                }
+                path.append(winner)
+                current = dict(winner["cohort"])
+                continue
+
+        break
 
     return path
 

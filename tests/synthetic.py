@@ -130,3 +130,112 @@ def confounded(minutes: int = 80, per_minute: int = 20, seed: int = 7) -> list[d
             if events[-1]["status"] == "declined":
                 events[-1]["normalized_decline_reason"] = "do_not_honor"
     return events
+
+
+def _set_approval_count(
+    events: list[dict[str, Any]], indexes: list[int], approved_count: int, rng: random.Random
+) -> None:
+    """Set deterministic outcomes for one generated replay segment."""
+    if not 0 <= approved_count <= len(indexes):
+        raise ValueError("approved_count must fit the replay segment")
+    approved = set(rng.sample(indexes, approved_count))
+    for index in indexes:
+        event = events[index]
+        if index in approved:
+            event["status"] = "approved"
+            event.pop("normalized_decline_reason", None)
+        else:
+            event["status"] = "declined"
+            event["normalized_decline_reason"] = "do_not_honor"
+
+
+def high_impact_small_percentage(seed: int = 20260830) -> list[dict[str, Any]]:
+    """Generate the high-volume replay whose platform drop hides Merchant A."""
+    rng = random.Random(seed)
+    events: list[dict[str, Any]] = []
+    segments: dict[tuple[str, int], list[int]] = {}
+    index = 0
+    for merchant, per_minute in (("merchant-a", 500), ("merchant-b", 100)):
+        for minute in range(80):
+            segment = segments.setdefault((merchant, minute), [])
+            for _ in range(per_minute):
+                index += 1
+                segment.append(len(events))
+                events.append(
+                    _event(
+                        index,
+                        minute,
+                        merchant_id=merchant,
+                        provider=("provider-p2", "provider-p3")[index % 2],
+                        country=("CO", "MX")[(index // 2) % 2],
+                        issuing_bank=("bank-x", "bank-y")[(index // 4) % 2],
+                        occurred_at=(BASE + timedelta(minutes=minute, seconds=index % 60)).strftime(
+                            "%Y-%m-%dT%H:%M:%SZ"
+                        ),
+                        status="approved",
+                    )
+                )
+
+    for merchant, baseline_approved, final_approved in (
+        ("merchant-a", 27603, 2237),
+        ("merchant-b", 5518, 474),
+    ):
+        baseline = [
+            index
+            for minute in range(15, 75)
+            for index in segments[(merchant, minute)]
+        ]
+        final = [
+            index
+            for minute in range(75, 80)
+            for index in segments[(merchant, minute)]
+        ]
+        _set_approval_count(events, baseline, baseline_approved, rng)
+        _set_approval_count(events, final, final_approved, rng)
+    return events
+
+
+def confounded_incident(seed: int = 20260830) -> list[dict[str, Any]]:
+    """Generate a one-to-one P2/Bank-X replay with a degraded P2 window."""
+    rng = random.Random(seed)
+    events: list[dict[str, Any]] = []
+    segments: dict[tuple[str, int], list[int]] = {}
+    index = 0
+    for minute in range(80):
+        for _ in range(100):
+            index += 1
+            provider, bank = (("provider-p2", "bank-x") if index % 2 else ("provider-p3", "bank-y"))
+            segment = segments.setdefault((provider, minute), [])
+            segment.append(len(events))
+            events.append(
+                _event(
+                    index,
+                    minute,
+                    merchant_id="merchant-a",
+                    provider=provider,
+                    issuing_bank=bank,
+                    country="CO",
+                    occurred_at=(BASE + timedelta(minutes=minute, seconds=index % 60)).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    ),
+                    status="approved",
+                )
+            )
+
+    for provider, baseline_approved, final_approved in (
+        ("provider-p2", 2760, 152),
+        ("provider-p3", 2760, 229),
+    ):
+        baseline = [
+            index
+            for minute in range(15, 75)
+            for index in segments[(provider, minute)]
+        ]
+        final = [
+            index
+            for minute in range(75, 80)
+            for index in segments[(provider, minute)]
+        ]
+        _set_approval_count(events, baseline, baseline_approved, rng)
+        _set_approval_count(events, final, final_approved, rng)
+    return events
