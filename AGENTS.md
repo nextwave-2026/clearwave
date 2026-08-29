@@ -116,6 +116,10 @@ Two caveats worth knowing rather than discovering:
   the signal, not a nuisance: two people are changing the same boundary and need to talk. Resolve it by
   agreeing, not by picking a side blind.
 
+### CI coordination guards
+
+CI now enforces that all six contracts stay present and owned, coordination logs remain append-only and attributed, the pre-existing IP declaration survives, required Makefile target names survive, and the licence inventory stays current. It also surfaces overlapping open pull requests as an advisory warning for contributors to coordinate.
+
 Other conventions:
 
 - Never merge a red pull request. Green checks only, either side.
