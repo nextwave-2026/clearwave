@@ -4,9 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Control Tower - TAM dashboard mockups</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 /* ---------------------------------------------------------------------------
    Palette sourced from Yuno's published brand guidelines, y.uno/en/brand-guidelines
@@ -55,7 +52,7 @@
 html{color-scheme:dark;scrollbar-color:var(--line) var(--ground)}
 body{
   margin:0;background:var(--ground);color:var(--ink);
-  font-family:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-family:"Geist","Inter",system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
   font-size:14px;line-height:1.55;
   -webkit-font-smoothing:antialiased;
   font-variant-numeric:tabular-nums;
@@ -67,7 +64,7 @@ body{
 ::-webkit-scrollbar-thumb{background:var(--line);border-radius:6px;border:3px solid var(--ground)}
 ::-webkit-scrollbar-thumb:hover{background:#3a3d47}
 
-.mono{font-family:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-feature-settings:"zero"1}
+.mono{font-family:"Geist Mono",ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-feature-settings:"zero"1}
 a{color:var(--yuno-blue-lift);text-underline-offset:3px}
 
 /* ---------- shell ---------- */
@@ -77,7 +74,9 @@ a{color:var(--yuno-blue-lift);text-underline-offset:3px}
 header.mast{border-bottom:1px solid var(--line);background:linear-gradient(180deg,#08080B,var(--ground));}
 .mast-in{display:flex;align-items:center;gap:20px;padding:20px 0 18px;flex-wrap:wrap}
 .brandlock{display:flex;align-items:center;gap:14px;min-width:0}
-.brandlock img{height:19px;width:auto;display:block}
+.brandlock .brandmark{display:block;line-height:0}
+.brandlock .ylogo{height:19px;width:auto;display:block}
+.slackish .av .ymark{width:19px;height:19px;display:block}
 .brandlock .rule{width:1px;height:22px;background:var(--line)}
 .brandlock .product{font-size:14px;font-weight:600;letter-spacing:-.01em;white-space:nowrap}
 .brandlock .product span{color:var(--ink-3);font-weight:400}
@@ -153,7 +152,7 @@ button.cite{
   all:unset;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
   width:14px;height:14px;border-radius:3px;flex:none;
   background:rgba(107,123,255,.13);color:var(--cite);
-  font-size:9px;font-weight:700;font-family:"Geist Mono",monospace;
+  font-size:9px;font-weight:700;font-family:"Geist Mono",ui-monospace,Menlo,Consolas,monospace;
   transform:translateY(-2px);
   transition:background .14s ease-out,color .14s ease-out,transform .14s ease-out;
 }
@@ -223,7 +222,7 @@ th.num,td.num{text-align:right;padding-right:0}
 .note.warn h4{color:#E9C877}
 .note.defect{border-color:#4A1F26;background:#150609}
 .note.defect h4{color:var(--sev-critical)}
-.note code{background:var(--ground);padding:1.5px 5px;border-radius:4px;font-family:"Geist Mono",monospace;font-size:11.5px;color:var(--lilac-deep)}
+.note code{background:var(--ground);padding:1.5px 5px;border-radius:4px;font-family:"Geist Mono",ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;color:var(--lilac-deep)}
 
 /* ---------- incident detail ---------- */
 .detail-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:22px}
@@ -329,12 +328,12 @@ footer b{color:var(--ink-2);font-weight:500}
 figure.chart .fc-top{margin:0 0 10px;font-size:11.5px;color:var(--ink-3)}
 .span-full{margin-top:22px}
 svg.spark{width:120px;height:30px;display:block}
-.heat-key{display:flex;gap:9px;align-items:center;flex-wrap:wrap;font-size:10.5px;color:var(--ink-3);margin-top:10px;font-family:"Geist Mono",monospace}
+.heat-key{display:flex;gap:9px;align-items:center;flex-wrap:wrap;font-size:10.5px;color:var(--ink-3);margin-top:10px;font-family:"Geist Mono",ui-monospace,Menlo,Consolas,monospace}
 .heat-key .hk{color:var(--ink-2);margin-right:2px}
 .heat-key span{display:inline-flex;align-items:center;gap:5px}
 .heat-key i{width:15px;height:11px;border-radius:2px;display:inline-block;flex:none}
 .panel .foot{margin:11px 0 0;font-size:11.5px;color:var(--ink-3)}
-.panel .foot code{background:var(--ground);padding:1px 4px;border-radius:3px;font-family:"Geist Mono",monospace;font-size:11px;color:var(--lilac-deep)}
+.panel .foot code{background:var(--ground);padding:1px 4px;border-radius:3px;font-family:"Geist Mono",ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:var(--lilac-deep)}
 .panel svg{display:block}
 .dual{display:flex;gap:26px;flex-wrap:wrap;padding-top:4px}
 .dual > div{display:flex;flex-direction:column;gap:6px}
@@ -342,7 +341,7 @@ svg.spark{width:120px;height:30px;display:block}
 .br{display:flex;flex-wrap:wrap;gap:8px}
 .br-i{display:inline-flex;flex-direction:column;gap:2px;border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:8px 11px;font-size:10.5px;color:var(--ink-3);background:var(--surface)}
 .br-i b{font-size:17px;font-weight:600;color:var(--ink);letter-spacing:-.02em}
-.br-i em{font-style:normal;font-family:"Geist Mono",monospace;font-size:9.5px;color:var(--sev-critical)}
+.br-i em{font-style:normal;font-family:"Geist Mono",ui-monospace,Menlo,Consolas,monospace;font-size:9.5px;color:var(--sev-critical)}
 .dec-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:14px}
 .dec-grid .q{margin-bottom:0}
 .screen-head .sev,.screen-head .conf{transform:translateY(-1px)}
@@ -367,7 +366,7 @@ svg.spark{width:120px;height:30px;display:block}
 .fsel:hover{border-color:var(--yuno-blue);background:#07070A}
 .fsel:focus-within{border-color:var(--yuno-blue);box-shadow:0 0 0 3px rgba(62,79,224,.22)}
 .fsel > span{font-size:9.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);pointer-events:none}
-.fsel select{all:unset;font-family:"Geist Mono",monospace;font-size:12px;color:var(--ink);cursor:pointer;min-width:0}
+.fsel select{all:unset;font-family:"Geist Mono",ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:var(--ink);cursor:pointer;min-width:0}
 .fsel select option{background:#14141A;color:var(--ink)}
 .fsel::after{
   content:"";position:absolute;right:11px;top:50%;width:7px;height:7px;
@@ -376,7 +375,7 @@ svg.spark{width:120px;height:30px;display:block}
 }
 .fsel:hover::after{border-color:var(--yuno-blue-lift)}
 .fnote{font-size:11px;color:var(--ink-3);margin-left:auto;max-width:34ch;line-height:1.4}
-.fnote code{background:var(--ground);padding:1px 4px;border-radius:3px;font-family:"Geist Mono",monospace;font-size:10.5px;color:var(--lilac-deep)}
+.fnote code{background:var(--ground);padding:1px 4px;border-radius:3px;font-family:"Geist Mono",ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;color:var(--lilac-deep)}
 @media(max-width:900px){.fnote{margin-left:0;max-width:none}}
 
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:12px}
@@ -414,7 +413,7 @@ svg.spark{width:120px;height:30px;display:block}
 <header class="mast">
   <div class="wrap mast-in">
     <div class="brandlock">
-      <img src="yuno-wordmark-light.svg" alt="Yuno">
+      <span class="brandmark" role="img" aria-label="Yuno"><svg class="ylogo" aria-hidden="true" width="1460" height="400" viewBox="0 0 1460 400" fill="none" ><path d="M188.466 198.795L95.2695 8.48145H1.30371L145.03 303.734L106.116 396.747H198.062L355.064 8.48145H263.816L188.466 198.795Z" fill="white"/><path d="M616.568 186.747C616.568 186.747 582.753 263.132 521.039 241.397C491.312 230.939 488.378 191.229 487.969 182.096V8.602H393.955V216.216C394.027 228.12 394.58 243.253 397.034 251.976C421.253 337.903 517.864 321.47 534.411 317.373C603.436 300.265 629.026 232.289 629.026 232.289V318.457H710.678V8.57788H616.568V186.747Z" fill="white"/><path d="M1413.46 51.5664C1398.21 36.217 1380.2 24.3856 1359.97 16.4579C1310.79 -1.15654 1256.63 -1.15654 1207.44 16.4579C1187.1 24.3374 1168.99 36.1688 1153.59 51.6387C1139.23 66.2652 1128.2 83.47 1120.88 102.699C1113.48 122.337 1109.75 142.988 1109.82 164.024C1109.72 185.036 1113.45 205.518 1120.88 225.036C1128.48 244.819 1139.98 262.506 1155.01 277.542C1170.04 292.578 1187.75 304.096 1207.59 311.735C1231.78 320.868 1257.28 325.253 1283.23 324.819H1283.51H1283.8C1309.9 325.398 1335.51 320.916 1359.92 311.687C1380.1 303.783 1398.16 291.807 1413.44 276.169C1427.82 261.422 1438.86 244.193 1446.27 224.964C1453.67 205.494 1457.38 185.012 1457.3 164.121C1457.38 142.988 1453.65 122.337 1446.24 102.675C1438.93 83.4459 1427.89 66.2411 1413.46 51.5423V51.5664ZM1350.88 208.048L1350.64 208.554C1344.6 221.301 1335.13 232.024 1323.22 239.59L1322.84 239.832C1313.87 245.157 1304.08 248.53 1293.71 249.831C1290.51 250.241 1287.29 250.434 1284.09 250.434C1277 250.434 1269.93 249.422 1263.02 247.422C1253.02 244.506 1243.86 239.663 1235.82 233.012C1227.79 226.362 1221.32 218.265 1216.61 208.94L1216.34 208.41C1209.97 194.53 1206.77 179.133 1207.08 163.88C1206.75 148.603 1209.94 133.181 1216.34 119.301C1222.35 106.386 1231.85 95.6146 1243.88 88.0965L1244.14 87.9278C1253.11 82.5543 1262.9 79.1567 1273.29 77.8314C1283.66 76.5061 1294 77.3013 1304.03 80.217C1314.06 83.1327 1323.22 88.0001 1331.26 94.6989C1339.29 101.374 1345.73 109.518 1350.45 118.844L1350.83 119.687C1356.85 133.735 1359.9 148.578 1359.9 163.88C1359.9 179.181 1356.85 194.024 1350.83 208.072L1350.88 208.048Z" fill="white"/><path d="M932.351 9.56657C863.326 26.675 837.736 94.6509 837.736 94.6509V8.48221H756.084V318.362H850.194V140.193C850.194 140.193 884.009 63.8075 945.723 85.5425C975.45 96.0003 978.384 135.711 978.793 144.844V318.338H1072.81V110.723C1072.73 98.8196 1072.18 83.687 1069.73 74.9641C1045.51 -10.9636 948.898 5.47019 932.351 9.56657Z" fill="white"/></svg></span>
       <span class="rule"></span>
       <span class="product">Control Tower <span>/ TAM console</span></span>
     </div>
@@ -537,7 +536,7 @@ svg.spark{width:120px;height:30px;display:block}
           <figcaption class="fc-top">Value moving through each affected slice, and how much of it is not landing.</figcaption>
           <svg viewBox="0 0 640 176" width="100%" role="img" aria-label="Mexico has 42,500 dollars flowing with 6,577 at risk. Provider P2 has 5,000 dollars flowing with 1,649 at risk. Provider P3 has 2,000 dollars flowing with 279 at risk.">
             <title>Value flowing against value at risk</title>
-            <g font-family="Geist Mono, monospace" font-size="10.5">
+            <g font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" font-size="10.5">
               <text x="0" y="26" fill="#E8722E" font-weight="600">Mexico</text>
               <rect x="86" y="16" width="424" height="18" rx="3" fill="#1E2430"/>
               <rect x="86" y="16" width="65.6" height="18" rx="3" fill="#E8722E"/>
@@ -568,7 +567,7 @@ svg.spark{width:120px;height:30px;display:block}
           <figcaption class="fc-top">Burn rate - what each is costing per hour if it continues.</figcaption>
           <svg viewBox="0 0 400 176" width="100%" role="img" aria-label="Mexico is burning 78,919 dollars per hour, Provider P2 19,785, Provider P3 3,348.">
             <title>Loss per hour</title>
-            <g font-family="Geist Mono, monospace" font-size="10.5">
+            <g font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" font-size="10.5">
               <rect x="0" y="16" width="340" height="18" rx="3" fill="#E8722E"/>
               <text x="334" y="29" fill="#0E0E12" font-weight="600" text-anchor="end">$78,919 /hr</text>
               <text x="0" y="46" fill="#767C8C" font-size="9.5">Mexico &middot; High</text>
@@ -668,7 +667,7 @@ svg.spark{width:120px;height:30px;display:block}
             <g stroke="#1E2028" stroke-width="1">
               <line x1="52" y1="44" x2="622" y2="44"/><line x1="52" y1="120" x2="622" y2="120"/>
             </g>
-            <g fill="#767C8C" font-size="9.5" font-family="Geist Mono, monospace" text-anchor="end">
+            <g fill="#767C8C" font-size="9.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" text-anchor="end">
               <text x="43" y="48">10</text><text x="43" y="124">5</text><text x="43" y="200">0</text>
             </g>
             <!-- gap between attempted (flat 10) and approved -->
@@ -679,11 +678,11 @@ svg.spark{width:120px;height:30px;display:block}
             <path d="M52,104.8 L73.1,59.2 L94.2,59.2 L115.3,59.2 L136.4,59.2 L157.6,44 L178.7,44 L199.8,59.2 L220.9,59.2 L242,59.2 L263.1,59.2 L284.2,44 L305.3,74.4 L326.4,44 L347.6,44 L368.7,104.8 L389.8,104.8 L410.9,120 L432,135.2 L453.1,135.2 L474.2,135.2 L495.3,120 L516.4,104.8 L537.6,104.8 L558.7,89.6 L579.8,135.2 L600.9,135.2 L622,120"
                   fill="none" stroke="#6B7BFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             <line x1="368.7" y1="36" x2="368.7" y2="196" stroke="#E8722E" stroke-width="2"/>
-            <text x="368.7" y="30" fill="#E8722E" font-size="10" font-family="Geist Mono, monospace" text-anchor="middle" font-weight="600">05:05</text>
-            <text x="60" y="38" fill="#A8ADBD" font-size="9.5" font-family="Geist Mono, monospace">attempted, 10/min</text>
-            <text x="622" y="112" fill="#6B7BFF" font-size="9.5" font-family="Geist Mono, monospace" text-anchor="end">approved</text>
+            <text x="368.7" y="30" fill="#E8722E" font-size="10" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" text-anchor="middle" font-weight="600">05:05</text>
+            <text x="60" y="38" fill="#A8ADBD" font-size="9.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace">attempted, 10/min</text>
+            <text x="622" y="112" fill="#6B7BFF" font-size="9.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" text-anchor="end">approved</text>
             <line x1="52" y1="196" x2="622" y2="196" stroke="#282A30"/>
-            <g fill="#767C8C" font-size="9.5" font-family="Geist Mono, monospace">
+            <g fill="#767C8C" font-size="9.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace">
               <text x="52" y="212" text-anchor="start">04:50</text><text x="337" y="212" text-anchor="middle">05:03</text><text x="622" y="212" text-anchor="end">05:17</text>
             </g>
           </svg>
@@ -699,7 +698,7 @@ svg.spark{width:120px;height:30px;display:block}
               <rect x="0" y="16" width="208" height="30" rx="3" fill="#3FBF87"/>
               <rect x="210" y="16" width="131.9" height="30" rx="3" fill="#FF4D5E"/>
               <rect x="343.9" y="16" width="56.1" height="30" rx="3" fill="#282A30"/>
-              <g font-family="Geist Mono, monospace" font-size="10.5">
+              <g font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" font-size="10.5">
                 <text x="0" y="62" fill="#3FBF87" font-weight="600">$2,600</text>
                 <text x="0" y="76" fill="#767C8C" font-size="9.5">captured</text>
                 <text x="210" y="62" fill="#FF4D5E" font-weight="600">$1,648.72</text>
@@ -716,7 +715,7 @@ svg.spark{width:120px;height:30px;display:block}
             <p class="hint">Same value in, same window, the other route.</p>
             <svg viewBox="0 0 400 96" width="100%" role="img" aria-label="Provider P3 captured 4,800 of 5,000 dollars. Provider P2 captured 2,600 of the same 5,000.">
               <title>Value captured, P3 against P2</title>
-              <g font-family="Geist Mono, monospace" font-size="10.5">
+              <g font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" font-size="10.5">
                 <text x="0" y="14" fill="#3FBF87" font-weight="600">provider-p3</text>
                 <rect x="0" y="20" width="400" height="20" rx="3" fill="#1A1A22"/>
                 <rect x="0" y="20" width="384" height="20" rx="3" fill="#3FBF87"/>
@@ -744,21 +743,21 @@ svg.spark{width:120px;height:30px;display:block}
             <line x1="52" y1="44" x2="622" y2="44"/><line x1="52" y1="94.7" x2="622" y2="94.7"/>
             <line x1="52" y1="145.3" x2="622" y2="145.3"/><line x1="52" y1="196" x2="622" y2="196"/>
           </g>
-          <g fill="#767C8C" font-size="9.5" font-family="Geist Mono, monospace" text-anchor="end">
+          <g fill="#767C8C" font-size="9.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" text-anchor="end">
             <text x="43" y="48">100%</text><text x="43" y="98">80%</text><text x="43" y="149">60%</text><text x="43" y="200">40%</text>
           </g>
           <line x1="52" y1="82.1" x2="622" y2="82.1" stroke="#767C8C" stroke-width="2" stroke-dasharray="5 5"/>
-          <text x="626" y="85" fill="#767C8C" font-size="9.5" font-family="Geist Mono, monospace">exp</text>
+          <text x="626" y="85" fill="#767C8C" font-size="9.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace">exp</text>
           <rect x="368.7" y="40" width="253.3" height="156" fill="#FF4D5E" fill-opacity=".05"/>
           <line x1="368.7" y1="40" x2="368.7" y2="196" stroke="#E8722E" stroke-width="2"/>
-          <text x="368.7" y="33" fill="#E8722E" font-size="10" font-family="Geist Mono, monospace" text-anchor="middle" font-weight="600">05:05</text>
+          <text x="368.7" y="33" fill="#E8722E" font-size="10" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" text-anchor="middle" font-weight="600">05:05</text>
           <line x1="558.7" y1="40" x2="558.7" y2="196" stroke="#767C8C" stroke-width="2" stroke-dasharray="3 4"/>
-          <text x="558.7" y="33" fill="#A8ADBD" font-size="10" font-family="Geist Mono, monospace" text-anchor="middle">05:14</text>
+          <text x="558.7" y="33" fill="#A8ADBD" font-size="10" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" text-anchor="middle">05:14</text>
           <path d="M52,145.3 L73.1,69.3 L94.2,69.3 L115.3,69.3 L136.4,69.3 L157.6,44 L178.7,44 L199.8,69.3 L220.9,69.3 L242,69.3 L263.1,69.3 L284.2,44 L305.3,94.7 L326.4,44 L347.6,44 L368.7,145.3 L389.8,145.3 L410.9,170.7 L432,196 L453.1,196 L474.2,196 L495.3,170.7 L516.4,145.3 L537.6,145.3 L558.7,120 L579.8,196 L600.9,196 L622,170.7 L622,196 L52,196 Z" fill="url(#fillA)"/>
           <path d="M52,145.3 L73.1,69.3 L94.2,69.3 L115.3,69.3 L136.4,69.3 L157.6,44 L178.7,44 L199.8,69.3 L220.9,69.3 L242,69.3 L263.1,69.3 L284.2,44 L305.3,94.7 L326.4,44 L347.6,44 L368.7,145.3 L389.8,145.3 L410.9,170.7 L432,196 L453.1,196 L474.2,196 L495.3,170.7 L516.4,145.3 L537.6,145.3 L558.7,120 L579.8,196 L600.9,196 L622,170.7" fill="none" stroke="#6B7BFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           <circle cx="368.7" cy="145.3" r="4.5" fill="#E8722E" stroke="#0E0E12" stroke-width="2"/>
           <line x1="52" y1="196" x2="622" y2="196" stroke="#282A30"/>
-          <g fill="#767C8C" font-size="9.5" font-family="Geist Mono, monospace">
+          <g fill="#767C8C" font-size="9.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace">
             <text x="52" y="212" text-anchor="start">04:50</text><text x="337" y="212" text-anchor="middle">05:03</text><text x="622" y="212" text-anchor="end">05:17</text>
           </g>
         </svg>
@@ -773,7 +772,7 @@ svg.spark{width:120px;height:30px;display:block}
         <figcaption class="fc-top">Every slice, every minute. This is how the detector found the cohort - and why it stopped where it did.</figcaption>
         <svg viewBox="0 0 640 232" width="100%" role="img" aria-label="Heatmap of approval conversion by slice and minute. Provider P2 and country CO go dark red from 05:05 onward. Provider P3 and country MX stay calm. Bank X and bank Y both dip by a similar amount, so the issuing bank does not separate the incident.">
           <title>Approval conversion by slice and minute</title>
-<text x="96" y="46.3" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" fill="#A8ADBD">All traffic</text>
+<text x="96" y="46.3" text-anchor="end" font-size="10.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" fill="#A8ADBD">All traffic</text>
 <rect x="104.0" y="34.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>All traffic at 04:50 - 75% of 20 payments</title></rect>
 <rect x="123.6" y="34.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>All traffic at 04:51 - 95% of 20 payments</title></rect>
 <rect x="143.2" y="34.0" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>All traffic at 04:52 - 90% of 20 payments</title></rect>
@@ -802,7 +801,7 @@ svg.spark{width:120px;height:30px;display:block}
 <rect x="594.0" y="34.0" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>All traffic at 05:15 - 65% of 20 payments</title></rect>
 <rect x="613.6" y="34.0" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>All traffic at 05:16 - 70% of 20 payments</title></rect>
 <rect x="633.2" y="34.0" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>All traffic at 05:17 - 70% of 20 payments</title></rect>
-<text x="96" y="64.9" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" font-weight="600" fill="#F2F3F7">provider-p2</text>
+<text x="96" y="64.9" text-anchor="end" font-size="10.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" font-weight="600" fill="#F2F3F7">provider-p2</text>
 <rect x="104.0" y="52.6" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>provider-p2 at 04:50 - 60% of 10 payments</title></rect>
 <rect x="123.6" y="52.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p2 at 04:51 - 90% of 10 payments</title></rect>
 <rect x="143.2" y="52.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p2 at 04:52 - 90% of 10 payments</title></rect>
@@ -831,7 +830,7 @@ svg.spark{width:120px;height:30px;display:block}
 <rect x="594.0" y="52.6" width="18.0" height="17.0" rx="2" fill="#FF6B78"><title>provider-p2 at 05:15 - 40% of 10 payments</title></rect>
 <rect x="613.6" y="52.6" width="18.0" height="17.0" rx="2" fill="#FF6B78"><title>provider-p2 at 05:16 - 40% of 10 payments</title></rect>
 <rect x="633.2" y="52.6" width="18.0" height="17.0" rx="2" fill="#F04A5A"><title>provider-p2 at 05:17 - 50% of 10 payments</title></rect>
-<text x="96" y="83.5" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" fill="#A8ADBD">provider-p3</text>
+<text x="96" y="83.5" text-anchor="end" font-size="10.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" fill="#A8ADBD">provider-p3</text>
 <rect x="104.0" y="71.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p3 at 04:50 - 90% of 10 payments</title></rect>
 <rect x="123.6" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 04:51 - 100% of 10 payments</title></rect>
 <rect x="143.2" y="71.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p3 at 04:52 - 90% of 10 payments</title></rect>
@@ -860,7 +859,7 @@ svg.spark{width:120px;height:30px;display:block}
 <rect x="594.0" y="71.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p3 at 05:15 - 90% of 10 payments</title></rect>
 <rect x="613.6" y="71.2" width="18.0" height="17.0" rx="2" fill="#151922"><title>provider-p3 at 05:16 - 100% of 10 payments</title></rect>
 <rect x="633.2" y="71.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>provider-p3 at 05:17 - 90% of 10 payments</title></rect>
-<text x="96" y="102.1" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" font-weight="600" fill="#F2F3F7">country CO</text>
+<text x="96" y="102.1" text-anchor="end" font-size="10.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" font-weight="600" fill="#F2F3F7">country CO</text>
 <rect x="104.0" y="89.8" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>country CO at 04:50 - 70% of 10 payments</title></rect>
 <rect x="123.6" y="89.8" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country CO at 04:51 - 90% of 10 payments</title></rect>
 <rect x="143.2" y="89.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>country CO at 04:52 - 100% of 10 payments</title></rect>
@@ -889,7 +888,7 @@ svg.spark{width:120px;height:30px;display:block}
 <rect x="594.0" y="89.8" width="18.0" height="17.0" rx="2" fill="#FF6B78"><title>country CO at 05:15 - 40% of 10 payments</title></rect>
 <rect x="613.6" y="89.8" width="18.0" height="17.0" rx="2" fill="#F04A5A"><title>country CO at 05:16 - 50% of 10 payments</title></rect>
 <rect x="633.2" y="89.8" width="18.0" height="17.0" rx="2" fill="#F04A5A"><title>country CO at 05:17 - 50% of 10 payments</title></rect>
-<text x="96" y="120.7" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" fill="#A8ADBD">country MX</text>
+<text x="96" y="120.7" text-anchor="end" font-size="10.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" fill="#A8ADBD">country MX</text>
 <rect x="104.0" y="108.4" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>country MX at 04:50 - 80% of 10 payments</title></rect>
 <rect x="123.6" y="108.4" width="18.0" height="17.0" rx="2" fill="#151922"><title>country MX at 04:51 - 100% of 10 payments</title></rect>
 <rect x="143.2" y="108.4" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>country MX at 04:52 - 80% of 10 payments</title></rect>
@@ -918,7 +917,7 @@ svg.spark{width:120px;height:30px;display:block}
 <rect x="594.0" y="108.4" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country MX at 05:15 - 90% of 10 payments</title></rect>
 <rect x="613.6" y="108.4" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country MX at 05:16 - 90% of 10 payments</title></rect>
 <rect x="633.2" y="108.4" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>country MX at 05:17 - 90% of 10 payments</title></rect>
-<text x="96" y="139.3" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" fill="#A8ADBD">merchant-a</text>
+<text x="96" y="139.3" text-anchor="end" font-size="10.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" fill="#A8ADBD">merchant-a</text>
 <rect x="104.0" y="127.0" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>merchant-a at 04:50 - 62% of 8 payments</title></rect>
 <rect x="123.6" y="127.0" width="18.0" height="17.0" rx="2" fill="#151922"><title>merchant-a at 04:51 - 100% of 9 payments</title></rect>
 <rect x="143.2" y="127.0" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-a at 04:52 - 92% of 12 payments</title></rect>
@@ -947,7 +946,7 @@ svg.spark{width:120px;height:30px;display:block}
 <rect x="594.0" y="127.0" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>merchant-a at 05:15 - 56% of 9 payments</title></rect>
 <rect x="613.6" y="127.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-a at 05:16 - 75% of 12 payments</title></rect>
 <rect x="633.2" y="127.0" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-a at 05:17 - 82% of 11 payments</title></rect>
-<text x="96" y="157.9" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" fill="#A8ADBD">merchant-b</text>
+<text x="96" y="157.9" text-anchor="end" font-size="10.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" fill="#A8ADBD">merchant-b</text>
 <rect x="104.0" y="145.6" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>merchant-b at 04:50 - 83% of 12 payments</title></rect>
 <rect x="123.6" y="145.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-b at 04:51 - 91% of 11 payments</title></rect>
 <rect x="143.2" y="145.6" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>merchant-b at 04:52 - 88% of 8 payments</title></rect>
@@ -976,7 +975,7 @@ svg.spark{width:120px;height:30px;display:block}
 <rect x="594.0" y="145.6" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>merchant-b at 05:15 - 73% of 11 payments</title></rect>
 <rect x="613.6" y="145.6" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>merchant-b at 05:16 - 62% of 8 payments</title></rect>
 <rect x="633.2" y="145.6" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>merchant-b at 05:17 - 56% of 9 payments</title></rect>
-<text x="96" y="176.5" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" fill="#A8ADBD">bank-x</text>
+<text x="96" y="176.5" text-anchor="end" font-size="10.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" fill="#A8ADBD">bank-x</text>
 <rect x="104.0" y="164.2" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>bank-x at 04:50 - 73% of 11 payments</title></rect>
 <rect x="123.6" y="164.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>bank-x at 04:51 - 89% of 9 payments</title></rect>
 <rect x="143.2" y="164.2" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>bank-x at 04:52 - 91% of 11 payments</title></rect>
@@ -1005,7 +1004,7 @@ svg.spark{width:120px;height:30px;display:block}
 <rect x="594.0" y="164.2" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>bank-x at 05:15 - 67% of 9 payments</title></rect>
 <rect x="613.6" y="164.2" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>bank-x at 05:16 - 82% of 11 payments</title></rect>
 <rect x="633.2" y="164.2" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>bank-x at 05:17 - 67% of 9 payments</title></rect>
-<text x="96" y="195.1" text-anchor="end" font-size="10.5" font-family="Geist Mono, monospace" fill="#A8ADBD">bank-y</text>
+<text x="96" y="195.1" text-anchor="end" font-size="10.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" fill="#A8ADBD">bank-y</text>
 <rect x="104.0" y="182.8" width="18.0" height="17.0" rx="2" fill="#5A3038"><title>bank-y at 04:50 - 78% of 9 payments</title></rect>
 <rect x="123.6" y="182.8" width="18.0" height="17.0" rx="2" fill="#151922"><title>bank-y at 04:51 - 100% of 11 payments</title></rect>
 <rect x="143.2" y="182.8" width="18.0" height="17.0" rx="2" fill="#1E2430"><title>bank-y at 04:52 - 89% of 9 payments</title></rect>
@@ -1034,14 +1033,14 @@ svg.spark{width:120px;height:30px;display:block}
 <rect x="594.0" y="182.8" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>bank-y at 05:15 - 64% of 11 payments</title></rect>
 <rect x="613.6" y="182.8" width="18.0" height="17.0" rx="2" fill="#C43C4C"><title>bank-y at 05:16 - 56% of 9 payments</title></rect>
 <rect x="633.2" y="182.8" width="18.0" height="17.0" rx="2" fill="#8E3340"><title>bank-y at 05:17 - 73% of 11 payments</title></rect>
-<text x="113.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, monospace" fill="#767C8C">04:50</text>
-<text x="211.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, monospace" fill="#767C8C">04:55</text>
-<text x="309.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, monospace" fill="#767C8C">05:00</text>
-<text x="407.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, monospace" fill="#767C8C">05:05</text>
-<text x="505.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, monospace" fill="#767C8C">05:10</text>
-<text x="603.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, monospace" fill="#767C8C">05:15</text>
+<text x="113.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" fill="#767C8C">04:50</text>
+<text x="211.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" fill="#767C8C">04:55</text>
+<text x="309.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" fill="#767C8C">05:00</text>
+<text x="407.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" fill="#767C8C">05:05</text>
+<text x="505.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" fill="#767C8C">05:10</text>
+<text x="603.0" y="214.4" text-anchor="middle" font-size="9.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" fill="#767C8C">05:15</text>
 <line x1="397.2" y1="26.0" x2="397.2" y2="202.4" stroke="#E8722E" stroke-width="2"/>
-<text x="397.2" y="21.0" text-anchor="middle" font-size="9.5" font-family="Geist Mono, monospace" fill="#E8722E" font-weight="600">05:05</text>
+<text x="397.2" y="21.0" text-anchor="middle" font-size="9.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" fill="#E8722E" font-weight="600">05:05</text>
         </svg>
         <figcaption>
           <span class="fig">9 slices &times; 28 one-minute buckets<button class="cite" data-cite="heat" aria-label="cite heatmap"></button></span> &middot; hover any cell for its value and sample count.
@@ -1071,7 +1070,7 @@ svg.spark{width:120px;height:30px;display:block}
             <p class="hint">Same window, one dimension swapped.</p>
             <svg viewBox="0 0 400 132" width="100%" role="img" aria-label="Provider P2 approval 52 percent, provider P3 96 percent, all traffic 74 percent.">
               <title>Cohort comparison</title>
-              <g font-family="Geist Mono, monospace" font-size="10.5">
+              <g font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" font-size="10.5">
                 <text x="0" y="20" fill="#FF4D5E" font-weight="600">provider-p2</text>
                 <rect x="0" y="26" width="400" height="14" rx="3" fill="#1A1A22"/>
                 <rect x="0" y="26" width="208" height="14" rx="3" fill="#FF4D5E"/>
@@ -1097,8 +1096,8 @@ svg.spark{width:120px;height:30px;display:block}
             <svg viewBox="0 0 400 128" width="100%" role="img" aria-label="Timeouts up 17.5 points, do not honor up 17.5 points, insufficient funds down 35 points.">
               <title>Decline mix shift</title>
               <line x1="200" y1="8" x2="200" y2="118" stroke="#282A30" stroke-width="1"/>
-              <text x="200" y="126" fill="#767C8C" font-size="9" font-family="Geist Mono, monospace" text-anchor="middle">no change</text>
-              <g font-family="Geist Mono, monospace" font-size="10.5">
+              <text x="200" y="126" fill="#767C8C" font-size="9" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" text-anchor="middle">no change</text>
+              <g font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" font-size="10.5">
                 <text x="196" y="22" fill="#A8ADBD" text-anchor="end">timeout</text>
                 <rect x="200" y="12" width="80" height="14" rx="3" fill="#FF4D5E"/>
                 <text x="286" y="23" fill="#FF4D5E" font-weight="600">+17.5</text>
@@ -1123,14 +1122,14 @@ svg.spark{width:120px;height:30px;display:block}
             <svg viewBox="0 0 400 92" width="100%" role="img" aria-label="Latency p50 is 400 milliseconds, p95 and p99 are both 8000 milliseconds.">
               <title>Latency percentiles</title>
               <line x1="20" y1="70" x2="380" y2="70" stroke="#282A30"/>
-              <g font-family="Geist Mono, monospace" font-size="9.5" fill="#767C8C" text-anchor="middle">
+              <g font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" font-size="9.5" fill="#767C8C" text-anchor="middle">
                 <text x="20" y="84">0</text><text x="200" y="84">4s</text><text x="380" y="84">8s</text>
               </g>
               <rect x="20" y="30" width="18" height="24" rx="3" fill="#6B7BFF"/>
               <line x1="38" y1="42" x2="380" y2="42" stroke="#FF4D5E" stroke-width="2"/>
               <circle cx="380" cy="42" r="5" fill="#FF4D5E"/>
-              <text x="24" y="24" font-size="9.5" font-family="Geist Mono, monospace" fill="#6B7BFF">p50 400ms</text>
-              <text x="380" y="24" font-size="9.5" font-family="Geist Mono, monospace" fill="#FF4D5E" text-anchor="end">p95 / p99 8,000ms</text>
+              <text x="24" y="24" font-size="9.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" fill="#6B7BFF">p50 400ms</text>
+              <text x="380" y="24" font-size="9.5" font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" fill="#FF4D5E" text-anchor="end">p95 / p99 8,000ms</text>
             </svg>
             <p class="foot"><span class="fig">Timeout rate 30.6%, service health degraded<button class="cite" data-cite="a-ops" aria-label="cite"></button></span>. Runtime health not observed; provider status page unavailable.</p>
           </div>
@@ -1140,7 +1139,7 @@ svg.spark{width:120px;height:30px;display:block}
             <p class="hint">The four weighted terms behind the score. No statistical term reaches severity.</p>
             <svg viewBox="0 0 400 132" width="100%" role="img" aria-label="Severity components: money impact 0.85 at weight 55 percent, blast radius 0.5 at 20 percent, persistence 0.25 at 15 percent, trajectory 1.0 at 10 percent.">
               <title>Severity components</title>
-              <g font-family="Geist Mono, monospace" font-size="10">
+              <g font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" font-size="10">
                 <text x="0" y="14" fill="#A8ADBD">money  55%</text>
                 <rect x="104" y="4" width="296" height="12" rx="3" fill="#1A1A22"/>
                 <rect x="104" y="4" width="252" height="12" rx="3" fill="#FF4D5E"/>
@@ -1207,7 +1206,7 @@ svg.spark{width:120px;height:30px;display:block}
       <figure class="chart span-full" style="margin-bottom:22px">
         <svg viewBox="0 0 640 150" width="100%" role="img" aria-label="Channel binding: low and medium go to the dashboard only; high adds Slack; critical adds a phone call. This incident is critical, so all three fire.">
           <title>Severity to channel binding</title>
-          <g font-family="Geist Mono, monospace" font-size="10.5">
+          <g font-family="Geist Mono, ui-monospace, Menlo, Consolas, monospace" font-size="10.5">
             <text x="0" y="20" fill="#767C8C" font-size="9.5">SEVERITY</text>
             <text x="150" y="20" fill="#767C8C" font-size="9.5">DASHBOARD</text>
             <text x="310" y="20" fill="#767C8C" font-size="9.5">SLACK</text>
@@ -1245,7 +1244,7 @@ svg.spark{width:120px;height:30px;display:block}
             <div class="slackish">
               <div class="bar mono"><span style="color:var(--ink-2)">#control-tower</span> &middot; now</div>
               <div class="msg">
-                <div class="av"><img src="yuno-mark-light.svg" alt=""></div>
+                <div class="av"><svg class="ymark" aria-hidden="true" width="400" height="400" viewBox="0 0 400 400" fill="none" ><path d="M42.0778 22.2222C31.1214 22.2222 22.2227 31.1378 22.2227 42.1151C22.2227 53.0923 31.1214 62.0079 42.0778 62.0079C53.0342 62.0079 61.9329 53.0923 61.9329 42.1151C61.9329 31.1378 53.0342 22.2222 42.0778 22.2222Z" fill="white"/><path d="M107.334 22.2235C96.3772 22.2235 87.4785 31.1392 87.4785 42.1164C87.4785 53.0936 96.3772 62.0093 107.334 62.0093C118.29 62.0093 127.189 53.0936 127.189 42.1164C127.189 31.1392 118.29 22.2235 107.334 22.2235Z" fill="white"/><path d="M172.591 49.7459C176.797 49.7459 180.207 46.3296 180.207 42.1154C180.207 37.9012 176.797 34.4849 172.591 34.4849C168.384 34.4849 164.975 37.9012 164.975 42.1154C164.975 46.3296 168.384 49.7459 172.591 49.7459Z" fill="white"/><path d="M42.0802 119.868C48.8101 119.868 54.2658 114.402 54.2658 107.659C54.2658 100.916 48.8101 95.4501 42.0802 95.4501C35.3502 95.4501 29.8945 100.916 29.8945 107.659C29.8945 114.402 35.3502 119.868 42.0802 119.868Z" fill="white"/><path d="M107.334 87.7665C96.3772 87.7665 87.4785 96.6821 87.4785 107.659C87.4785 118.637 96.3772 127.552 107.334 127.552C118.29 127.552 127.189 118.637 127.189 107.659C127.189 96.6821 118.29 87.7665 107.334 87.7665Z" fill="white"/><path d="M172.592 119.868C179.326 119.868 184.778 114.406 184.778 107.659C184.778 100.912 179.326 95.4501 172.592 95.4501C165.858 95.4501 160.406 100.912 160.406 107.659C160.406 114.406 165.858 119.868 172.592 119.868Z" fill="white"/><path d="M42.0779 165.383C37.8824 165.383 34.4619 168.81 34.4619 173.013C34.4619 177.217 37.8824 180.644 42.0779 180.644C46.2734 180.644 49.694 177.217 49.694 173.013C49.694 168.81 46.2734 165.383 42.0779 165.383Z" fill="white"/><path d="M107.334 153.122C96.3772 153.122 87.4785 162.037 87.4785 173.015C87.4785 183.992 96.3772 192.907 107.334 192.907C118.29 192.907 127.189 183.992 127.189 173.015C127.189 162.037 118.29 153.122 107.334 153.122Z" fill="white"/><path d="M172.589 153.122C161.633 153.122 152.734 162.037 152.734 173.015C152.734 183.992 161.633 192.907 172.589 192.907C183.546 192.907 192.445 183.992 192.445 173.015C192.445 162.037 183.546 153.122 172.589 153.122Z" fill="white"/><path d="M237.955 49.7459C242.15 49.7459 245.571 46.3189 245.571 42.1154C245.571 37.9119 242.15 34.4849 237.955 34.4849C233.759 34.4849 230.339 37.9119 230.339 42.1154C230.339 46.3189 233.759 49.7459 237.955 49.7459Z" fill="white"/><path d="M303.216 62.0093C314.182 62.0093 323.072 53.1029 323.072 42.1164C323.072 31.1298 314.182 22.2235 303.216 22.2235C292.251 22.2235 283.361 31.1298 283.361 42.1164C283.361 53.1029 292.251 62.0093 303.216 62.0093Z" fill="white"/><path d="M368.472 22.2235C357.516 22.2235 348.617 31.1392 348.617 42.1164C348.617 53.0936 357.516 62.0093 368.472 62.0093C379.429 62.0093 388.327 53.0936 388.327 42.1164C388.327 31.1392 379.429 22.2235 368.472 22.2235Z" fill="white"/><path d="M237.956 119.868C244.69 119.868 250.142 114.406 250.142 107.659C250.142 100.912 244.69 95.4501 237.956 95.4501C231.222 95.4501 225.771 100.912 225.771 107.659C225.771 114.406 231.222 119.868 237.956 119.868Z" fill="white"/><path d="M303.216 87.7665C292.26 87.7665 283.361 96.6821 283.361 107.659C283.361 118.637 292.26 127.552 303.216 127.552C314.173 127.552 323.072 118.637 323.072 107.659C323.072 96.6821 314.173 87.7665 303.216 87.7665Z" fill="white"/><path d="M368.474 95.4501C361.74 95.4501 356.288 100.912 356.288 107.659C356.288 114.406 361.74 119.868 368.474 119.868C375.208 119.868 380.659 114.406 380.659 107.659C380.659 100.912 375.208 95.4501 368.474 95.4501Z" fill="white"/><path d="M303.216 153.122C292.26 153.122 283.361 162.037 283.361 173.015C283.361 183.992 292.26 192.907 303.216 192.907C314.173 192.907 323.072 183.992 323.072 173.015C323.072 162.037 314.173 153.122 303.216 153.122Z" fill="white"/><path d="M368.472 180.644C372.679 180.644 376.088 177.228 376.088 173.013C376.088 168.799 372.679 165.383 368.472 165.383C364.266 165.383 360.856 168.799 360.856 173.013C360.856 177.228 364.266 180.644 368.472 180.644Z" fill="white"/><path d="M237.955 153.122C226.998 153.122 218.1 162.037 218.1 173.015C218.1 183.992 226.998 192.907 237.955 192.907C248.911 192.907 257.81 183.992 257.81 173.015C257.81 162.037 248.911 153.122 237.955 153.122Z" fill="white"/><path d="M42.0779 230.765C37.8824 230.765 34.4619 234.192 34.4619 238.395C34.4619 242.599 37.8824 246.026 42.0779 246.026C46.2734 246.026 49.694 242.599 49.694 238.395C49.694 234.192 46.2734 230.765 42.0779 230.765Z" fill="white"/><path d="M107.336 226.185C100.602 226.185 95.1504 231.647 95.1504 238.394C95.1504 245.141 100.602 250.602 107.336 250.602C114.07 250.602 119.522 245.141 119.522 238.394C119.522 231.647 114.07 226.185 107.336 226.185Z" fill="white"/><path d="M172.589 218.501C161.633 218.501 152.734 227.417 152.734 238.394C152.734 249.371 161.633 258.287 172.589 258.287C183.546 258.287 192.445 249.371 192.445 238.394C192.445 227.417 183.546 218.501 172.589 218.501Z" fill="white"/><path d="M42.0779 296.145C37.8824 296.145 34.4619 299.572 34.4619 303.775C34.4619 307.978 37.8824 311.406 42.0779 311.406C46.2734 311.406 49.694 307.978 49.694 303.775C49.694 299.572 46.2734 296.145 42.0779 296.145Z" fill="white"/><path d="M107.335 296.145C103.139 296.145 99.7188 299.572 99.7188 303.775C99.7188 307.978 103.139 311.406 107.335 311.406C111.53 311.406 114.951 307.978 114.951 303.775C114.951 299.572 111.53 296.145 107.335 296.145Z" fill="white"/><path d="M172.589 283.883C161.633 283.883 152.734 292.799 152.734 303.776C152.734 314.753 161.633 323.669 172.589 323.669C183.546 323.669 192.445 314.753 192.445 303.776C192.445 292.799 183.546 283.883 172.589 283.883Z" fill="white"/><path d="M42.0779 361.688C37.8824 361.688 34.4619 365.115 34.4619 369.318C34.4619 373.522 37.8824 376.949 42.0779 376.949C46.2734 376.949 49.694 373.522 49.694 369.318C49.694 365.115 46.2734 361.688 42.0779 361.688Z" fill="white"/><path d="M107.335 376.949C111.541 376.949 114.951 373.532 114.951 369.318C114.951 365.104 111.541 361.688 107.335 361.688C103.129 361.688 99.7188 365.104 99.7188 369.318C99.7188 373.532 103.129 376.949 107.335 376.949Z" fill="white"/><path d="M172.589 349.426C161.633 349.426 152.734 358.342 152.734 369.319C152.734 380.297 161.633 389.212 172.589 389.212C183.546 389.212 192.445 380.297 192.445 369.319C192.445 358.342 183.546 349.426 172.589 349.426Z" fill="white"/><path d="M237.955 258.287C248.92 258.287 257.81 249.381 257.81 238.394C257.81 227.407 248.92 218.501 237.955 218.501C226.989 218.501 218.1 227.407 218.1 238.394C218.1 249.381 226.989 258.287 237.955 258.287Z" fill="white"/><path d="M303.213 226.185C296.479 226.185 291.027 231.647 291.027 238.394C291.027 245.141 296.479 250.602 303.213 250.602C309.947 250.602 315.399 245.141 315.399 238.394C315.399 231.647 309.947 226.185 303.213 226.185Z" fill="white"/><path d="M368.472 246.026C372.679 246.026 376.088 242.61 376.088 238.395C376.088 234.181 372.679 230.765 368.472 230.765C364.266 230.765 360.856 234.181 360.856 238.395C360.856 242.61 364.266 246.026 368.472 246.026Z" fill="white"/><path d="M237.955 323.669C248.92 323.669 257.81 314.763 257.81 303.776C257.81 292.79 248.92 283.883 237.955 283.883C226.989 283.883 218.1 292.79 218.1 303.776C218.1 314.763 226.989 323.669 237.955 323.669Z" fill="white"/><path d="M303.217 311.406C307.423 311.406 310.833 307.989 310.833 303.775C310.833 299.561 307.423 296.145 303.217 296.145C299.01 296.145 295.601 299.561 295.601 303.775C295.601 307.989 299.01 311.406 303.217 311.406Z" fill="white"/><path d="M368.472 311.406C372.679 311.406 376.088 307.989 376.088 303.775C376.088 299.561 372.679 296.145 368.472 296.145C364.266 296.145 360.856 299.561 360.856 303.775C360.856 307.989 364.266 311.406 368.472 311.406Z" fill="white"/><path d="M237.955 349.426C226.998 349.426 218.1 358.342 218.1 369.319C218.1 380.297 226.998 389.212 237.955 389.212C248.911 389.212 257.81 380.297 257.81 369.319C257.81 358.342 248.911 349.426 237.955 349.426Z" fill="white"/><path d="M303.217 376.949C307.423 376.949 310.833 373.532 310.833 369.318C310.833 365.104 307.423 361.688 303.217 361.688C299.01 361.688 295.601 365.104 295.601 369.318C295.601 373.532 299.01 376.949 303.217 376.949Z" fill="white"/><path d="M368.472 376.949C372.679 376.949 376.088 373.532 376.088 369.318C376.088 365.104 372.679 361.688 368.472 361.688C364.266 361.688 360.856 365.104 360.856 369.318C360.856 373.532 364.266 376.949 368.472 376.949Z" fill="white"/></svg></div>
                 <div style="min-width:0">
                   <div class="who">Control Tower <em>APP</em></div>
                   <div class="block">
@@ -1341,7 +1340,7 @@ svg.spark{width:120px;height:30px;display:block}
 </section>
 
 <footer class="wrap">
-  <p><b>Brand.</b> Colours and logo from Yuno's published brand guidelines, <a href="https://y.uno/en/brand-guidelines">y.uno/en/brand-guidelines</a>: Yuno Blue #3E4FE0, Unity Black #000000, White #FFFFFF, Harmony Lilac #E8EAF5, plus #6B7BFF / #3040C8 / #D2D9FF / #282A30 read from that page's stylesheet. Wordmark and logomark are the unmodified published SVGs. Typefaces Geist and Geist Mono, the faces that page loads.</p>
+  <p><b>Brand.</b> Colours and logo from Yuno's published brand guidelines, <span class="mono">y.uno/en/brand-guidelines</span>: Yuno Blue #3E4FE0, Unity Black #000000, White #FFFFFF, Harmony Lilac #E8EAF5, plus #6B7BFF / #3040C8 / #D2D9FF / #282A30 read from that page's stylesheet. Wordmark and logomark are the unmodified published SVGs. Typefaces Geist and Geist Mono, the faces that page loads.</p>
   <p><b>Not affiliated with Yuno.</b> Internal design mockup for the NextWave Control Tower challenge; not a Yuno product and not endorsed by Yuno.</p>
   <p><b>Data.</b> One real run - <code class="mono">python3 -m detector seed &amp;&amp; python3 -m detector detect</code> plus direct C2 tool calls, config det-v1, measured through 2026-08-30T05:18:00Z. The two other incidents came from the same detector over generated event files. The investigation result is the project's own deterministic degraded path, which is why confidence reads low with no narrative.</p>
 </footer>
