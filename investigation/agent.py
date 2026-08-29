@@ -471,12 +471,12 @@ def run_investigation(
 
 def _strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """Adapt Pydantic defaults to the Responses strict-schema requirement."""
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        schema["required"] = list(properties)
+        schema.pop("default", None)
     for value in schema.values():
         if isinstance(value, dict):
-            properties = value.get("properties")
-            if isinstance(properties, dict):
-                value["required"] = list(properties)
-                value.pop("default", None)
             _strict_schema(value)
         elif isinstance(value, list):
             for item in value:

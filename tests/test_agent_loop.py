@@ -11,7 +11,7 @@ from unittest import mock
 
 from pydantic import ValidationError
 
-from investigation.agent import InvestigationAgent
+from investigation.agent import InvestigationAgent, _strict_schema
 from investigation.contracts import InvestigationResult
 from investigation.gateway import EvidenceGateway
 from investigation.ledger import HypothesisLedger, LedgerError
@@ -103,6 +103,22 @@ def valid_result(gateway: EvidenceGateway, *, competing: bool = False):
 
 
 class AgentLoopTests(unittest.TestCase):
+    def test_strict_schema_requires_every_property_at_every_nesting_level(self):
+        schema = _strict_schema(InvestigationResult.model_json_schema())
+
+        def assert_required(value):
+            if isinstance(value, dict):
+                properties = value.get("properties")
+                if isinstance(properties, dict):
+                    self.assertEqual(set(value.get("required", [])), set(properties))
+                for nested in value.values():
+                    assert_required(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    assert_required(nested)
+
+        assert_required(schema)
+
     def test_request_omits_unset_reasoning_and_uses_output_ceiling(self):
         gateway = gateway_for()
         calls = []
