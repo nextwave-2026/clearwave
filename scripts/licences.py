@@ -30,6 +30,23 @@ FALLBACK_PYTHON_LICENSES = {
     "truststore": "MIT",
     "typing-inspection": "MIT",
     "typing-extensions": "PSF-2.0",
+    # worker/requirements.txt (W1)
+    "attrs": "MIT",
+    "authlib": "BSD-3-Clause",
+    "cachetools": "MIT",
+    "certifi": "MPL-2.0",
+    "cffi": "MIT",
+    "confluent-kafka": "Apache-2.0",
+    "cryptography": "Apache-2.0",
+    "faker": "MIT",
+    "httpcore": "BSD-3-Clause",
+    "httpx": "BSD-3-Clause",
+    "joserfc": "BSD-3-Clause",
+    "jsonschema": "MIT",
+    "jsonschema-specifications": "MIT",
+    "pycparser": "BSD-3-Clause",
+    "referencing": "MIT",
+    "rpds-py": "MIT",
 }
 
 
@@ -182,6 +199,9 @@ def local_python_license(name: str) -> str:
     value = distribution.metadata.get("License", "").strip()
     if value and value.lower() not in {"unknown", "none"}:
         return _canonical_license(value)
+    expression = distribution.metadata.get("License-Expression", "").strip()
+    if expression:
+        return _canonical_license(expression)
     classifiers = distribution.metadata.get_all("Classifier", [])
     licenses = [
         _canonical_license(classifier.removeprefix("License :: "))
