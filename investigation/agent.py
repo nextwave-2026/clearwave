@@ -27,7 +27,8 @@ from .prefilter import prefilter
 from .prompt import SYSTEM_PROMPT, assemble_prompt, assert_prompt_safe
 from .trail import EvidenceTrail
 
-DEFAULT_MODEL = "gpt-4.1-mini"
+DEFAULT_MODEL = "gpt-5.6-luna"
+DEFAULT_REASONING_EFFORT = "high"
 DEFAULT_MAX_OUTPUT_TOKENS = 6000
 DEFAULT_MAX_TURNS = 6
 DEFAULT_TIMEOUT_SECONDS = 30.0
@@ -120,7 +121,7 @@ class InvestigationAgent:
         self.client = client
         self.model = model or openai_model(DEFAULT_MODEL)
         self.max_output_tokens = openai_max_output_tokens(DEFAULT_MAX_OUTPUT_TOKENS)
-        self.reasoning_effort = openai_reasoning_effort()
+        self.reasoning_effort = openai_reasoning_effort(DEFAULT_REASONING_EFFORT)
         self._reasoning_supported = _reasoning_support(self.model)
         self.max_turns = int(max_turns)
         self.query_budget = int(query_budget)
@@ -485,8 +486,10 @@ def _strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def _reasoning_support(model: str) -> bool | None:
-    """Know the repository's default is non-reasoning; probe other models."""
+    """Use verified capability facts and probe models not yet classified."""
     if model == DEFAULT_MODEL:
+        return True
+    if model == "gpt-4.1-mini":
         return False
     return None
 
@@ -641,6 +644,7 @@ def _utc_now() -> str:
 
 __all__ = [
     "DEFAULT_MAX_OUTPUT_TOKENS",
+    "DEFAULT_REASONING_EFFORT",
     "DEFAULT_MAX_TURNS",
     "DEFAULT_MODEL",
     "DEFAULT_TIMEOUT_SECONDS",

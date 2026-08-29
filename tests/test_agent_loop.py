@@ -111,13 +111,39 @@ class AgentLoopTests(unittest.TestCase):
             calls.append(kwargs)
             return {"output_text": json.dumps(valid_result(gateway))}
 
-        with mock.patch.dict(os.environ, {"OPENAI_REASONING_EFFORT": "", "OPENAI_MAX_OUTPUT_TOKENS": "7000"}):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "OPENAI_REASONING_EFFORT": "",
+                "OPENAI_MAX_OUTPUT_TOKENS": "7000",
+                "OPENAI_MODEL": "gpt-4.1-mini",
+            },
+        ):
             run = InvestigationAgent(FakeClient(create), max_turns=0, timeout_seconds=2).investigate(
                 INCIDENT, gateway
             )
         self.assertEqual(run.outcome, "diagnosed")
         self.assertEqual(calls[0]["max_output_tokens"], 7000)
         self.assertNotIn("reasoning", calls[0])
+
+    def test_verified_default_uses_luna_with_high_reasoning(self):
+        gateway = gateway_for()
+        calls = []
+
+        def create(**kwargs):
+            calls.append(kwargs)
+            return {"output_text": json.dumps(valid_result(gateway))}
+
+        with mock.patch.dict(
+            os.environ,
+            {"OPENAI_MODEL": "", "OPENAI_REASONING_EFFORT": "", "OPENAI_MAX_OUTPUT_TOKENS": ""},
+        ):
+            run = InvestigationAgent(FakeClient(create), max_turns=0, timeout_seconds=2).investigate(
+                INCIDENT, gateway
+            )
+        self.assertEqual(run.outcome, "diagnosed")
+        self.assertEqual(calls[0]["model"], "gpt-5.6-luna")
+        self.assertEqual(calls[0]["reasoning"], {"effort": "high"})
 
     def test_request_includes_configured_reasoning_for_unclassified_model(self):
         gateway = gateway_for()

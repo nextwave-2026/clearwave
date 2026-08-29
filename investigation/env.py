@@ -89,10 +89,10 @@ def openai_model(default: str) -> str:
     return os.environ.get("OPENAI_MODEL") or default
 
 
-def openai_reasoning_effort() -> str | None:
-    """Return the optional Responses API reasoning effort."""
+def openai_reasoning_effort(default: str | None = None) -> str | None:
+    """Return configured reasoning effort, or a supplied model default."""
     value = os.environ.get("OPENAI_REASONING_EFFORT", "").strip()
-    return value or None
+    return value or default
 
 
 def openai_max_output_tokens(default: int) -> int:
