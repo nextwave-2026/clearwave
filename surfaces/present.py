@@ -7,6 +7,21 @@ from typing import Any
 
 INACTIVE_STATES = {"resolved", "mitigated"}
 
+_SCOPE_ORDER = (
+    "provider",
+    "payment_method",
+    "card_network",
+    "country",
+    "issuing_bank",
+)
+_SCOPE_NOUN = {
+    "provider": "Provider",
+    "payment_method": "Payment method",
+    "card_network": "Card network",
+    "country": "Country",
+    "issuing_bank": "Issuing bank",
+}
+
 
 def overview(
     incidents: list[Mapping[str, Any]],
@@ -123,27 +138,54 @@ def six_questions(
     return questions
 
 
+def cohort_scope_label(cohort: Mapping[str, Any] | None) -> str:
+    """User-visible scope taken only from dimensions the cohort actually names."""
+    data = _mapping(cohort)
+    merchant_id = _named(data.get("merchant_id"))
+    if merchant_id is not None:
+        return merchant_id
+    parts: list[str] = []
+    used: set[str] = set()
+    for key in _SCOPE_ORDER:
+        value = _named(data.get(key))
+        if value is None:
+            continue
+        used.add(key)
+        if key == "provider":
+            parts.append(_readable_id(value))
+        else:
+            parts.append(f"{_SCOPE_NOUN[key]} {value}")
+    for key, raw in data.items():
+        if key in used or key == "merchant_id":
+            continue
+        value = _named(raw)
+        if value is None:
+            continue
+        parts.append(f"{str(key).replace('_', ' ')} {value}")
+    return " · ".join(parts) if parts else "Platform-wide"
+
+
 def merchant_health(incidents: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Per-merchant view of stored incident severity. No health score is invented."""
-    grouped: dict[str, list[Mapping[str, Any]]] = {}
+    grouped: dict[tuple[Any, ...], list[Mapping[str, Any]]] = {}
     for incident in incidents:
-        cohort = _mapping(incident.get("affected_cohort"))
-        merchant_id = str(cohort.get("merchant_id") or "unknown")
-        grouped.setdefault(merchant_id, []).append(incident)
+        grouped.setdefault(_health_group_key(incident), []).append(incident)
     health = []
     rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    for merchant_id in sorted(grouped):
+    for key in sorted(grouped):
         records = sorted(
-            grouped[merchant_id],
+            grouped[key],
             key=lambda item: (
                 rank.get(str(item.get("severity", "")).lower(), 99),
                 str(item.get("incident_id", "")),
             ),
         )
         top = records[0]
+        cohort = _mapping(top.get("affected_cohort"))
         health.append(
             {
-                "merchant_id": merchant_id,
+                "merchant_id": _named(cohort.get("merchant_id")),
+                "scope_label": cohort_scope_label(cohort),
                 "highest_severity": top.get("severity"),
                 "active_incident_count": sum(1 for item in records if _is_active(item)),
                 "incident_ids": [item.get("incident_id") for item in records],
@@ -171,3 +213,35 @@ def _result_body(investigation: Mapping[str, Any] | None) -> dict[str, Any] | No
 
 def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _named(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _readable_id(value: str) -> str:
+    words = []
+    for part in value.split("-"):
+        if len(part) <= 3 and any(character.isdigit() for character in part):
+            words.append(part.upper())
+        else:
+            words.append(part.capitalize())
+    return " ".join(words)
+
+
+def _health_group_key(incident: Mapping[str, Any]) -> tuple[Any, ...]:
+    cohort = _mapping(incident.get("affected_cohort"))
+    merchant_id = _named(cohort.get("merchant_id"))
+    if merchant_id is not None:
+        return ("merchant", merchant_id)
+    dimensions = tuple(
+        sorted(
+            (str(key), str(value))
+            for key, value in cohort.items()
+            if key != "merchant_id" and _named(value) is not None
+        )
+    )
+    return ("scope", dimensions)

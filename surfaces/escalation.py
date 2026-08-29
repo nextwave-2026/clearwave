@@ -19,6 +19,8 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from .present import cohort_scope_label
+
 LOGGER = logging.getLogger("surfaces.escalation")
 
 SLACK_ENV = "CLEARWAVE_SLACK_WEBHOOK_URL"
@@ -164,13 +166,14 @@ def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
     expected, actual = change.get("expected"), change.get("actual")
     cohort_label = " / ".join(str(value) for value in cohort.values() if value)
     merchant = humanize_id(cohort.get("merchant_id")) if cohort.get("merchant_id") else None
+    scope = merchant or payload.get("scope_label") or cohort_scope_label(cohort)
 
     body: list[dict[str, Any]] = [
         {
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": f"{sev_icon} {severity_label}" + (f" · {merchant}" if merchant else ""),
+                "text": f"{sev_icon} {severity_label}" + (f" · {scope}" if scope else ""),
                 "emoji": True,
             },
         },
@@ -399,7 +402,10 @@ def _payload(incident: Mapping[str, Any], result: Mapping[str, Any] | None) -> d
         "incident_id": incident.get("incident_id"),
         "severity": incident.get("severity"),
         "lifecycle_state": incident.get("lifecycle_state"),
-        "merchant_id": cohort.get("merchant_id") if isinstance(cohort, Mapping) else None,
+        "merchant_id": (
+            cohort.get("merchant_id") if isinstance(cohort, Mapping) and cohort.get("merchant_id") else None
+        ),
+        "scope_label": cohort_scope_label(cohort) if isinstance(cohort, Mapping) else "Platform-wide",
         "affected_cohort": cohort,
         "change": incident.get("change"),
         "financial_impact": incident.get("financial_impact"),

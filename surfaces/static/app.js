@@ -59,6 +59,15 @@
       .join(" · ");
   }
 
+  function incidentScope(payload) {
+    payload = payload || {};
+    if (payload.merchant_id) return "Merchant " + payload.merchant_id;
+    if (payload.scope_label) return payload.scope_label;
+    const line = cohortLine(payload.affected_cohort);
+    if (line && line !== "cohort not in store") return line;
+    return "Platform-wide";
+  }
+
   function badgePair(severity, confidence) {
     const sev = document.createElement("span");
     sev.className = "severity";
@@ -96,7 +105,7 @@
     const merchants = (data.merchant_health || []).map(function (row) {
       return (
         '<article class="merchant-card">' +
-        "<h3>" + escapeHtml(row.merchant_id) + "</h3>" +
+        "<h3>" + escapeHtml(row.scope_label || row.merchant_id || "Platform-wide") + "</h3>" +
         '<p>Highest stored severity: <span class="severity" data-severity="' +
         escapeHtml(row.highest_severity || "unknown") + '">severity ' +
         escapeHtml(row.highest_severity || "unknown") + "</span></p>" +
@@ -306,7 +315,7 @@
     incomingCopy.textContent = [
       "Incident " + (call.incident_id || ""),
       "Severity " + (payload.severity || "unknown") + " (from the incident record)",
-      "Merchant " + (payload.merchant_id || "unknown"),
+      incidentScope(payload),
       action.action || "Operator narrative is the stored recommended action, or unavailable if the agent failed.",
     ].join("\n");
     incoming.dataset.incidentId = call.incident_id;
