@@ -4,12 +4,26 @@ on:
   push:
   pull_request:
 
+env:
+  TZ: UTC
+  LC_ALL: C
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
       - name: Install
         run: make install
       - name: Lint
@@ -20,3 +34,100 @@ jobs:
         run: make build
       - name: Licences
         run: make licences
+
+  guards:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Check contract integrity
+        run: ./scripts/ci/contracts.sh
+      - name: Check append-only coordination logs
+        run: ./scripts/ci/append_only.sh
+      - name: Check coordination attribution
+        run: ./scripts/ci/attribution.sh
+      - name: Check provenance declaration
+        run: ./scripts/ci/provenance.sh
+      - name: Check Makefile target contract
+        run: ./scripts/ci/makefile_contract.sh
+      - name: Check licence inventory freshness
+        run: ./scripts/ci/licences_current.sh
+
+  # This is the earliest practical warning that two workstreams are colliding, and it costs nothing when there is no overlap.
+  overlap:
+    if: github.event_name == 'pull_request'
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Find overlapping open pull requests
+        shell: bash
+        run: |
+          set +e
+          summary="${RUNNER_TEMP}/overlap-summary.md"
+          : > "$summary"
+          printf '%s\n\n' '## Overlapping pull requests' >> "$summary"
+          printf '%s\n\n' 'Advisory only - overlapping files are a signal for contributors to coordinate.' >> "$summary"
+          repo="${GITHUB_REPOSITORY}"
+          current_pr="$PR_NUMBER"
+
+          if ! current_files=$(gh pr view "$current_pr" --repo "$repo" --json files --jq '.files[].path' 2>/dev/null); then
+            printf '%s\n' 'The overlap advisory was unavailable because the current pull request files could not be read.' >> "$summary"
+            cat "$summary"
+            cat "$summary" >> "${GITHUB_STEP_SUMMARY:-/dev/null}" 2>/dev/null
+            exit 0
+          fi
+          if [ -z "$current_files" ]; then
+            printf '%s\n' 'The overlap advisory was unavailable because the current pull request files could not be read.' >> "$summary"
+            cat "$summary"
+            cat "$summary" >> "${GITHUB_STEP_SUMMARY:-/dev/null}" 2>/dev/null
+            exit 0
+          fi
+
+          if ! open_prs=$(gh pr list --repo "$repo" --state open --limit 1000 --json number --jq '.[].number' 2>/dev/null); then
+            printf '%s\n' 'The overlap advisory was unavailable because open pull requests could not be listed.' >> "$summary"
+            cat "$summary"
+            cat "$summary" >> "${GITHUB_STEP_SUMMARY:-/dev/null}" 2>/dev/null
+            exit 0
+          fi
+
+          found=0
+          while IFS= read -r pr; do
+            [ -z "$pr" ] || [ "$pr" = "$current_pr" ] && continue
+            if ! pr_files=$(gh pr view "$pr" --repo "$repo" --json files --jq '.files[].path' 2>/dev/null); then
+              printf '%s\n' "PR #$pr could not be inspected by the overlap advisory." >> "$summary"
+              continue
+            fi
+            overlapping=$(comm -12 \
+              <(printf '%s\n' "$current_files" | sort -u) \
+              <(printf '%s\n' "$pr_files" | sort -u))
+            [ -z "$overlapping" ] && continue
+
+            title=$(gh pr view "$pr" --repo "$repo" --json title --jq '.title' 2>/dev/null)
+            author=$(gh pr view "$pr" --repo "$repo" --json author --jq '.author.login' 2>/dev/null)
+            printf -- '- PR #%s: %s (author: %s)\n' "$pr" "$title" "$author" >> "$summary"
+            while IFS= read -r path; do
+              [ -n "$path" ] && printf "  - \`%s\`\n" "$path" >> "$summary"
+            done <<< "$overlapping"
+            found=1
+          done <<< "$open_prs"
+
+          if [ "$found" -eq 0 ]; then
+            printf '%s\n' 'No overlapping open pull requests found.' >> "$summary"
+          fi
+          cat "$summary"
+          cat "$summary" >> "${GITHUB_STEP_SUMMARY:-/dev/null}" 2>/dev/null
+          exit 0
