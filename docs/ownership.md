@@ -23,7 +23,7 @@ These are workstreams first and owners second. The assignment below is settled, 
 
 ### W2 - Detection Plane
 
-**Owns:** event ingestion and normalisation on the consuming side; the canonical ingestion schema; persistence of the normalized representation in the non-relational document store; retry-aware conversion measurement at both payment level and attempt level; cohort slicing across the dimension set; contextual baseline construction; anomaly detection; anomaly-to-incident qualification; severity and priority assignment; financial impact calculation; the incident store and multi-incident state.
+**Owns:** event ingestion and normalisation on the consuming side; the canonical ingestion schema; persistence of the normalized representation in the relational SQLite store; retry-aware conversion measurement at both payment level and attempt level; cohort slicing across the dimension set; contextual baseline construction; anomaly detection; anomaly-to-incident qualification; severity and priority assignment; financial impact calculation; the incident store and multi-incident state.
 
 **Hard rule:** no LLM call appears anywhere in this workstream. PRD section 4 makes this a product principle; here it is also the ownership line, which makes violations visible as a dependency rather than as a judgement call.
 
@@ -46,7 +46,7 @@ PRD section 32 requires one canonical definition for the event contract, the inc
 | Contract | Owner | Consumers | What it carries |
 |---|---|---|---|
 | **C1 Raw per-merchant event shapes** | W1 | W2 | Each merchant simulator's own native event shape, deliberately heterogeneous by design. W1 registers each shape in the schema registry and publishes it to raw Kafka topics. |
-| **C1b Canonical ingestion schema** | W2 | W2, W3, W4 | One normalized model for every downstream component, expressed as JSON Schema in the schema registry and carried on the canonical event stream. W2 persists it in the non-relational document store. |
+| **C1b Canonical ingestion schema** | W2 | W2, W3, W4 | One normalized model for every downstream component, expressed as JSON Schema in the schema registry and carried on the canonical event stream. W2 persists it in the relational SQLite store. |
 | **C2 Cohort and metric query** | W2 | W3, W4 | The single read surface over measured behaviour: conversion at payment and attempt level, decline distribution, retry rates, cohort comparison, baseline expectation, and the operational metrics, sliced by any combination of the C1 dimensions. |
 | **C3 Incident record** | W2 | W3, W4 | The detector's output: affected cohort, what changed and by how much, onset, persistence, blast radius, financial impact, severity/priority, and lifecycle state. It carries no diagnostic confidence and no root cause; those belong to C4. |
 | **C4 Investigation result** | W3 | W4 | Its input is a C3 record. Its output is the PRD section 13 shape: confirmed facts, leading hypothesis, supporting evidence, competing explanations, why the ambiguity exists, missing evidence, diagnostic confidence, and the recommended next action. Each evidence item cites the C2 query that produced it. |
@@ -96,7 +96,6 @@ Integration across all four workstreams is owned by `derek`, in addition to W3. 
 Each item below is explicitly unresolved. Answers are recorded in `DECISIONS.md`.
 
 - **Language, framework and stack.** Still open by the existing `DECISIONS.md` entry; PRD section 21's preferences are not a decision. Blocks the concrete directory names in this document, which are deliberately left abstract until then.
-- **Persistence choice for operational and historical data:** the representation is persisted in a non-relational document store, but the specific product remains open.
 - **Whether the four workstreams live in one repository tree or separate services.** Follows the stack decision.
 - **The concrete severity thresholds that bind to dashboard, Slack and phone channels.** PRD section 19 gives the shape and says thresholds are tuned later.
 - **The telephony mechanism for the phone-call escalation.** PRD section 19 requires a free or effectively free route.

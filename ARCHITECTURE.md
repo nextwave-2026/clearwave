@@ -27,7 +27,7 @@ flowchart LR
     subgraph W2["W2 - Detection Plane - andres"]
         Registry[Schema registry<br/>JSON Schema normalisation]
         Canonical[Canonical event stream]
-        Store[(Non-relational document store<br/>product undecided)]
+        Store[(Relational SQLite store)]
         Aggregate[Rolling aggregation]
         Baseline[Baselines]
         Cohort[Cohort localisation<br/>arbitrary dimension combinations]
@@ -72,8 +72,8 @@ flowchart LR
 ```
 
 Merchant simulators publish genuinely heterogeneous native events to raw Kafka topics. The schema registry is the normalisation boundary and emits one canonical event stream.
-The canonical representation is persisted in a non-relational document store and is the consistent model used by downstream workflows.
-Detection consumes the canonical topic for rolling aggregates and uses the document store as its query surface.
+The canonical representation is persisted in a relational SQLite store and is the consistent model used by downstream workflows.
+Detection consumes the canonical topic for rolling aggregates and uses the SQLite store as its query surface.
 The deterministic detection plane computes baselines, cohort localisation, severity and financial impact, then writes incident records.
 Confounding detection is computed in this plane rather than reasoned about by the investigation agent.
 Kafka consumer lag supplies real queue-depth and retry-amplification evidence from the running pipeline, not a modelled one.
@@ -82,4 +82,4 @@ It returns an investigation result with narrative and diagnostic confidence; it 
 Dashboard, Slack and phone escalation consume the incident and investigation surfaces.
 The judge trigger reaches W1's incident injection point, while hidden ground truth remains quarantined from detection and investigation.
 Only the evaluator receives hidden ground truth and compares it with the diagnosis after the fact.
-The specific document-store product remains an open decision; no product is implied by this diagram.
+SQLite is the selected persistence product for this diagram.
