@@ -398,6 +398,16 @@ def _level_reason(step: dict[str, Any], level: str) -> str:
     split = step.get("split")
     if split is None:
         return "Starting point: the whole observed window before any dimension is fixed."
+    if split.get("kind") == "qualifying_child":
+        return (
+            f"{level} is the unique qualifying child: it passes the detection floors "
+            "while its parent is diluted below them."
+        )
+    if split.get("kind") == "observed_singleton":
+        return (
+            f"{level} is the only observed value inside the affected parent cohort; "
+            "this preserves the joint observed slice without asserting causal separation."
+        )
     return (
         f"{level} separates from its next sibling ({split['runner_up']}) by "
         f"{split['separation_from_next']} of conversion, so it enters the reported cohort."

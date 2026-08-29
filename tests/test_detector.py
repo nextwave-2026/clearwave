@@ -153,6 +153,41 @@ class DetectionTests(unittest.TestCase):
         incident = detect.build_incident(connection, lo + 65 * 60, hi + 60)
         self.assertEqual(incident["affected_cohort"], {"provider": "provider-p2"})
 
+    def test_high_impact_small_percentage_change_is_localised_and_priced(self):
+        events = synthetic.high_impact_small_percentage()
+        connection, _, (lo, hi) = loaded(events)
+        start, end = lo + 75 * 60, hi + 60
+        root = detect.evaluate(connection, None, start, end)
+        merchant = detect.evaluate(connection, {"merchant_id": "merchant-a"}, start, end)
+        self.assertLess(root["absolute_drop"], config.ABS_DROP_MIN)
+        self.assertTrue(merchant["qualifies"])
+        incident = detect.build_incident(connection, start, end)
+        self.assertIsNotNone(incident)
+        self.assertEqual(incident["affected_cohort"], {"merchant_id": "merchant-a"})
+        money = incident["financial_impact"]
+        self.assertGreater(money["gmv_at_risk"]["amount"], 0)
+        self.assertGreater(money["loss_per_hour"]["amount"], 20_000)
+
+    def test_confounded_incident_preserves_the_observed_joint_cohort(self):
+        events = synthetic.confounded_incident()
+        connection, _, (lo, hi) = loaded(events)
+        incident = detect.build_incident(connection, lo + 75 * 60, hi + 60)
+        self.assertIsNotNone(incident)
+        self.assertEqual(
+            incident["affected_cohort"],
+            {"provider": "provider-p2", "issuing_bank": "bank-x"},
+        )
+        self.assertTrue(
+            metrics.confounding(
+                connection,
+                "provider",
+                "issuing_bank",
+                None,
+                lo + 75 * 60,
+                hi + 60,
+            )["structurally_inseparable"]
+        )
+
     def test_incident_carries_no_cause_and_no_confidence(self):
         connection, _, (lo, hi) = loaded(synthetic.with_provider_incident())
         incident = detect.build_incident(connection, lo + 65 * 60, hi + 60)
