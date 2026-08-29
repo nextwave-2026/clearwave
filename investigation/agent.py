@@ -19,6 +19,7 @@ from .env import (
     openai_max_output_tokens,
     openai_model,
     openai_reasoning_effort,
+    openai_timeout_seconds,
     redact_secrets,
 )
 from .gateway import ALLOWED_TOOLS, EvidenceGateway
@@ -31,7 +32,7 @@ DEFAULT_MODEL = "gpt-5.6-luna"
 DEFAULT_REASONING_EFFORT = "high"
 DEFAULT_MAX_OUTPUT_TOKENS = 6000
 DEFAULT_MAX_TURNS = 6
-DEFAULT_TIMEOUT_SECONDS = 30.0
+DEFAULT_TIMEOUT_SECONDS = 300.0
 
 _TOOL_DESCRIPTIONS = {
     "cohort_metrics": "Measure payment-level and attempt-level conversion for a cohort.",
@@ -106,7 +107,7 @@ class InvestigationAgent:
         model: str | None = None,
         max_turns: int = DEFAULT_MAX_TURNS,
         query_budget: int = 6,
-        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        timeout_seconds: float | None = None,
         turn_budget: int | None = None,
         wall_clock_timeout: float | None = None,
     ) -> None:
@@ -114,6 +115,8 @@ class InvestigationAgent:
             max_turns = turn_budget
         if wall_clock_timeout is not None:
             timeout_seconds = wall_clock_timeout
+        elif timeout_seconds is None:
+            timeout_seconds = openai_timeout_seconds(DEFAULT_TIMEOUT_SECONDS)
         if max_turns < 0:
             raise ValueError("max_turns must be non-negative")
         if timeout_seconds <= 0:

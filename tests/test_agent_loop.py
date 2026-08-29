@@ -119,6 +119,13 @@ class AgentLoopTests(unittest.TestCase):
 
         assert_required(schema)
 
+    def test_timeout_default_is_configurable_without_changing_turn_or_query_bounds(self):
+        with mock.patch.dict(os.environ, {"OPENAI_TIMEOUT_SECONDS": "180"}):
+            agent = InvestigationAgent(FakeClient(lambda **kwargs: {}))
+        self.assertEqual(agent.timeout_seconds, 180.0)
+        self.assertEqual(agent.max_turns, 6)
+        self.assertEqual(agent.query_budget, 6)
+
     def test_request_omits_unset_reasoning_and_uses_output_ceiling(self):
         gateway = gateway_for()
         calls = []
