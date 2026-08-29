@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from investigation.gateway import EvidenceGateway
-from investigation.prefilter import prefilter
+from investigation.prefilter import compute_signature, prefilter
 from investigation.store import append_trail_entry, claim_incident, connect, insert_incident, persist_result, read_result
 from investigation.trail import EvidenceTrail
 
@@ -181,6 +181,38 @@ class PrefilterTests(unittest.TestCase):
         self.assertIn("provider_degradation", provider_names)
         self.assertIn("issuer_over_decline", issuer_names)
         self.assertNotEqual(provider_names, issuer_names)
+
+    def test_detector_blast_radius_spellings_match_contract_scope(self):
+        def scope(radius):
+            incident = {"affected_cohort": {"provider": "provider-p2"}, "blast_radius": radius}
+            return compute_signature(incident, {})["affected_cohort"]
+
+        contract_radius = {
+            "affected_merchants": 2,
+            "affected_countries": 1,
+            "affected_card_networks": 1,
+            "affected_providers": 1,
+            "affected_payment_methods": 2,
+            "affected_issuing_banks": 1,
+        }
+        detector_radius = {
+            "affected_merchant_ids": 2,
+            "affected_countrys": 1,
+            "affected_card_networks": 1,
+            "affected_providers": 1,
+            "affected_payment_methods": 2,
+            "affected_issuing_banks": 1,
+        }
+
+        self.assertEqual(scope(detector_radius), scope(contract_radius))
+        self.assertEqual(scope(contract_radius)["scope"], "broad")
+        self.assertEqual(scope(contract_radius)["width"], 2)
+        both_spellings = {
+            **contract_radius,
+            "affected_merchant_ids": 99,
+            "affected_countrys": 99,
+        }
+        self.assertEqual(scope(both_spellings), scope(contract_radius))
 
     def test_empty_observations_have_a_reason_and_nonempty_fallback(self):
         result = prefilter({}, {})
