@@ -70,3 +70,13 @@ another contributor pushed first, run `git pull --no-rebase && git push`; union 
   -> other side: provide only evidence-query scripts to Pi, enforce the timeout and result contract, retry invalid JSON once, degrade without failing incidents, and keep the direct API loop as the documented fallback
 - 2026-08-29T19:04Z  derek  detection quality: statistical detection is demo-grade; controlled scenarios and tuned thresholds are acceptable, but tune the sensitivity, never tune the search space - cohort localisation stays genuinely general across arbitrary dimension combinations
   -> other side: tune thresholds against controlled scenarios without narrowing cohort search dimensions; preserve general localisation as the defensible property
+- 2026-08-29T19:17Z  derek  persistence: relational database, SQLite, supersedes the earlier persistence and detection entries; chosen for a simpler and more deterministic solution
+  -> other side: treat the earlier persistence and detection entries as void and build persistence, detection, investigation, analytics and incident workflows against SQLite
+- 2026-08-29T19:17Z  derek  deterministic scripts: evidence-query tools and detection-side scripts run on Python 3; this does not decide the language or framework for the rest of the stack
+  -> other side: implement only the deterministic evidence-query and detection-side scripts in Python 3, and leave all other stack choices open
+- 2026-08-29T19:17Z  derek  evaluator: diagnoses are scored automatically with structured overlap between diagnosed cohort dimensions and the injected ground-truth slice, using precision and recall; free-text matching is rejected as too brittle
+  -> other side: emit structured cohort dimensions for evaluation and use precision and recall against the hidden slice, never a free-text match
+- 2026-08-29T19:17Z  derek  demo scope: the guaranteed demo path has three scenarios - provider degradation, the observationally inseparable provider-versus-issuer confounder, and a high-impact small-percentage change on a large merchant; remaining scenarios stay documented without a build guarantee
+  -> other side: guarantee and rehearse only those three scenarios for the demo, while retaining the other scenarios as documentation rather than committed demo scope
+- 2026-08-29T19:17Z  derek  investigation failure: if the investigation agent fails at runtime, the incident remains visible with its localisation, financial impact and evidence rendered, while only the narrative is absent and explicitly marked unavailable
+  -> other side: never drop an incident because the agent failed; render the available incident data and mark the missing narrative as unavailable
