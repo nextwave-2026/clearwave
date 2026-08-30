@@ -177,6 +177,15 @@ CI now enforces that all six contracts stay present and owned, coordination logs
 
 Other conventions:
 
+- **Looking at the dashboard.** `chrome-devtools-axi` on these machines opens a page but then fails
+  `snapshot`/`eval`/`screenshot` with `Required at pageId`. The bundled Chrome under
+  `~/.cache/puppeteer/chrome/*/chrome-linux64/chrome` does run once its shared libraries are present:
+  `apt-get download libnspr4 libnss3 libasound2t64 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64
+  libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2
+  libatspi2.0-0t64 libdrm2`, `dpkg-deb -x` each into a scratch prefix, and point `LD_LIBRARY_PATH` at
+  it. Then `--headless=new --remote-debugging-port=<port>` and drive CDP over the `WebSocket` global.
+  No sudo needed. Do not report a visual claim you did not actually see.
+
 - Never merge a red pull request. Green checks only, either side.
 - Do not discard work that has not landed. If something looks stale, ask rather than delete.
 - Any contributor may merge their own green code work without waiting for the others.
