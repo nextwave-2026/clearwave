@@ -22,8 +22,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from detector import evidence
+from detector import config as det_config, evidence
 from detector.store import database_path as shared_database_path
+from detector import schema
 from investigation.env import load_dotenv
 
 from . import ask as ask_engine
@@ -87,6 +88,61 @@ class SurfacesApp:
         """
         with store.measurement_session(self.db_path) as connection:
             return evidence.answer("ingest_health", {}, connection)
+
+    # The two series the board draws, answered in one round trip because the
+    # board polls: two fetches per tick for one panel is a cost with no reader
+    # benefit. `rate` is what is converting. `failures` is the count behind it,
+    # which is the question a rate alone cannot answer - a conversion rate can
+    # fall because failures rose or because approvals simply stopped arriving,
+    # and the count separates those without anyone doing arithmetic on screen.
+    SERIES_VIEWS = (("rate", "payment_approval_conversion"), ("failures", "failed_attempts"))
+
+    def series(self, incident_id: str) -> dict[str, Any] | None:
+        """The C2 `metric_series` responses for an incident's own cohort, verbatim.
+
+        `metric_series` is the only evidence tool that answers "since when" and
+        "which way is it moving", and until now nothing served it to the board,
+        so the one question a trend answers had no data behind it. This is the
+        same passthrough shape as `ingestion()` above: the tool measures, each
+        response is returned untouched, and this layer renames, rescales,
+        smooths and totals nothing. The board draws the stored points.
+
+        The window is a *query parameter*, not a published figure: it runs the
+        detector's own trailing baseline span back from the store watermark, so
+        the picture covers the same history detection ranked the incident
+        against. Which buckets close is the tool's decision, not this layer's -
+        a partial trailing bucket is dropped there, so the series never shows a
+        collapse that is really just a minute that is not over yet.
+        """
+        with store.measurement_session(self.db_path) as connection:
+            incident = store.load_incident(connection, incident_id)
+            if incident is None:
+                return None
+            end = evidence.watermark(connection)
+            span = det_config.BASELINE_TRAILING_BUCKETS * det_config.BUCKET_SECONDS
+            window = {
+                "start": schema.iso_utc(end - span),
+                "end": schema.iso_utc(end),
+            }
+            cohort = incident.get("affected_cohort") or {}
+            payload: dict[str, Any] = {
+                "incident_id": incident_id,
+                "onset": incident.get("onset"),
+                "change": incident.get("change") or {},
+                "scope_label": incident.get("scope_label"),
+            }
+            for name, metric in self.SERIES_VIEWS:
+                payload[name] = evidence.answer(
+                    "metric_series",
+                    {
+                        "cohort": cohort,
+                        "window": dict(window),
+                        "metric": metric,
+                        "bucket_seconds": det_config.BUCKET_SECONDS,
+                    },
+                    connection,
+                )
+            return payload
 
     def merchants(self) -> dict[str, Any]:
         with store.session(self.db_path) as connection:
@@ -184,6 +240,14 @@ class SurfacesApp:
             return 200, self.pending_calls()
         if method == "GET" and path == "/api/escalations":
             return 200, self.escalations()
+        if method == "GET" and path.startswith("/api/series/"):
+            incident_id = path[len("/api/series/") :].strip("/")
+            if not incident_id:
+                return 404, {"error": "missing incident_id"}
+            payload = self.series(incident_id)
+            if payload is None:
+                return 404, {"error": "incident not found", "incident_id": incident_id}
+            return 200, payload
         if method == "GET" and path.startswith("/api/incidents/"):
             incident_id = path[len("/api/incidents/") :].strip("/")
             if not incident_id:

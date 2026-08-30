@@ -43,15 +43,20 @@
 
   <div class="prov">
     <div class="wrap">
-      <p class="sim-note">All merchants, banks, payments, incidents and outages shown are simulated data produced by this project's simulator for demonstration. Nothing shown represents or implies a real incident, outage, or service problem at any named company. Real company names are used only to make the demonstration recognisable and realistic.</p>
-      <div class="prov-in mono">
-        <span><b>clock</b> <span id="clock"></span></span>
-        <span><b>store</b> SQLite, CLEARWAVE_DB</span>
-        <span id="prov-source"><b>source</b> waiting for store</span>
-      </div>
-      <div class="prov-in prov-ingest mono" id="prov-ingest" aria-label="Ingestion, measured by the ingest_health evidence tool">
-        <span><b>ingest</b> waiting for store</span>
-      </div>
+      <details class="disclose prov-disclose" id="prov-disclose">
+        <summary>Provenance &amp; ingestion</summary>
+        <div class="disclose-body">
+          <div class="prov-in mono">
+            <span><b>clock</b> <span id="clock"></span></span>
+            <span><b>store</b> SQLite, CLEARWAVE_DB</span>
+            <span id="prov-source"><b>source</b> waiting for store</span>
+          </div>
+          <div class="prov-in prov-ingest mono" id="prov-ingest" aria-label="Ingestion, measured by the ingest_health evidence tool">
+            <span><b>ingest</b> waiting for store</span>
+          </div>
+          <p class="sim-note">All merchants, banks, payments, incidents and outages shown are simulated data produced by this project's simulator for demonstration. Nothing shown represents or implies a real incident, outage, or service problem at any named company. Real company names are used only to make the demonstration recognisable and realistic.</p>
+        </div>
+      </details>
     </div>
   </div>
 
@@ -60,7 +65,6 @@
       <button type="button" class="jump-link on" data-view="overview">Revenue impact</button>
       <button type="button" class="jump-link" data-view="queue">Incident queue</button>
       <button type="button" class="jump-link" data-view="detail">Incident detail</button>
-      <button type="button" class="jump-link" data-view="escalation">Escalation</button>
       <button type="button" class="jump-link" data-view="evidence">Evidence trail</button>
     </div>
   </nav>
@@ -69,10 +73,10 @@
     <section id="view-overview" class="screen overview view is-active" data-view="overview">
       <div class="screen-head">
         <h2>Revenue impact</h2>
-        <span class="who">What this is costing, and the incident that explains it</span>
+        <span class="who">Copied from the highest-priority active incident, and cited</span>
       </div>
-      <p class="screen-lede">Money is the subject of this view; the incident below it is the explanation, not the headline. Every figure is copied from the highest-priority active incident and cites the record it came from. Nothing here is computed in the UI, and no figure is added up across incidents.</p>
       <div id="overview-board"></div>
+      <div id="overview-trend"></div>
       <div id="overview-merchants"></div>
       <div id="overview-watch-rail"></div>
       <div id="overview-notes"></div>
@@ -83,7 +87,6 @@
         <h2>Incident queue</h2>
         <span class="who" id="queue-who">Ordered by severity, then measured loss per hour. Recency is not a ranking.</span>
       </div>
-      <p class="screen-lede">Queue is ordered by business priority. A CRITICAL incident with LOW confidence is valid and expected.</p>
       <div id="queue-board" class="queue-board"></div>
       <div id="queue-watch-rail"></div>
     </section>
@@ -94,15 +97,6 @@
         <span class="who">Six questions a TAM should be able to answer without opening a warehouse.</span>
       </div>
       <div id="detail-board" class="detail-board"></div>
-    </section>
-
-    <section id="view-escalation" class="screen view" data-view="escalation" hidden>
-      <div class="screen-head">
-        <h2>Escalation</h2>
-        <span class="who">Severity routes. Confidence never does.</span>
-      </div>
-      <p class="screen-lede">Every card below is a stored <code>escalation_event</code> row. The binding table is read from the same function the escalator routes on, so the picture cannot drift from the behaviour. Nothing here is a control: the channels already fired.</p>
-      <div id="escalation-board" class="escalation-board"></div>
     </section>
 
     <section id="view-evidence" class="screen view" data-view="evidence" hidden>

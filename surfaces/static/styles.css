@@ -653,23 +653,26 @@ table th:last-child, table td:last-child { padding-right: 0; }
 /* The revenue-led header.
 
    Money is the subject of this view, so it is carried by size, weight and
-   position rather than by colour: the two figures a TAM acts on lead at
-   display scale, and service status and the incident count sit under them at
-   context weight. No new colour vocabulary is introduced - `--sev-critical`
-   marks the exposed money and nothing else, and everything supporting it is
-   drawn in the existing ink ramp. */
+   position rather than by colour: the figure a TAM acts on leads at display
+   scale, the rate sits under it, and everything that merely explains them is
+   pushed onto the context strip below at caption weight. No new colour
+   vocabulary is introduced - `--sev-critical` marks the exposed money and the
+   shortfall it opens, and nothing else. */
 
-.topline {
+.hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  gap: 26px 40px;
-  align-items: start;
-  padding: 26px 26px 24px;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  gap: 26px 44px;
+  align-items: stretch;
+  padding: 28px 28px 26px;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   background: linear-gradient(180deg, var(--surface-2), var(--surface));
   box-shadow: var(--shadow-lift);
 }
+
+.hero-money { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.hero-sev .sev { font-size: 11px; }
 
 .money {
   display: grid;
@@ -695,69 +698,442 @@ table th:last-child, table td:last-child { padding-right: 0; }
   font-variant-numeric: tabular-nums;
 }
 
-.mfig p.fig { margin: 8px 0 0; font-size: 11px; color: var(--ink-3); line-height: 1.45; }
+/* The hint is a stored field name now, so it is drawn as a label rather than
+   as a sentence - and it still carries the cite dot, which is the whole
+   reason it stays on the page at all. */
+.mfig p.fig {
+  margin: 10px 0 0;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--ink-3);
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-feature-settings: "zero" 1;
+}
 
-.money .mfig-risk dd { font-size: 46px; color: var(--sev-critical); }
-.money .mfig-rate dd { font-size: 30px; color: var(--ink); }
+.money .mfig-risk dd { font-size: clamp(34px, 4.4vw, 58px); color: var(--sev-critical); }
+.money .mfig-rate dd { font-size: clamp(21px, 2.2vw, 28px); color: var(--ink); }
 .money .mfig-calm dd { font-size: 20px; color: var(--ink-2); }
 
-/* The conversion gap. Two stored ratios, each bar drawn at the length of the
-   figure printed beside it. Nothing between them is measured. */
-.gap {
+/* The conversion gap, drawn as a gap.
+
+   Three stored figures and no fourth: the fill is `change.actual`, the band
+   starts at `change.actual` and is `change.absolute_delta` wide, and the
+   marker stands at `change.expected`. The band is the subject - it is the
+   money above, seen - so it is the only hatched surface on the board. */
+.gapv {
   display: flex;
   flex-direction: column;
-  height: 100%;
   border-left: 1px solid var(--line);
-  padding-left: 32px;
+  padding-left: 36px;
+  min-width: 0;
 }
 
-.gap h3 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--ink);
-}
-
-.gap-lede { margin: 6px 0 18px; font-size: 11px; color: var(--ink-3); line-height: 1.5; }
-
-.gap-row {
-  display: grid;
-  grid-template-columns: 62px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.gap-l {
+.gapv h3 {
+  margin: 0 0 18px;
   font-size: 10px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.09em;
   color: var(--ink-3);
 }
 
-.gap-track {
-  height: 10px;
+.gapv-track {
+  position: relative;
+  height: 68px;
+  border-radius: var(--r-sm);
+  background: var(--surface-3);
+  border: 1px solid var(--line-soft);
+  overflow: hidden;
+}
+
+.gapv-now {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(180deg, var(--yuno-blue-lift), var(--yuno-blue));
+}
+
+.gapv-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background-color: rgba(255, 77, 94, 0.16);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 77, 94, 0.46) 0 1.5px,
+    transparent 1.5px 8px
+  );
+  box-shadow: inset 1px 0 0 rgba(255, 77, 94, 0.55);
+}
+
+.gapv-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--ink);
+}
+
+.gapv-none { margin: 0; font-size: 12px; color: var(--ink-3); }
+
+.gapv-figs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, auto));
+  justify-content: start;
+  gap: 0 30px;
+  margin: 18px 0 0;
+}
+
+.gapv-fig dt {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-3);
+  margin-bottom: 6px;
+}
+
+.gapv-fig dd {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.gapv-fig.gt-now dd { color: var(--yuno-blue-lift); }
+.gapv-fig.gt-band dd, .gapv-fig.gt-rel dd { color: var(--sev-critical); }
+.gapv-fig .cite { vertical-align: middle; }
+
+@media (max-width: 1120px) {
+  .gapv-figs { grid-template-columns: repeat(2, minmax(0, auto)); gap: 16px 30px; }
+}
+
+/* The row-scale gap. Same three stored figures, same rule, same reading as the
+   header: blue is converting, the hatched band is the shortfall, the tick is
+   expected. It is decoration nowhere - a reader who learns it once at display
+   scale reads every row without a caption. */
+.mini {
+  position: relative;
+  display: block;
+  height: 8px;
   border-radius: 2px;
   background: var(--surface-3);
   border: 1px solid var(--line-soft);
   overflow: hidden;
 }
 
-.gap-fill { display: block; height: 100%; border-radius: 1px; }
-.gap-now { background: var(--sev-critical); }
-.gap-exp { background: var(--ink-3); }
+.mini i { position: absolute; top: 0; bottom: 0; display: block; }
+.mini-now { left: 0; background: var(--yuno-blue); }
 
-.gap-v {
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink);
+.mini-band {
+  background-color: rgba(255, 77, 94, 0.16);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 77, 94, 0.5) 0 1px,
+    transparent 1px 5px
+  );
+  box-shadow: inset 1px 0 0 rgba(255, 77, 94, 0.55);
 }
 
-.gap-cap { margin: 14px 0 0; font-size: 10.5px; color: var(--ink-3); line-height: 1.5; max-width: 66ch; }
-.gap .gap-cap { margin-top: auto; padding-top: 14px; }
+.mini-mark { width: 2px; margin-left: -1px; background: var(--ink-2); }
+
+.mcard-gap { margin-top: 16px; display: grid; gap: 8px; }
+.mcard-gap-v {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--yuno-blue-lift);
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.mcard-gap-v em { font-style: normal; font-weight: 400; color: var(--ink-3); }
+
+/* In the queue the shape sits under the two figures it draws, at column width. */
+td.num .mini { margin-top: 8px; min-width: 96px; }
+
+/* Second-glance material. The words are unchanged; only their weight is. */
+.disclose {
+  margin: 20px 0 0;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.disclose > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 11px 15px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ink-3);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.disclose > summary::-webkit-details-marker { display: none; }
+
+.disclose > summary::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-right: 1.4px solid currentColor;
+  border-bottom: 1.4px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+  flex: none;
+}
+
+.disclose[open] > summary::before { transform: rotate(45deg); }
+.disclose > summary:hover { color: var(--lilac-deep); }
+.disclose.warn > summary { color: #C7A65B; }
+.disclose.warn > summary:hover { color: #E9C877; }
+
+.disclose-body {
+  padding: 2px 15px 14px;
+  border-top: 1px solid var(--line-soft);
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+
+.disclose-body p { margin: 10px 0 0; max-width: 78ch; }
+.disclose-body code {
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--lilac-deep);
+}
+.disclose-body b { color: var(--ink); font-weight: 600; }
+
+@media (prefers-reduced-motion: reduce) {
+  .disclose > summary::before { transition: none; }
+}
+
+/* Conversion over time.
+
+   The one shape on the board that answers "since when" and "which way". It
+   borrows the header's vocabulary exactly - blue is what was measured, the
+   hatch is the distance below expected, white is the reference - so a reader
+   who has read the header already knows how to read this. */
+.trend {
+  margin-top: 16px;
+  padding: 20px 24px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+}
+
+.trend-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.trend-head h3 {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-3);
+}
+
+.trend-legend { margin: 0; display: flex; gap: 18px; flex-wrap: wrap; }
+
+.tl {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+.tl::before { content: ""; width: 14px; height: 2px; flex: none; border-radius: 1px; }
+.tl-line::before { background: var(--yuno-blue-lift); height: 2px; }
+.tl-exp::before { background: var(--ink); height: 0; border-top: 1px dashed var(--ink-2); }
+.tl-onset::before { background: var(--lilac-deep); width: 2px; height: 12px; }
+.tl-short::before {
+  height: 10px;
+  background-color: rgba(255, 77, 94, 0.18);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 77, 94, 0.55) 0 1px,
+    transparent 1px 4px
+  );
+}
+
+.trend-svg { display: block; width: 100%; height: auto; overflow: visible; }
+
+.trend-line {
+  fill: none;
+  stroke: var(--yuno-blue-lift);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.trend-short { fill: url(#trend-hatch); stroke: none; }
+.trend-exp { stroke: var(--ink-2); stroke-width: 1; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.trend-axis { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.trend-onset { stroke: var(--lilac-deep); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+
+.trend-tick { fill: var(--ink-3); font-size: 10px; }
+.trend-exp-l { fill: var(--ink); font-size: 10.5px; font-weight: 600; }
+.trend-onset-l { fill: var(--lilac-deep); font-size: 10px; letter-spacing: 0.04em; }
+
+.trend-strip { margin-top: 4px; }
+
+.trend-strip-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 6px;
+}
+
+.trend-strip-head h4 {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-3);
+}
+
+.trend-peak { font-size: 10.5px; color: var(--ink-2); }
+.trend-strip-svg { display: block; width: 100%; height: auto; }
+.trend-bar { fill: var(--sev-critical); fill-opacity: 0.72; }
+
+.trend-axis-x {
+  display: flex;
+  justify-content: space-between;
+  margin: 6px 0 0;
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+.trend-foot { margin: 10px 0 0; font-size: 10.5px; color: var(--ink-3); }
+.trend-none { margin: 0; font-size: 12.5px; color: var(--ink-2); max-width: 74ch; }
+
+@media (max-width: 720px) {
+  .trend { padding: 16px 14px 12px; }
+  .trend-legend { gap: 12px; }
+}
+
+/* The header stacks before the gap gets too narrow to read as a gap. Below
+   that the dividing rule becomes a horizontal one, because a left border on a
+   full-width block is a stripe, not a division. */
+@media (max-width: 900px) {
+  .hero { grid-template-columns: minmax(0, 1fr); gap: 22px; padding: 22px 18px 20px; }
+  .gapv { border-left: 0; border-top: 1px solid var(--line); padding-left: 0; padding-top: 22px; }
+  .gapv-track { height: 52px; }
+}
+
+@media (max-width: 560px) {
+  .gapv-figs { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; }
+  .gapv-fig dd { font-size: 17px; white-space: normal; overflow-wrap: anywhere; }
+  .ctxbar { gap: 10px 22px; padding: 12px 16px; }
+  .ctx { flex-wrap: wrap; gap: 4px 10px; }
+  .trend-strip-head { flex-wrap: wrap; gap: 4px 12px; }
+}
+
+/* The provenance band left the board so the money is the first thing under the
+   masthead. Nothing on it was deleted: every figure, and the simulated-data
+   disclaimer, is one click away here, and each keeps the cite dot it had. */
+.prov-disclose {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.prov-disclose > summary { padding: 7px 0; font-size: 11px; }
+.prov-disclose > .disclose-body { border-top: 0; padding: 0 0 10px; }
+.prov-disclose .prov-in { padding-block: 6px; }
+.prov-disclose .sim-note { margin: 8px 0 0; }
+
+/* The escalation ladder as one line. The tab it replaced is gone; the stored
+   outcomes it showed are not, and they still read as an account of what fired
+   rather than as anything you can press. */
+.escline {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 18px 0 0;
+  padding: 12px 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.escline-l {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-3);
+}
+
+.escch-list { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.escch {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.escch b { font-weight: 600; color: var(--ink-2); }
+.escch.reached { border-color: rgba(63, 191, 135, 0.4); }
+.escch.reached b { color: var(--good); }
+
+.escline-note {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--ink-3);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The detail's two columns used to leave one short and the other long, so the
+   screen ended on a column of nothing. Letting the browser balance them keeps
+   the cards in reading order and the page the height of its content. */
+@media (min-width: 961px) {
+  .detail-grid {
+    display: block;
+    columns: 2;
+    column-gap: 18px;
+  }
+  .detail-grid > div { display: contents; }
+  .detail-grid .panel { break-inside: avoid; margin: 0 0 18px; }
+}
+
+@media (max-width: 640px) {
+  .escline { gap: 10px; padding: 11px 13px; }
+  .escline-note { margin-left: 0; }
+}
+
+.disclose.rigor { margin-top: 16px; }
+.disclose.rigor > summary { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.disclose.rigor > summary:hover { color: var(--ink); }
+.disclose.rigor .rigor-n {
+  margin-left: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--lilac-deep);
+  background: rgba(107, 123, 255, 0.14);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.disclose.rigor .rigor-why { margin: 10px 0 0; font-size: 11.5px; color: var(--ink-3); }
 
 /* Supporting context. True, useful, and no longer the headline. */
 .ctxbar {

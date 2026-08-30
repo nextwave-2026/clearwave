@@ -9,6 +9,7 @@
     watches: [],
     merchants: [],
     escalations: null,
+    series: null,
     calls: [],
     ingestion: null,
     detail: null,
@@ -241,61 +242,118 @@
     );
   }
 
-  // The bar's length IS the printed figure: `ratio()` already renders the
-  // stored value as a percentage string, and that same string is used as the
-  // CSS width. Nothing is subtracted, scaled or otherwise derived here, and
-  // the distance between the two bars is deliberately left undrawn - it is
-  // not a published figure.
-  function gapRow(kind, label, value, citeId, ariaLabel) {
-    const text = ratio(value);
-    const track = text === "not in store"
-      ? '<span class="gap-track"></span>'
-      : '<span class="gap-track"><i class="gap-fill gap-' + kind + '" style="width:' + text + '"></i></span>';
+  // The gap, drawn from three stored figures and from nothing else.
+  //
+  //   fill     width  = change.actual
+  //   band     offset = change.actual, width = change.absolute_delta
+  //   marker   offset = change.expected
+  //
+  // Each is a value the store published, used as a CSS length in exactly the
+  // form `ratio()` already prints it on screen. Nothing is subtracted here to
+  // size the band: it is the stored delta, so the band's right edge meets the
+  // expected marker only because the store's own three figures agree. On a
+  // record where they did not, this picture would show the disagreement rather
+  // than paper over it - which is the point of drawing it this way.
+  function deltaWidth(value) {
+    if (typeof value !== "number" || !isFinite(value)) return null;
+    return Math.abs(value * 100).toFixed(1) + "%";
+  }
+
+  function gapFigure(label, text, citeId, ariaLabel, tone) {
     return (
-      '<div class="gap-row">' +
-      '<span class="gap-l">' + escapeHtml(label) + "</span>" +
-      track +
-      '<span class="gap-v"><span class="fig">' + escapeHtml(text) +
-      citeButton(citeId, "cite " + ariaLabel) + "</span></span>" +
+      '<div class="gapv-fig' + (tone ? " gt-" + tone : "") + '">' +
+      "<dt>" + escapeHtml(label) + "</dt>" +
+      '<dd><span class="fig">' + escapeHtml(text) +
+      citeButton(citeId, "cite " + ariaLabel) + "</span></dd>" +
       "</div>"
     );
   }
 
-  function conversionGap(data, sourceId) {
+  // The same three stored figures at row scale, wherever a row already printed
+  // "converting 52.0% against 85.0% expected" as a sentence. Identical rendering
+  // rule to the header gap - fill at `change.actual`, band at
+  // `change.absolute_delta`, marker at `change.expected` - so a reader who
+  // learns the shape once reads every row on the board without a caption.
+  function miniGap(change) {
+    const now = ratio((change || {}).actual);
+    const expected = ratio((change || {}).expected);
+    if (now === "not in store" || expected === "not in store") return "";
+    const band = deltaWidth((change || {}).absolute_delta);
     return (
-      '<section class="gap" aria-label="Conversion against expected">' +
-      "<h3>Conversion against expected</h3>" +
-      '<p class="gap-lede">The gap between these two is what the money above is measuring. Both are copied from incident ' +
-      escapeHtml(sourceId) + ".</p>" +
-      gapRow("now", "now", data.current_conversion, "overview-actual", "current conversion") +
-      gapRow("exp", "expected", data.expected_conversion, "overview-expected", "expected conversion") +
-      '<p class="gap-cap">Each bar is drawn at its own stored value. The distance between them is not published as a figure, so it is not drawn as one.</p>' +
+      '<span class="mini" aria-hidden="true">' +
+      '<i class="mini-now" style="width:' + now + '"></i>' +
+      (band ? '<i class="mini-band" style="left:' + now + ';width:' + band + '"></i>' : "") +
+      '<i class="mini-mark" style="left:' + expected + '"></i>' +
+      "</span>"
+    );
+  }
+
+  function conversionGap(data) {
+    const change = data.change || {};
+    const now = ratio(data.current_conversion);
+    const expected = ratio(data.expected_conversion);
+    const band = deltaWidth(change.absolute_delta);
+    const shortfall = pointsWord(change.absolute_delta);
+    const relative = pct(change.relative_change);
+    const drawable = now !== "not in store" && expected !== "not in store";
+    const track = drawable
+      ? '<div class="gapv-track">' +
+        '<i class="gapv-now" style="width:' + now + '"></i>' +
+        (band ? '<i class="gapv-band" style="left:' + now + ';width:' + band + '"></i>' : "") +
+        '<i class="gapv-mark" style="left:' + expected + '"></i>' +
+        "</div>"
+      : '<p class="gapv-none">Conversion is not in the store for this incident.</p>';
+    return (
+      '<section class="gapv" aria-label="Conversion against expected">' +
+      "<h3>Conversion</h3>" +
+      track +
+      '<dl class="gapv-figs">' +
+      gapFigure("now", now, "overview-actual", "current conversion", "now") +
+      (shortfall
+        ? gapFigure("short by", shortfall, "overview-delta", "the stored shortfall", "band")
+        : "") +
+      gapFigure("expected", expected, "overview-expected", "expected conversion", "exp") +
+      (relative
+        ? gapFigure("relative", relative, "overview-relative", "the stored relative change", "rel")
+        : "") +
+      "</dl>" +
       "</section>"
     );
   }
 
-  // Service status and the incident count are true and useful, so they stay -
-  // but as the context that explains the money, at context weight.
+  // Service status, the incident count, when it started, and the volume the
+  // shortfall is measured against. All true, all cited, none of it the
+  // headline - so it sits on one quiet strip under the money rather than
+  // taking a caption off each figure above it.
+  function ctxCell(label, valueHtml) {
+    return '<div class="ctx"><span class="ctx-l">' + escapeHtml(label) + "</span>" +
+      '<span class="ctx-v">' + valueHtml + "</span></div>";
+  }
+
   function contextStrip(headline, data, sourceId) {
     const sev = badgePair(headline.severity, "__omit__", null).querySelector(".sev").outerHTML;
     return (
       '<div class="ctxbar">' +
-      '<div class="ctx"><span class="ctx-l">Service status</span><span class="ctx-v">' + sev +
-      citeButton("overview-severity", "cite service status") + "</span></div>" +
-      '<div class="ctx"><span class="ctx-l">Active incidents</span><span class="ctx-v">' +
-      escapeHtml(count(data.active_incident_count)) + "</span></div>" +
-      '<div class="ctx"><span class="ctx-l">Explained by</span><span class="ctx-v mono">' +
-      escapeHtml(sourceId) + "</span></div>" +
+      ctxCell("Service status", sev + citeButton("overview-severity", "cite service status")) +
+      ctxCell("Active incidents", escapeHtml(count(data.active_incident_count))) +
+      ctxCell("Since", '<span class="mono">' + escapeHtml(fmt(headline.onset)) + "</span>" +
+        citeButton("overview-onset", "cite onset")) +
+      ctxCell("Attempted value", escapeHtml(money(data.gmv)) +
+        citeButton("overview-gmv", "cite attempted value")) +
+      ctxCell("Explained by", '<span class="mono">' + escapeHtml(sourceId) + "</span>") +
       "</div>"
     );
   }
 
   // Kept, deliberately and word for word. A revenue-led board is exactly where
-  // a reader looks for the invented total, so the refusal has to be on it.
+  // a reader looks for the invented total, so the refusal has to be on it - but
+  // it is second-glance material, so it is one closed line until it is opened.
   const REFUSAL_NOTE =
-    '<div class="note warn tight"><h4>Two things this header deliberately does not show</h4>' +
+    '<details class="disclose warn"><summary>Two things this board deliberately does not show</summary>' +
+    '<div class="disclose-body">' +
     "<p><b>A portfolio total.</b> Adding cited <code>loss_per_hour</code> figures would be a number that exists only here. A real total has to come from W2 as its own cited figure.</p>" +
-    "<p><b>Whose fault it is.</b> Attribution belongs to the investigation. A traffic light that guessed would be the worst thing this dashboard could do.</p></div>";
+    "<p><b>Whose fault it is.</b> Attribution belongs to the investigation. A traffic light that guessed would be the worst thing this dashboard could do.</p>" +
+    "</div></details>";
 
   // A row is a merchant only when the stored cohort names one. Where it names
   // a provider or a country instead, the row says so rather than being filed
@@ -318,7 +376,6 @@
     const riskLabel = live ? "Revenue at risk" : "Was at risk";
     const rateHint = live ? "loss_per_hour, if it continues" : "loss_per_hour, while it ran";
     const riskHint = live ? "gmv_at_risk, an estimate" : "gmv_at_risk over that incident, an estimate";
-    const converting = live ? "Converting " : "Converted ";
     return (
       '<article class="mcard' + (live ? "" : " is-past") + '">' +
       '<div class="mcard-head">' +
@@ -338,9 +395,10 @@
         "merchant-risk:" + index, riskLabel + " for " + (row.scope_label || source)) +
       "</div>" +
       "</dl>" +
+      '<div class="mcard-gap">' + miniGap(change) +
+      '<span class="mcard-gap-v">' + escapeHtml(ratio(change.actual)) +
+      "<em> of " + escapeHtml(ratio(change.expected)) + " expected</em></span></div>" +
       '<p class="mcard-foot">' + sev +
-      "<span>" + converting + escapeHtml(ratio(change.actual)) + " against " +
-      escapeHtml(ratio(change.expected)) + " expected</span>" +
       '<span class="mono">' + escapeHtml(count(row.active_incident_count)) +
       " active · " + escapeHtml(source) + "</span></p>" +
       "</article>"
@@ -370,10 +428,8 @@
     const anyLive = list.some(function (row) { return row.source_is_active !== false; });
     const heading = anyLive ? "Who is carrying it" : "What it cost earlier";
     const lede = anyLive
-      ? "One row per merchant, or per cohort where the stored incident names no merchant. " +
-        "Every figure is copied from that row's own highest-priority incident. Nothing is added up across rows."
-      : "Nothing here is still running. Every row below is a closed incident, kept because what it cost " +
-        "is real, and worded in the past because it is over. Nothing is added up across rows.";
+      ? "One row per merchant, or per cohort where the incident names none. Never added up."
+      : "All closed. Kept because what they cost is real, worded in the past because it is over.";
     overviewMerchants.innerHTML =
       '<section class="impact" aria-label="Revenue impact by merchant">' +
       '<div class="impact-head"><h3>' + escapeHtml(heading) + "</h3>" +
@@ -445,6 +501,242 @@
     bindCites(provIngest);
   }
 
+  // -------------------------------------------------------------------
+  // Conversion over time.
+  //
+  // Every point is one bucket of W2's `metric_series` response, drawn at the
+  // value the tool returned. Nothing here averages, smooths, interpolates,
+  // rescales or forecasts: a bucket the tool reported with no value breaks the
+  // line rather than being bridged across, because a bridged gap is a reading
+  // the store never took. The y domain is 0 to 1 - the domain of a ratio
+  // itself, not a range read off this particular series - so two runs of the
+  // board are comparable and no point is exaggerated by its own neighbours.
+  //
+  // Two references sit on it, both stored and both cited: the expected
+  // conversion the incident was ranked against, and the onset. The shortfall
+  // is the area between the line and that reference *where the line is below
+  // it*, clipped rather than computed - the same shape, and the same reading,
+  // as the band in the header.
+  // -------------------------------------------------------------------
+
+  const TREND_W = 1000;
+  const TREND_H = 210;
+  const TREND_PAD = { l: 46, r: 14, t: 14, b: 26 };
+
+  function trendX(index, total) {
+    if (total <= 1) return TREND_PAD.l;
+    const span = TREND_W - TREND_PAD.l - TREND_PAD.r;
+    return TREND_PAD.l + (index * span) / (total - 1);
+  }
+
+  function trendY(value) {
+    const span = TREND_H - TREND_PAD.t - TREND_PAD.b;
+    return TREND_PAD.t + (1 - value) * span;
+  }
+
+  // Consecutive runs of measured buckets. A null value ends a run, so the
+  // polyline stops there and starts again on the far side of the hole.
+  function trendRuns(points) {
+    const runs = [];
+    let current = null;
+    points.forEach(function (point, index) {
+      if (point && typeof point.value === "number" && isFinite(point.value)) {
+        if (!current) { current = []; runs.push(current); }
+        current.push({ i: index, v: point.value });
+      } else {
+        current = null;
+      }
+    });
+    return runs;
+  }
+
+  function trendOnsetIndex(points, onset) {
+    if (!onset) return -1;
+    for (let i = 0; i < points.length; i += 1) {
+      if (String(points[i].bucket_start || "") >= String(onset)) return i;
+    }
+    return -1;
+  }
+
+  // The counts strip. A count has no natural ceiling the way a ratio does, so
+  // its bars are drawn against the tallest bucket the tool returned in this
+  // window - a scale, never a printed figure, and the strip says so under it.
+  // No bar is a derived value: each is one stored `failed_attempts` reading.
+  const STRIP_H = 58;
+
+  function trendBars(points, total, peak) {
+    if (!(peak > 0)) return "";
+    const span = TREND_W - TREND_PAD.l - TREND_PAD.r;
+    const width = Math.max(1.5, (span / Math.max(total, 1)) - 1.5);
+    return points.map(function (point, index) {
+      if (!point || typeof point.value !== "number" || !isFinite(point.value)) return "";
+      const height = (point.value / peak) * STRIP_H;
+      if (!(height > 0)) return "";
+      return '<rect class="trend-bar" x="' + (trendX(index, total) - width / 2).toFixed(1) +
+        '" y="' + (STRIP_H - height).toFixed(1) + '" width="' + width.toFixed(1) +
+        '" height="' + height.toFixed(1) + '"></rect>';
+    }).join("");
+  }
+
+  function renderTrend() {
+    const payload = state.series;
+    const host = $("overview-trend");
+    if (!host) return;
+    if (!payload) { host.innerHTML = ""; return; }
+    const series = payload.rate || {};
+    const failures = payload.failures || {};
+    const points = series.points || [];
+    const measured = points.filter(function (point) {
+      return point && typeof point.value === "number";
+    });
+    const change = payload.change || {};
+    const expected = typeof change.expected === "number" ? change.expected : null;
+    const total = points.length;
+
+    if (!measured.length) {
+      // An honest empty is not a broken chart. The tool answered; it had
+      // nothing closed to report over this window, and it says so.
+      host.innerHTML =
+        '<section class="trend" aria-label="Conversion over time">' +
+        '<div class="trend-head"><h3>Conversion over time</h3></div>' +
+        '<p class="trend-none">No bucket has closed in this window yet, so there is nothing ' +
+        "to plot. " + escapeHtml(metricWords(series.metric)) + " appears here bucket by bucket " +
+        "as measurement catches up.</p>" +
+        trendFoot(series, failures) +
+        "</section>";
+      bindCites(host);
+      return;
+    }
+
+    const runs = trendRuns(points);
+    const line = runs.map(function (run) {
+      return '<polyline class="trend-line" points="' + run.map(function (point) {
+        return trendX(point.i, total).toFixed(1) + "," + trendY(point.v).toFixed(1);
+      }).join(" ") + '"></polyline>';
+    }).join("");
+
+    // The shortfall area, clipped to the band below the expected line. Where
+    // the series runs above expected the polygon is simply cut away, so the
+    // hatch marks only what is genuinely short.
+    let shortfall = "";
+    let reference = "";
+    if (expected !== null) {
+      const yExp = trendY(expected).toFixed(1);
+      shortfall = runs.map(function (run) {
+        const head = trendX(run[0].i, total).toFixed(1) + "," + yExp;
+        const tail = trendX(run[run.length - 1].i, total).toFixed(1) + "," + yExp;
+        const body = run.map(function (point) {
+          return trendX(point.i, total).toFixed(1) + "," + trendY(point.v).toFixed(1);
+        }).join(" ");
+        return '<polygon class="trend-short" clip-path="url(#trend-below)" points="' +
+          head + " " + body + " " + tail + '"></polygon>';
+      }).join("");
+      reference =
+        '<line class="trend-exp" x1="' + TREND_PAD.l + '" x2="' + (TREND_W - TREND_PAD.r) +
+        '" y1="' + yExp + '" y2="' + yExp + '"></line>' +
+        '<text class="trend-exp-l" x="' + (TREND_PAD.l - 8) + '" y="' + yExp +
+        '" text-anchor="end" dominant-baseline="middle">' + escapeHtml(ratio(expected)) + "</text>";
+    }
+
+    const onset = trendOnsetIndex(points, payload.onset);
+    const onsetLine = onset >= 0 ? trendX(onset, total).toFixed(1) : null;
+    const onsetMark = onsetLine
+      ? '<line class="trend-onset" x1="' + onsetLine + '" x2="' + onsetLine +
+        '" y1="' + TREND_PAD.t + '" y2="' + (TREND_H - TREND_PAD.b) + '"></line>' +
+        '<text class="trend-onset-l" x="' + (trendX(onset, total) + 7).toFixed(1) +
+        '" y="' + (TREND_PAD.t + 10) + '">onset ' +
+        escapeHtml(clockOf(points[onset].bucket_start) || "") + "</text>"
+      : "";
+
+    // The tallest stored reading in the window, used as the strip's scale and
+    // printed as the axis label because it is a value the tool returned, not
+    // one this page worked out.
+    const failPoints = failures.points || [];
+    const failValues = failPoints
+      .map(function (point) { return point && point.value; })
+      .filter(function (value) { return typeof value === "number" && isFinite(value); });
+    const peak = failValues.length ? Math.max.apply(null, failValues) : 0;
+    const strip = failValues.length
+      ? '<div class="trend-strip">' +
+        '<div class="trend-strip-head"><h4>Failed attempts per bucket</h4>' +
+        '<span class="trend-peak mono">peak ' + escapeHtml(count(peak)) +
+        citeButton("trend-failures", "cite the failed-attempt series") + "</span></div>" +
+        '<svg class="trend-strip-svg" viewBox="0 0 ' + TREND_W + " " + STRIP_H +
+        '" role="img" aria-label="Failed attempts per bucket, ' +
+        escapeHtml(count(failValues.length)) + ' measured buckets, peak ' +
+        escapeHtml(count(peak)) + '">' +
+        trendBars(failPoints, total, peak) +
+        (onsetLine
+          ? '<line class="trend-onset" x1="' + onsetLine + '" x2="' + onsetLine +
+            '" y1="0" y2="' + STRIP_H + '"></line>'
+          : "") +
+        "</svg></div>"
+      : "";
+
+    const first = clockOf(points[0].bucket_start);
+    const last = clockOf(points[total - 1].bucket_start);
+    const baseline = TREND_H - TREND_PAD.b;
+    host.innerHTML =
+      '<section class="trend" aria-label="Conversion over time">' +
+      '<div class="trend-head">' +
+      "<h3>Conversion over time</h3>" +
+      '<p class="trend-legend">' +
+      '<span class="tl tl-line">measured</span>' +
+      (expected !== null ? '<span class="tl tl-exp">expected</span>' : "") +
+      (expected !== null ? '<span class="tl tl-short">short of it</span>' : "") +
+      (onsetLine ? '<span class="tl tl-onset">onset</span>' : "") +
+      "</p>" +
+      "</div>" +
+      '<svg class="trend-svg" viewBox="0 0 ' + TREND_W + " " + TREND_H +
+      '" role="img" aria-label="' + escapeHtml(metricWords(series.metric)) +
+      " for " + escapeHtml(payload.scope_label || "the affected cohort") +
+      ", " + escapeHtml(count(measured.length)) + ' measured buckets">' +
+      "<defs>" +
+      '<pattern id="trend-hatch" width="7" height="7" patternUnits="userSpaceOnUse" ' +
+      'patternTransform="rotate(-45)">' +
+      '<rect width="7" height="7" fill="rgba(255,77,94,0.16)"></rect>' +
+      '<line x1="0" y1="0" x2="0" y2="7" stroke="rgba(255,77,94,0.5)" stroke-width="1.4"></line>' +
+      "</pattern>" +
+      '<clipPath id="trend-below"><rect x="' + TREND_PAD.l + '" y="' +
+      (expected === null ? TREND_PAD.t : trendY(expected).toFixed(1)) +
+      '" width="' + (TREND_W - TREND_PAD.l - TREND_PAD.r) +
+      '" height="' + (expected === null ? 0 : (baseline - trendY(expected)).toFixed(1)) +
+      '"></rect></clipPath></defs>' +
+      '<line class="trend-axis" x1="' + TREND_PAD.l + '" x2="' + (TREND_W - TREND_PAD.r) +
+      '" y1="' + baseline + '" y2="' + baseline + '"></line>' +
+      '<text class="trend-tick" x="' + (TREND_PAD.l - 8) + '" y="' + trendY(1) +
+      '" text-anchor="end" dominant-baseline="middle">100%</text>' +
+      '<text class="trend-tick" x="' + (TREND_PAD.l - 8) + '" y="' + baseline +
+      '" text-anchor="end" dominant-baseline="middle">0%</text>' +
+      shortfall + reference + line + onsetMark +
+      "</svg>" +
+      strip +
+      '<p class="trend-axis-x mono">' +
+      "<span>" + escapeHtml(first || "") + "</span>" +
+      "<span>" + escapeHtml(last || "") + "</span></p>" +
+      trendFoot(series, failures) +
+      "</section>";
+    bindCites(host);
+  }
+
+  // The series carries its own provenance, in the same shape the ingest line
+  // uses: `metric_series` answers without a gateway query_id, so the citation
+  // names the tool, the window and the watermark it measured through, which is
+  // what a reader needs to re-run it.
+  function trendFoot(series, failures) {
+    const buckets = (series.points || []).length;
+    const second = failures && failures.metric
+      ? " + " + escapeHtml(String(failures.metric)) +
+        citeButton("trend-failures", "cite the failed-attempt series")
+      : "";
+    return '<p class="trend-foot mono">' +
+      "metric_series · " + escapeHtml(String(series.metric || "not in store")) + second +
+      " · " + escapeHtml(count(buckets)) + " buckets of " +
+      escapeHtml(count(series.bucket_seconds)) + "s · measured through " +
+      escapeHtml(String(series.measured_through || "not in store")) +
+      citeButton("trend-series", "cite the conversion series") + "</p>";
+  }
+
   function renderOverview() {
     const data = state.overview;
     if (!data) {
@@ -472,17 +764,23 @@
       return;
     }
     const financial = data.financial_impact || {};
+    const sev = badgePair(headline.severity, "__omit__", null).querySelector(".sev").outerHTML;
+    // The hint under each figure is the stored field it was copied from, and
+    // nothing else. It is what the cite dot rides on, so the citation route is
+    // unchanged - but a field name is a label, where the sentence it replaced
+    // was a paragraph competing with the money for the first read.
     overviewBoard.innerHTML =
-      '<section class="topline" aria-label="Revenue at risk">' +
+      '<section class="hero" aria-label="Revenue at risk">' +
+      '<div class="hero-money">' +
+      '<div class="hero-sev">' + sev + "</div>" +
       '<dl class="money">' +
       moneyFigure("risk", "Revenue at risk", money(data.estimated_gmv_at_risk),
-        "estimated · gmv_at_risk on incident " + sourceId, "overview-risk") +
+        "gmv_at_risk", "overview-risk") +
       moneyFigure("rate", "Loss rate", money(financial.loss_per_hour) + " / hour",
-        "loss_per_hour on that incident, if it continues", "overview-burn") +
-      moneyFigure("calm", "Attempted value", money(data.gmv),
-        "attempted_value on that incident", "overview-gmv") +
+        "loss_per_hour, if it continues", "overview-burn") +
       "</dl>" +
-      conversionGap(data, sourceId) +
+      "</div>" +
+      conversionGap(data) +
       "</section>" +
       contextStrip(headline, data, sourceId);
     bindCites(overviewBoard);
@@ -815,7 +1113,8 @@
       const approval = document.createElement("td");
       approval.className = "num";
       approval.innerHTML = "<b>" + escapeHtml(ratio(change.actual)) + "</b>" +
-        '<span class="sub">expected ' + escapeHtml(ratio(change.expected)) + "</span>";
+        '<span class="sub">of ' + escapeHtml(ratio(change.expected)) + " expected</span>" +
+        miniGap(change);
       const burn = document.createElement("td");
       burn.className = "num";
       burn.innerHTML = '<span class="money">' + escapeHtml(money(financial.loss_per_hour)) + "</span>";
@@ -933,12 +1232,11 @@
             (rows.length === 1 ? " cohort" : " cohorts") + "</span>"
           : "") +
       "</div>" +
-      '<p class="rail-lede">Developing deviations that have not crossed the detection floors. ' +
-      "They are not incidents, they are not counted in the figures above, and nothing pages on them.</p>";
+      '<p class="rail-lede">Below the detection floors. Not incidents, not in the figures ' +
+      "above, and nothing pages on them.</p>";
     if (!rows.length) {
       return '<section class="rail is-quiet" aria-label="Watching">' + head +
-        '<p class="rail-none">Nothing is being watched. A cohort appears here the moment detection ' +
-        "measures it deviating without crossing its floors.</p></section>";
+        '<p class="rail-none">Nothing is being watched.</p></section>';
     }
     const statement = rows[0].statement;
     return '<section class="rail" aria-label="Watching">' + head +
@@ -1003,16 +1301,7 @@
     lead.appendChild(meta);
     head.appendChild(lead);
     const lost = financial.estimated_lost_approved_volume || {};
-    const chanCards = channels.length
-      ? '<div class="panel"><h3>Escalation</h3><p class="hint">Severity routes. Confidence never does. These are stored outcomes, not controls.</p><div class="chan">' +
-        channels.map(function (event) {
-          const armed = event.status === "delivered" || event.status === "fallback_dashboard";
-          return '<article class="chan-card' + (armed ? " armed" : "") + '"><h4>' +
-            escapeHtml(event.channel || "channel") + "</h4><p class=\"state\">" +
-            escapeHtml(event.status || "not in store") + "</p></article>";
-        }).join("") +
-        "</div></div>"
-      : '<div class="panel"><h3>Escalation</h3><p class="empty">No escalation outcome is stored for this incident.</p></div>';
+    const chanCards = escalationLine(incident, channels);
     const diagnosisPair = badgePair(
       incident.severity,
       (investigation.result || {}).diagnostic_confidence,
@@ -1024,16 +1313,17 @@
     // leaves a judge reading a puzzling pair; one line of copy turns it into a
     // design decision. It asserts no figure.
     const diagnosis = '<div class="panel"><h3>Priority and confidence</h3>' +
-      '<p class="hint">Two readings, two owners, deliberately not one score.</p>' +
+      '<p class="hint">Two owners, deliberately not one score.</p>' +
       '<div class="dual">' +
       '<div><span class="dual-l">priority</span>' + diagnosisPair.querySelector(".sev").outerHTML + "</div>" +
       '<div><span class="dual-l">confidence</span>' + diagnosisPair.querySelector(".conf").outerHTML + "</div>" +
       "</div>" +
-      '<p class="dual-note">Priority is the measured business impact of the incident. Confidence is the ' +
+      '<details class="disclose"><summary>Why these are two readings, not one score</summary>' +
+      '<div class="disclose-body"><p>Priority is the measured business impact of the incident. Confidence is the ' +
       "investigation's assessment of how strongly the evidence supports a cause. Neither is allowed to move " +
       "the other, so a critical incident at low confidence reads exactly as it should: a large problem " +
       "nobody can explain yet, which is worse than a small one and not better. Escalation routes on " +
-      "priority alone.</p>" +
+      "priority alone.</p></div></details>" +
       "</div>";
     frame.innerHTML =
       '<div class="frame-bar"><span class="dot"></span><span class="path mono">' + escapeHtml(path) + "</span></div>" +
@@ -1063,7 +1353,7 @@
     }
     const cause = questionCard(
       "4. What probably caused it?",
-      "The investigation's leading hypothesis. Never guessed in the UI.",
+      null,
       withheldOr("cause", causeBlock(questions.what_probably_caused_it,
         narrativePlaceholder(incident, investigation, "cause")))
     );
@@ -1081,30 +1371,30 @@
     }
     left.appendChild(questionCard(
       "5. Why do we believe that?",
-      "What is established, what is not ruled out, and what would settle it.",
+      null,
       withheldOr("belief", beliefBlock(questions.why_we_believe_that,
         narrativePlaceholder(incident, investigation, "belief")))
     ));
     const right = document.createElement("div");
     right.appendChild(questionCard(
       "6. What should the TAM do?",
-      "Recommended next action from the investigation record.",
+      null,
       withheldOr("action", actionBlock(questions.what_the_operator_should_do,
         narrativePlaceholder(incident, investigation, "action")))
     ));
     right.appendChild(questionCard(
       "1. What changed?",
-      "Copied from the incident change block.",
+      null,
       changeBlock(questions.what_changed)
     ));
     right.appendChild(questionCard(
       "2. Where?",
-      "Affected cohort as stored.",
+      null,
       whereBlock(questions.where, incident)
     ));
     right.appendChild(questionCard(
       "3. How much does it matter?",
-      "Financial impact as stored.",
+      null,
       moneyBlock(questions.how_much_it_matters)
     ));
     right.insertAdjacentHTML("beforeend", diagnosis);
@@ -1115,6 +1405,32 @@
     detailBoard.innerHTML = "";
     detailBoard.appendChild(frame);
     bindCites(detailBoard);
+  }
+
+  // The escalation ladder, as one line rather than a screen.
+  //
+  // The tab this replaced was the strongest surface in a full rehearsal, and
+  // what made it strong was that the outcomes are stored rows: which channel
+  // was reached, at which severity, with what result. That has not changed -
+  // it is read from the same `escalation_event` records, cited like every
+  // other figure, and it is still an account of what already fired rather than
+  // a control. Only its size on the page changed.
+  function escalationLine(incident, channels) {
+    const sev = badgePair(incident.severity, "__omit__", null).querySelector(".sev").outerHTML;
+    if (!channels.length) {
+      return '<p class="escline"><span class="escline-l">Escalation</span>' +
+        '<span class="empty">No escalation outcome is stored for this incident.</span></p>';
+    }
+    const parts = channels.map(function (event) {
+      const status = event.status || "not in store";
+      const reached = status === "delivered" || status === "fallback_dashboard";
+      return '<span class="escch' + (reached ? " reached" : "") + '">' +
+        escapeHtml(event.channel || "channel") + " <b>" + escapeHtml(status) + "</b></span>";
+    }).join("");
+    return '<p class="escline"><span class="escline-l">Escalation</span>' + sev +
+      '<span class="escch-list">' + parts + "</span>" +
+      '<span class="escline-note">stored outcomes, not controls' +
+      citeButton("detail-escalation", "cite the escalation outcomes") + "</span></p>";
   }
 
   function questionCard(title, hint, inner) {
@@ -1676,7 +1992,8 @@
       html += '<p class="q-label">Pointing the same way</p>' + evidenceList(supporting);
     }
     if (competing.length) {
-      html += '<section class="rigor"><h4>Not ruled out<span class="rigor-n">' + competing.length + "</span></h4>" +
+      html += '<details class="disclose rigor"><summary>Not ruled out<span class="rigor-n">' +
+        competing.length + "</span></summary><div class=\"disclose-body\">" +
         '<p class="rigor-why">The agent has to publish what it could not eliminate. Each of these survives ' +
         "the evidence gathered so far, and carries the query that keeps it alive.</p>" +
         '<ol class="claims">' + competing.map(function (item) {
@@ -1687,17 +2004,18 @@
           ? '<div class="rigor-amb"><p class="q-label">Why this cannot be settled from what is stored</p><p>' +
             escapeHtml(String(ambiguity.statement)) + "</p>" + evidenceList(ambiguity.evidence) + "</div>"
           : "") +
-        "</section>";
+        "</div></details>";
     }
     if (missing.length) {
-      html += '<section class="rigor next"><h4>What would settle it<span class="rigor-n">' + missing.length + "</span></h4>" +
+      html += '<details class="disclose rigor next"><summary>What would settle it<span class="rigor-n">' +
+        missing.length + "</span></summary><div class=\"disclose-body\">" +
         '<p class="rigor-why">Named next observations, not a shrug. Each one would discriminate between the ' +
         "explanations above.</p>" +
         '<ol class="claims">' + missing.map(function (item) {
           return "<li><p>" + escapeHtml(String(item.request || "")) + "</p>" +
             (item.reason ? '<p class="because">Because ' + escapeHtml(lowerFirst(item.reason)) + "</p>" : "") +
             evidenceList(item.evidence) + "</li>";
-        }).join("") + "</ol></section>";
+        }).join("") + "</ol></div></details>";
     }
     if (!html) return '<p class="q-none">' + escapeHtml(fallback) + "</p>";
     return html;
@@ -1709,8 +2027,16 @@
     const urgency = data.urgency
       ? '<span class="urg">' + escapeHtml(String(data.urgency)) + "</span>"
       : "";
-    return '<p class="q-lead">' + escapeHtml(String(data.action)) + "</p>" +
-      (urgency ? '<p class="q-urg">urgency ' + urgency + "</p>" : "") +
+    const text = String(data.action);
+    const stop = text.indexOf(". ");
+    const opening = stop > 0 ? text.slice(0, stop + 1) : text;
+    const rest = stop > 0 ? text.slice(stop + 1).trim() : "";
+    return (urgency ? '<p class="q-urg">urgency ' + urgency + "</p>" : "") +
+      '<p class="q-lead">' + escapeHtml(opening) + "</p>" +
+      (rest
+        ? '<details class="disclose"><summary>The rest of the recommendation</summary>' +
+          '<div class="disclose-body"><p>' + escapeHtml(rest) + "</p></div></details>"
+        : "") +
       '<p class="q-label">What that rests on</p>' +
       evidenceList(data.basis, "No citation was stored for this recommendation.") +
       '<p class="q-foot">Advisory. The system does not execute it.</p>';
@@ -2000,6 +2326,7 @@
   }
 
   function renderEscalation() {
+    if (!escalationBoard) return;
     const data = state.escalations;
     if (!data) {
       escalationBoard.innerHTML = '<p class="empty">Waiting for the store.</p>';
@@ -2092,6 +2419,8 @@
         body: watch.projected_loss_per_hour,
       };
     }
+    if (citeId === "trend-series") return seriesCite("rate");
+    if (citeId === "trend-failures") return seriesCite("failures");
     if (citeId && citeId.indexOf("ingest-") === 0) return ingestCite(citeId);
     if (citeId && citeId.indexOf("ask-") === 0) return askCite(citeId);
     if (citeId && citeId.indexOf("merchant-") === 0) return merchantCite(citeId);
@@ -2100,6 +2429,10 @@
       "overview-severity": { title: "Incident severity", field: "incident.severity", value: headline.severity, source: overview.source_incident_id },
       "overview-actual": { title: "Current conversion", field: "change.actual", value: overview.current_conversion, source: overview.source_incident_id },
       "overview-expected": { title: "Expected conversion", field: "change.expected", value: overview.expected_conversion, source: overview.source_incident_id },
+      "overview-delta": { title: "Shortfall against expected", field: "change.absolute_delta", value: (overview.change || {}).absolute_delta, source: overview.source_incident_id },
+      "overview-relative": { title: "Relative change", field: "change.relative_change", value: (overview.change || {}).relative_change, source: overview.source_incident_id },
+      "overview-onset": { title: "Onset", field: "incident.onset", value: headline.onset, source: overview.source_incident_id },
+
       "overview-gmv": { title: "GMV", field: "financial_impact.attempted_value", value: overview.gmv, source: overview.source_incident_id },
       "overview-risk": { title: "GMV at risk", field: "financial_impact.gmv_at_risk", value: overview.estimated_gmv_at_risk, source: overview.source_incident_id },
       "overview-burn": { title: "Costing / hour", field: "financial_impact.loss_per_hour", value: (overview.financial_impact || {}).loss_per_hour, source: overview.source_incident_id },
@@ -2109,6 +2442,7 @@
       "detail-lost": { title: "Payments lost", field: "financial_impact.estimated_lost_approved_volume.payments", value: (financial.estimated_lost_approved_volume || {}).payments, source: incident.incident_id },
       "detail-onset": { title: "Onset", field: "incident.onset", value: incident.onset, source: incident.incident_id },
       "detail-persist": { title: "Observed for", field: "persistence.observed_for_seconds", value: (incident.persistence || {}).observed_for_seconds, source: incident.incident_id },
+      "detail-escalation": { title: "Escalation outcomes", field: "escalation_event.status", value: ((state.detail || {}).escalation || []).map(function (event) { return (event.channel || "channel") + ": " + (event.status || "not in store"); }).join(" · "), source: incident.incident_id },
     };
     const rec = table[citeId];
     if (!rec) return null;
@@ -2128,6 +2462,41 @@
   // Provenance cites the tool, not an incident record: `ingest_health` is a C2
   // evidence tool like any other and the drawer shows the field the figure was
   // read from, so the line can be checked rather than believed.
+  // The series cites the tool, the window and the watermark rather than a
+  // gateway query_id: `metric_series` is answered straight off the evidence
+  // surface here, exactly as `ingest_health` is, and no id is minted for a call
+  // the gateway did not make. Everything below is read out of the response.
+  function seriesCite(view) {
+    const payload = state.series;
+    if (!payload) return null;
+    const series = payload[view] || {};
+    const points = series.points || [];
+    const measured = points.filter(function (point) {
+      return point && typeof point.value === "number";
+    });
+    const window = series.window || {};
+    return {
+      title: view === "failures" ? "Failed attempts per bucket" : "Conversion over time",
+      lede: "Answered by W2's metric_series evidence tool over the same store every other " +
+        "figure on this board comes from. Each point is drawn at the value the tool returned; " +
+        "nothing is averaged, smoothed, interpolated or forecast in the page.",
+      rows: [
+        ["tool", "metric_series"],
+        ["metric", series.metric || "not in store"],
+        ["cohort", cohortLine(series.cohort) ],
+        ["window.start", window.start || "not in store"],
+        ["window.end", window.end || "not in store"],
+        ["bucket_seconds", series.bucket_seconds == null ? "not in store" : series.bucket_seconds],
+        ["points", points.length],
+        ["points with a value", measured.length],
+        ["measured_through", series.measured_through || "not in store"],
+        ["watermark", series.watermark || "not in store"],
+        ["as_of", series.as_of || "not in store"],
+      ],
+      body: series,
+    };
+  }
+
   function ingestCite(citeId) {
     const data = state.ingestion;
     if (!data || data.unreadable) return null;
@@ -2411,6 +2780,7 @@
       if (!state.selectedId && state.queue.length) state.selectedId = state.queue[0].incident_id;
       renderIngestion();
       renderOverview();
+      loadSeries((payloads[0] || {}).source_incident_id);
       renderQueue();
       renderWatchRail();
       renderEscalation();
@@ -2418,6 +2788,22 @@
     }).catch(function (err) {
       judgeStatus.textContent = "Store read failed. " + (err && err.error ? err.error : "Retrying.");
     });
+  }
+
+  // The trend reads its own endpoint, for the same reason the ingest line does:
+  // a series assembled from the incident feed would be describing the feed, not
+  // the traffic. A failure here empties the chart alone and leaves the rest of
+  // the board standing.
+  function loadSeries(incidentId) {
+    if (!incidentId || incidentId === "none") {
+      state.series = null;
+      renderTrend();
+      return Promise.resolve();
+    }
+    return jsonGet("/api/series/" + encodeURIComponent(incidentId))
+      .then(function (payload) { state.series = payload; })
+      .catch(function () { state.series = null; })
+      .then(function () { renderTrend(); });
   }
 
   function loadDetail(incidentId) {
