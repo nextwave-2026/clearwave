@@ -11,6 +11,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 STORE = ROOT / "state" / "clearwave.db"
+
+from prepare_history import cohort_warmth, warmth_lines  # noqa: E402
 DASHBOARD = "http://127.0.0.1:8082/api/overview"
 WORKERS = (
     ("merchant-a", "clearwave-worker-merchant-a"),
@@ -48,23 +50,32 @@ def running(name: str) -> str:
     return status if status else "missing"
 
 
-def store_line() -> str:
+def store_report() -> tuple[str, list[str]]:
     if not STORE.exists():
-        return f"store: no database at {STORE}"
+        missing = f"no database at {STORE}"
+        return f"store: {missing}", warmth_lines({}, missing=missing)
     try:
         connection = sqlite3.connect(f"file:{STORE}?mode=ro", uri=True)
     except sqlite3.Error as exc:
-        return f"store: cannot open {STORE} ({exc})"
+        missing = f"cannot open {STORE} ({exc})"
+        return f"store: {missing}", warmth_lines({}, missing=missing)
     try:
         row = connection.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='attempt'"
         ).fetchone()
         if not row or row[0] == 0:
-            return f"store: no attempt table in {STORE}"
+            missing = f"no attempt table in {STORE}"
+            return f"store: {missing}", warmth_lines({}, missing=missing)
         count = connection.execute("SELECT COUNT(*) FROM attempt").fetchone()[0]
-        return f"store: {count} attempt rows in {STORE}"
+        try:
+            connection.row_factory = sqlite3.Row
+            history = warmth_lines(cohort_warmth(connection))
+        except sqlite3.Error as exc:
+            history = warmth_lines({}, missing=f"unreadable ({exc})")
+        return f"store: {count} attempt rows in {STORE}", history
     except sqlite3.Error as exc:
-        return f"store: {STORE} present but unreadable ({exc})"
+        missing = f"{STORE} present but unreadable ({exc})"
+        return f"store: {missing}", warmth_lines({}, missing=missing)
     finally:
         connection.close()
 
@@ -93,7 +104,10 @@ def main() -> int:
     print(worker_line())
     print(f"detector: {running('clearwave-detector')}")
     print(f"investigation: {running('clearwave-investigation')}")
-    print(store_line())
+    store, history = store_report()
+    print(store)
+    for line in history:
+        print(line)
     print(dashboard_line())
     return 0
 

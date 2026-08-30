@@ -29,14 +29,17 @@ the three merchants, a detector that consumes and sweeps every 45 seconds, the i
 daemon, and the dashboard on http://127.0.0.1:8082/ . It returns only once `/api/overview`
 answers. `make stack-status` prints one fact per piece of that loop. `make stack-down` stops it.
 
-**Leave it running. Two warm-up clocks, not one.** Detection compares the current window
-against that merchant's own trailing hour (`BASELINE_TRAILING_BUCKETS = 60` buckets of
-`BUCKET_SECONDS = 60` in `detector/config.py`) - a stack started a minute before a demo has no
-baseline and will not warn on anything subtle. Merchant-relative severity needs six hours of
-history (`MERCHANT_NORMAL_MIN_HOURS = 6`): below that floor `merchant_normal_hourly_value_usd`
-and `severity_ceilings.merchant_relative` both read null, so the ceiling is silently inert.
-Start 60 minutes before the pitch for detection; 6 hours before if you plan to pitch
-merchant-relative severity.
+**Leave it running. The store is pre-warmed.** `make stack-up` runs `scripts/prepare_history.py`
+before compose, which replaces `state/clearwave.db` with eight event-time hours of healthy
+traffic in the names the live workers actually emit (merchant-b / adyen among them). That is
+what clears the trailing detection baseline (`BASELINE_TRAILING_BUCKETS = 60` buckets of
+`BUCKET_SECONDS = 60` in `detector/config.py`) and the merchant-relative floor
+(`MERCHANT_NORMAL_MIN_HOURS = 6`, `MERCHANT_NORMAL_MIN_PAYMENTS = 200`). Below that floor
+`merchant_normal_hourly_value_usd` and `severity_ceilings.merchant_relative` both read null.
+`make stack-status` prints those two floors separately. Generating the history takes seconds;
+judges must not wait for traffic to accumulate. The anomaly is not in the seed: it still has
+to happen live after the judge presses the button, and the detector still has to find it.
+Re-running `stack-up` starts clean, because leftover rehearsal incidents promote a later band.
 
 The one-shot commands below still work for debugging a single consume. They are not how the
 live product is meant to be shown.

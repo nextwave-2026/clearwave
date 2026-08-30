@@ -4,17 +4,22 @@
 STACK_SURFACES_HOST_PORT ?= 8082
 STACK_SURFACES_URL ?= http://127.0.0.1:$(STACK_SURFACES_HOST_PORT)
 STACK_WAIT_TIMEOUT ?= 300
+PREPARE_HOURS ?= 8
+PREPARE_SEED ?= 20260830
 
-.PHONY: stack-up stack-status stack-down
+.PHONY: stack-up stack-status stack-down stack-prepare
 
-stack-up:
+stack-prepare:
 	@mkdir -p state
+	@python3 -S scripts/prepare_history.py --hours $(PREPARE_HOURS) --seed $(PREPARE_SEED)
+
+stack-up: stack-prepare
 	@docker compose up -d --build --wait --wait-timeout $(STACK_WAIT_TIMEOUT) \
 	  kafka schema-registry \
 	  worker-merchant-a worker-merchant-b worker-merchant-c \
 	  detector investigation surfaces
 	@printf '%s\n' "Open $(STACK_SURFACES_URL)/"
-	@printf '%s\n' "Leave this running. Detection baseline is 60 minutes (BASELINE_TRAILING_BUCKETS=60). Merchant-relative severity needs 6 hours (MERCHANT_NORMAL_MIN_HOURS=6) or those fields stay null."
+	@printf '%s\n' "Store already holds healthy merchant-b/adyen history (see prepare lines above). Live traffic stitches onto it; the anomaly still happens after the judge presses the button."
 
 stack-status:
 	@python3 -S scripts/stack_status.py

@@ -48,13 +48,13 @@ defines the four-way work division.
 
 The product is runnable. The copy-pasteable operator sequence - pre-warmed live stack, offline stage path, and live Kafka caveats, including commands that fail and must not be used - is in [`docs/demo-sequence.md`](docs/demo-sequence.md).
 
-Live product path, from the repository root. Detection needs **60 minutes** of traffic (trailing-hour baseline). Merchant-relative severity needs **6 hours** or those fields stay null:
+Live product path, from the repository root. `make stack-up` writes eight hours of healthy merchant-b/adyen history into the store (seconds, not hours of waiting) and then starts the compose loop. Detection baseline and merchant-relative severity are warm when it returns. The anomaly still happens live after the judge presses the button.
 
 ```sh
 make stack-up
 ```
 
-Open the URL it prints (`http://127.0.0.1:8082/`). `make stack-status` reports each piece of the loop. `make stack-down` stops it. Do not run `make e2e` then `make surfaces-serve` as the pitch; that is a scripted CLI demonstration.
+Open the URL it prints (`http://127.0.0.1:8082/`). `make stack-status` reports each piece of the loop, including whether the store is warm enough for the trailing-hour baseline and for the six-hour merchant-relative floor, separately. `make stack-down` stops it. Do not run `make e2e` then `make surfaces-serve` as the pitch; that is a scripted CLI demonstration.
 
 Safe stage path if Docker is not up, from the repository root after `make install`. Two terminals, same `$DB`. Port `18080` avoids a busy `8080`; the product default is `8080`.
 
