@@ -253,7 +253,7 @@ Decided, with the authoritative record in parentheses:
 - Challenge 02 Control Tower is the pick (`DECISIONS.md` 2026-08-29T16:52Z).
 - Four workstreams and owners (`docs/ownership.md`; `DECISIONS.md` 2026-08-29T18:15Z).
 - Kafka for raw ingestion; SQLite for persistence; L4 polls SQLite and does not consume Kafka (`DECISIONS.md` 2026-08-29T19:04Z, 19:17Z, 19:43Z).
-- C1 through C4 shapes (`INTERFACES.md` and `docs/contracts/`).
+- C1 through C6 shapes (`INTERFACES.md` and `docs/contracts/`).
 - Severity is W2; diagnostic confidence is W3; they never collapse (`docs/ownership.md`; [`docs/prd.md`](prd.md) section 11).
 - Three guaranteed demo scenarios, listed above (`DECISIONS.md` 2026-08-29T19:17Z).
 - W4 holds no domain logic (`docs/ownership.md`).
@@ -266,26 +266,23 @@ Implemented on `origin/main` as of this writing, in the owning trees:
 - W4 dashboard, store, Slack / phone escalation, and a judge-trigger adapter under `surfaces/`. The adapter calls `worker.inject`; the button is a toggle that starts and stops a real incident on a running worker.
 - Offline five-stage slice under `stubs/`.
 
-`INTERFACES.md` on `main` still records C5 as named but not specified.
-
 ## Still open
 
-From [`docs/ownership.md`](ownership.md) Open decisions, unless a later `DECISIONS.md` entry closed it:
+From [`docs/ownership.md`](ownership.md), `INTERFACES.md`, and later `DECISIONS.md` entries:
 
-- Team-wide language, framework and stack. Python is decided only for W2's evidence-query scripts (`DECISIONS.md` 2026-08-29T19:17Z) and, separately, for W1's worker (`DECISIONS.md` 2026-08-29T18:39Z).
-- Whether the four workstreams are one tree or separate services.
-- Concrete numeric thresholds that produce the LOW/MEDIUM/HIGH/CRITICAL labels. The channel binding in [`docs/prd.md`](prd.md) section 19 is decided; the cutovers are not.
-- Telephony mechanism, at the ownership-doc level. juank's Twilio path is the accepted W4 implementation, not a new entry in `DECISIONS.md`.
-- Which external status sources are actually used.
-- How diagnostic confidence is represented, at the ownership-doc level. [`docs/contracts/investigation-result.md`](contracts/investigation-result.md) already publishes qualitative `low` / `medium` / `high`.
-- Concrete merchant identities and whether the count is three or four ([`docs/prd.md`](prd.md) section 20).
+- Replayable long-history data for a real seasonal hour-of-week baseline. The live demo uses
+  `make stack-up` to prepare eight healthy event-time hours, enough for the trailing baseline and
+  merchant-relative severity floor.
+- Concrete external corroboration sources beyond the current `external_status` adapter contract.
+- Deferred evidence work such as `payment_integrity` and the requested high-value-transaction
+  surface.
+- Production packaging and scaling beyond the compose-based hackathon demo path.
 
 Also still open on `main`, not for W4 to resolve:
 
-- C5 is not yet the current `INTERFACES.md` shape.
-- The judge-trigger seam is closed (PR #45): W4's adapter calls W1's `worker.inject`, and the toggle starts and stops a live incident from the browser.
 - juank's request for a high-value transaction id on C2/C3 (`STATUS.md` 2026-08-29T21:07Z) belongs to andres.
-- A live `--scenario` run now stops on its declared duration and on SIGINT/SIGTERM, and the evaluator reads closed C6 records from `state/ground_truth/`.
+- Any further hidden-truth mount hardening follows the latest `STATUS.md` claims; the evaluator
+  path itself is recorded in C6.
 
 ## Where W4 fits
 
@@ -298,6 +295,7 @@ Seams W4 **consumes** and does not build:
 - **C2** only as already-cited evidence on C4, or as figures that already landed on the C3 record. W4 is not a second measurement path.
 - **Judge injection** by calling W1. W4 never reimplements injection and never forwards a scenario identifier toward detection or investigation.
 
-C5 is W4's to specify. The draft on `juank/w4-surfaces` is the accepted approach; it becomes the `INTERFACES.md` shape when that work lands.
+C5 is specified in [`docs/contracts/notification-escalation.md`](contracts/notification-escalation.md)
+and reflected in `INTERFACES.md`.
 
 W4 produces nothing that L1-L4 read. Escalation is fire-and-forget with a recorded outcome. A channel failing must not fail an incident.

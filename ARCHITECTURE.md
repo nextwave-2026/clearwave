@@ -3,30 +3,26 @@
 ```mermaid
 flowchart LR
     subgraph W1["W1 - Simulated World and Ground Truth - raul"]
-        M1[Merchant simulator A<br/>native shape A]
-        M2[Merchant simulator B<br/>native shape B]
-        M3[Merchant simulator C<br/>native shape C]
-        M4[Merchant simulator D<br/>native shape D]
-        Raw[Raw Kafka topics]
+        M1[Merchant simulator A]
+        M2[Merchant simulator B]
+        M3[Merchant simulator C]
+        Raw[Registered Kafka topics<br/>attempts, closed, telemetry]
         Inject[Incident injection point]
         Truth[(Hidden ground truth store)]
         M1 --> Raw
         M2 --> Raw
         M3 --> Raw
-        M4 --> Raw
         Inject --> M1
         Inject --> M2
         Inject --> M3
-        Inject --> M4
         M1 -.-> Truth
         M2 -.-> Truth
         M3 -.-> Truth
-        M4 -.-> Truth
     end
 
     subgraph W2["W2 - Detection Plane - andres"]
-        Registry[Schema registry<br/>JSON Schema normalisation]
-        Canonical[Canonical event stream]
+        Registry[Schema registry<br/>JSON Schema validation]
+        Canonical[Canonical normalisation]
         Store[(Relational SQLite store)]
         Aggregate[Rolling aggregation]
         Baseline[Baselines]
@@ -43,7 +39,7 @@ flowchart LR
     end
 
     subgraph W3["W3 - Investigation and Integration - derek"]
-        Investigator[Headless Pi investigation agent]
+        Investigator[Bounded OpenAI investigation loop]
         Evidence[Evidence-query scripts]
         External[External corroboration]
         Result[Investigation result]
@@ -71,13 +67,13 @@ flowchart LR
     Evaluator -. verdict only .-> Dashboard
 ```
 
-Merchant simulators publish genuinely heterogeneous native events to raw Kafka topics. The schema registry is the normalisation boundary and emits one canonical event stream.
-The canonical representation is persisted in a relational SQLite store and is the consistent model used by downstream workflows.
-Detection consumes the canonical topic for rolling aggregates and uses the SQLite store as its query surface.
+Merchant simulators publish three registered Kafka topics: payment attempts, closed payments, and operational telemetry.
+The detector validates those records through Schema Registry, normalises payment attempts into the canonical model, and persists the observable representation in a relational SQLite store.
+Detection consumes the live Kafka topics for rolling aggregates and uses the SQLite store as its query surface.
 The deterministic detection plane computes baselines, cohort localisation, severity and financial impact, then writes incident records.
 Confounding detection is computed in this plane rather than reasoned about by the investigation agent.
 Kafka consumer lag supplies real queue-depth and retry-amplification evidence from the running pipeline, not a modelled one.
-The investigation agent reads incidents and queries evidence through W2-provided scripts, with external corroboration feeding its analysis.
+The bounded investigation loop reads incidents and queries evidence through W2-provided scripts, with external corroboration feeding its analysis.
 It returns an investigation result with narrative and diagnostic confidence; it does not recompute raw-event metrics.
 Dashboard, Slack and phone escalation consume the incident and investigation surfaces.
 The judge trigger reaches W1's incident injection point, while hidden ground truth remains quarantined from detection and investigation.
