@@ -34,12 +34,6 @@ Licence values come only from metadata already present on this machine; no netwo
 | typing-inspection | typing-inspection==0.4.4 | MIT |
 | typing-extensions | typing-extensions==4.16.0 | PSF-2.0 |
 
-#### Transitive dependencies
-
-| Dependency | Resolved version | Licence |
-| --- | --- | --- |
-| exceptiongroup | exceptiongroup==1.3.1 | MIT |
-
 ### `worker/requirements.txt` (Python)
 
 | Dependency | Declaration | Licence |
@@ -64,10 +58,4 @@ Licence values come only from metadata already present on this machine; no netwo
 | referencing | referencing==0.37.0 | MIT |
 | rpds-py | rpds-py==2026.6.3 | MIT |
 | typing_extensions | typing_extensions==4.16.0 | PSF-2.0 |
-
-#### Transitive dependencies
-
-| Dependency | Resolved version | Licence |
-| --- | --- | --- |
-| exceptiongroup | exceptiongroup==1.3.1 | MIT |
 <!-- END GENERATED LICENCE INVENTORY -->
