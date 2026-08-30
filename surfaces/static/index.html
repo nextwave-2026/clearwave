@@ -9,70 +9,90 @@
 <body>
   <a class="skip" href="#workspace">Skip to board</a>
   <header class="mast">
-    <div class="wordmark">
-      <p class="kicker">Local TAM board</p>
-      <h1>Clearwave <span>Control Tower</span></h1>
+    <div class="wrap mast-in">
+      <div class="brandlock">
+        <span class="brandmark" aria-hidden="true"></span>
+        <span class="rule"></span>
+        <span class="product">Control Tower <span>/ TAM console</span></span>
+      </div>
+      <div class="mast-right">
+        <form id="judge-form" class="judge">
+          <button type="submit" id="judge-trigger">Fire hidden incident</button>
+          <p id="judge-status" role="status">Judge trigger ready. The scenario stays hidden.</p>
+        </form>
+      </div>
     </div>
-    <p class="clock" id="clock" aria-live="polite"></p>
-    <form id="judge-form" class="judge">
-      <button type="submit" id="judge-trigger">Fire hidden incident</button>
-      <p id="judge-status" role="status">Judge trigger ready. The scenario stays hidden.</p>
-    </form>
   </header>
-  <p class="sim-note">All merchants, banks, payments, incidents and outages shown are simulated data produced by this project's simulator for demonstration. Nothing shown represents or implies a real incident, outage, or service problem at any named company. Real company names are used only to make the demonstration recognisable and realistic.</p>
 
-  <div class="shell">
-    <nav class="rail" aria-label="Views">
-      <button type="button" class="rail-btn is-active" data-view="overview">Overview</button>
-      <button type="button" class="rail-btn" data-view="queue">Incident queue</button>
-      <button type="button" class="rail-btn" data-view="detail">Incident detail</button>
-      <button type="button" class="rail-btn" data-view="evidence">Evidence trail</button>
-      <p class="rail-note">Queue is ordered by business priority. Recency is not a ranking. Severity and diagnostic confidence never share a badge.</p>
-    </nav>
-
-    <main id="workspace" class="workspace">
-      <section id="view-overview" class="view is-active" data-view="overview">
-        <header class="view-head">
-          <h2>Business overview</h2>
-          <p>Figures are copied from the highest-priority active incident. Nothing here is computed in the UI.</p>
-        </header>
-        <div id="overview-board" class="overview-board"></div>
-      </section>
-
-      <section id="view-queue" class="view" data-view="queue" hidden>
-        <header class="view-head">
-          <h2>Incident queue</h2>
-          <p>Ordered by stored severity. A CRITICAL incident with LOW confidence is valid and expected.</p>
-        </header>
-        <div id="queue-board" class="queue-board"></div>
-      </section>
-
-      <section id="view-detail" class="view" data-view="detail" hidden>
-        <header class="view-head">
-          <h2>Incident detail</h2>
-          <p>Six questions a TAM should be able to answer without opening a warehouse.</p>
-        </header>
-        <div id="detail-board" class="detail-board"></div>
-      </section>
-
-      <section id="view-evidence" class="view" data-view="evidence" hidden>
-        <header class="view-head">
-          <h2>Evidence trail</h2>
-          <p>The queries that ran, in order, with what came back. This is a product surface, not a log.</p>
-        </header>
-        <div id="evidence-board" class="evidence-board"></div>
-      </section>
-    </main>
-  </div>
-
-  <div id="incoming-call" class="incoming" hidden>
-    <div class="incoming-panel" role="alertdialog" aria-labelledby="incoming-title" aria-describedby="incoming-copy">
-      <p class="incoming-kicker">Critical escalation</p>
-      <h2 id="incoming-title">Incoming call</h2>
-      <p id="incoming-copy" class="incoming-copy"></p>
-      <button type="button" id="answer-call">Answer</button>
+  <div class="prov">
+    <div class="wrap">
+      <p class="sim-note">All merchants, banks, payments, incidents and outages shown are simulated data produced by this project's simulator for demonstration. Nothing shown represents or implies a real incident, outage, or service problem at any named company. Real company names are used only to make the demonstration recognisable and realistic.</p>
+      <div class="prov-in mono">
+        <span><b>clock</b> <span id="clock"></span></span>
+        <span><b>store</b> SQLite, CLEARWAVE_DB</span>
+        <span id="prov-source"><b>source</b> waiting for store</span>
+      </div>
     </div>
   </div>
+
+  <nav class="jump" aria-label="Views">
+    <div class="wrap jump-in">
+      <button type="button" class="jump-link on" data-view="overview">Right now</button>
+      <button type="button" class="jump-link" data-view="queue">Incident queue</button>
+      <button type="button" class="jump-link" data-view="detail">Incident detail</button>
+      <button type="button" class="jump-link" data-view="evidence">Evidence trail</button>
+    </div>
+  </nav>
+
+  <main id="workspace" class="wrap">
+    <section id="view-overview" class="screen overview view is-active" data-view="overview">
+      <div class="screen-head">
+        <h2>Right now</h2>
+        <span class="who">Everything a TAM needs before scrolling</span>
+      </div>
+      <p class="screen-lede">Figures are copied from the highest-priority active incident. Nothing here is computed in the UI. A CRITICAL incident with LOW confidence is valid and expected. Severity and diagnostic confidence never share a badge.</p>
+      <div id="overview-board"></div>
+    </section>
+
+    <section id="view-queue" class="screen view" data-view="queue" hidden>
+      <div class="screen-head">
+        <h2>Incident queue</h2>
+        <span class="who" id="queue-who">Ordered by stored severity. Recency is not a ranking.</span>
+      </div>
+      <p class="screen-lede">Queue is ordered by business priority. A CRITICAL incident with LOW confidence is valid and expected.</p>
+      <div id="queue-board" class="queue-board"></div>
+    </section>
+
+    <section id="view-detail" class="screen view" data-view="detail" hidden>
+      <div class="screen-head">
+        <h2>Incident detail</h2>
+        <span class="who">Six questions a TAM should be able to answer without opening a warehouse.</span>
+      </div>
+      <div id="detail-board" class="detail-board"></div>
+    </section>
+
+    <section id="view-evidence" class="screen view" data-view="evidence" hidden>
+      <div class="screen-head">
+        <h2>Evidence trail</h2>
+        <span class="who">The queries that ran, in order, with what came back. This is a product surface, not a log.</span>
+      </div>
+      <div id="evidence-board" class="evidence-board"></div>
+    </section>
+  </main>
+
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer" aria-hidden="true" aria-label="Evidence citation">
+    <div class="drawer-head">
+      <div>
+        <h3 id="drawer-title">Citation</h3>
+        <p id="drawer-lede">Every figure on this page is copied from the store. This drawer shows which record it came from.</p>
+      </div>
+      <button type="button" class="drawer-close" id="drawer-close" aria-label="Close citation">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3l10 10M13 3 3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
 
   <script src="/app.js"></script>
 </body>
