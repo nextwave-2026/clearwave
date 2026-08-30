@@ -1435,6 +1435,134 @@ class DashboardWiringTests(unittest.TestCase):
         self.assertEqual(sorted(emitted - styled - containers), [])
 
 
+class RevenueFirstOverviewTests(unittest.TestCase):
+    """The overview is revenue-led: money is the subject, the incident explains it.
+
+    The board used to open on `SERVICE STATUS: critical` with money wedged
+    between an incident status and an incident count. Money now leads, and the
+    operational figures stay as the context that explains it.
+    """
+
+    def setUp(self):
+        static = ROOT / "surfaces" / "static"
+        self.html = (static / "index.html").read_text(encoding="utf-8")
+        self.js = (static / "app.js").read_text(encoding="utf-8")
+        self.css = (static / "styles.css").read_text(encoding="utf-8")
+        self.overview = self.js[self.js.index("function renderOverview"):self.js.index("function renderQueue")]
+
+    def test_money_is_emitted_before_the_operational_context(self):
+        risk = self.overview.index("Revenue at risk")
+        rate = self.overview.index("Loss rate")
+        strip = self.overview.index("contextStrip(")
+        self.assertLess(risk, strip)
+        self.assertLess(rate, strip)
+
+    def test_money_carries_the_headline_weight_not_the_incident_status(self):
+        # Hierarchy is size and weight, not a second colour vocabulary.
+        risk = re.search(r"\.money \.mfig-risk dd \{[^}]*font-size: (\d+)px", self.css)
+        status = re.search(r"\.ctx-v \{[^}]*font-size: ([\d.]+)px", self.css)
+        self.assertIsNotNone(risk)
+        self.assertIsNotNone(status)
+        self.assertGreater(int(risk.group(1)), float(status.group(1)) * 2)
+
+    def test_the_conversion_bars_are_the_printed_figure_not_a_derived_one(self):
+        gap = self.js[self.js.index("function gapRow"):self.js.index("function conversionGap")]
+        self.assertIn("style=\"width:' + text +", gap)
+        self.assertIn("const text = ratio(value);", gap)
+        # No second measurement is taken between the two bars.
+        for arithmetic in ("* 100", " - ", "reduce(", "Number("):
+            self.assertNotIn(arithmetic, gap)
+
+    def test_the_overview_computes_nothing(self):
+        board = self.js[self.js.index("function figure(value"):self.js.index("function renderQueue")]
+        for arithmetic in ("reduce(", "+ Number(", " / 60", ".toFixed("):
+            self.assertNotIn(arithmetic, board)
+
+    def test_the_platform_total_refusal_survives_the_business_framing(self):
+        self.assertIn("REFUSAL_NOTE", self.js)
+        self.assertIn("A portfolio total.", self.js)
+        self.assertIn(
+            "Adding cited <code>loss_per_hour</code> figures would be a number that exists only here.",
+            self.js,
+        )
+        self.assertIn("A real total has to come from W2 as its own cited figure.", self.js)
+        self.assertIn("Whose fault it is.", self.js)
+        self.assertIn('overviewNotes.innerHTML = REFUSAL_NOTE;', self.js)
+
+    def test_gmv_at_risk_still_reads_as_an_estimate(self):
+        self.assertIn("estimated · gmv_at_risk on incident ", self.js)
+        self.assertIn("gmv_at_risk, an estimate", self.js)
+
+    def test_the_loss_rate_is_worded_as_a_rate_that_has_not_happened_yet(self):
+        self.assertIn("loss_per_hour on that incident, if it continues", self.js)
+        self.assertIn("loss_per_hour, if it continues", self.js)
+
+    def test_an_empty_store_reads_as_healthy_rather_than_broken(self):
+        self.assertIn("No revenue at risk", self.js)
+        self.assertIn("no active incident, so there is no money figure to copy", self.js)
+        self.assertNotIn('overviewBoard.innerHTML =\n        \'<p class="empty">No incidents in the store.', self.js)
+        self.assertRegex(self.css, r"\.calm \{")
+        self.assertRegex(self.css, r"\.calm-mark \{[^}]*var\(--good\)")
+
+    def test_the_merchant_section_never_calls_a_cohort_a_merchant(self):
+        # "Merchant health" over a row titled PROVIDER P2 asserted something
+        # the stored cohort does not say.
+        self.assertNotIn("Merchant health", self.js)
+        self.assertIn("Who is carrying it", self.js)
+        self.assertIn("or per cohort where the stored incident names no merchant", self.js)
+        self.assertIn('const isMerchant = Boolean(row.merchant_id);', self.js)
+        self.assertIn('isMerchant ? "merchant" : "cohort"', self.js)
+        # And the row label is no longer shouted in uppercase.
+        self.assertNotRegex(self.css, r"\.mcard-head h4 \{[^}]*text-transform")
+
+    def test_a_merchant_figure_cites_one_incident_and_never_a_total(self):
+        self.assertIn("function merchantCite", self.js)
+        self.assertIn("merchant-burn:", self.js)
+        self.assertIn("merchant-risk:", self.js)
+        self.assertIn("not a total for the row and not a total for the platform", self.js)
+
+    def test_the_watch_rail_still_sits_apart_and_below_the_real_incident(self):
+        board = self.html.index('id="overview-board"')
+        merchants = self.html.index('id="overview-merchants"')
+        rail = self.html.index('id="overview-watch-rail"')
+        self.assertLess(board, merchants)
+        self.assertLess(merchants, rail)
+
+    def test_the_view_keys_the_other_layers_build_against_are_untouched(self):
+        for view in ("overview", "queue", "detail", "escalation", "evidence"):
+            self.assertIn(f'data-view="{view}"', self.html)
+
+    def test_the_judge_control_was_not_touched_by_the_business_framing(self):
+        self.assertIn('id="judge-form"', self.html)
+        for stage in ("developing", "collapse", "clear"):
+            self.assertIn(f'data-stage="{stage}"', self.html)
+
+
+class MerchantImpactPayloadTests(unittest.TestCase):
+    """Per-merchant money is published and copied, never summed in the page."""
+
+    def test_a_row_publishes_the_money_of_its_own_top_incident(self):
+        rows = merchant_health([
+            _incident("inc-a", "critical", "2026-08-29T10:00:00Z", merchant="merchant-b"),
+            _incident("inc-b", "low", "2026-08-29T11:00:00Z", merchant="merchant-b"),
+        ])
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["source_incident_id"], "inc-a")
+        self.assertEqual(row["financial_impact"], rows[0]["financial_impact"])
+        top = _incident("inc-a", "critical", "2026-08-29T10:00:00Z", merchant="merchant-b")
+        self.assertEqual(row["financial_impact"], top["financial_impact"])
+        self.assertEqual(row["change"], top["change"])
+
+    def test_a_cohort_without_a_merchant_keeps_merchant_id_null(self):
+        record = _incident("inc-p", "high", "2026-08-29T10:00:00Z", merchant=None)
+        record["affected_cohort"].pop("merchant_id")
+        rows = merchant_health([record])
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0]["merchant_id"])
+        self.assertIn("Provider", rows[0]["scope_label"])
+
+
 class EscalationRaceTests(unittest.TestCase):
     """Two overlapping HTTP requests must never fire real channels twice.
 

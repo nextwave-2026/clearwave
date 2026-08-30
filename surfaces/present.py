@@ -226,7 +226,14 @@ def cohort_scope_label(cohort: Mapping[str, Any] | None) -> str:
 
 
 def merchant_health(incidents: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Per-merchant view of stored incident severity. No health score is invented."""
+    """Per-merchant view of stored incident severity and money.
+
+    No health score is invented and nothing is added up across a group: the
+    money published here is copied off that group's own highest-priority
+    record, and travels with the id of the record it came from so the board
+    can cite it. A group whose cohort names no merchant keeps `merchant_id`
+    null, which is how the board knows not to call it a merchant.
+    """
     grouped: dict[tuple[Any, ...], list[Mapping[str, Any]]] = {}
     for incident in incidents:
         if _is_watch(incident):
@@ -251,6 +258,9 @@ def merchant_health(incidents: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
                 "highest_severity": top.get("severity"),
                 "active_incident_count": sum(1 for item in records if _is_active(item)),
                 "incident_ids": [item.get("incident_id") for item in records],
+                "source_incident_id": top.get("incident_id"),
+                "financial_impact": top.get("financial_impact"),
+                "change": top.get("change"),
             }
         )
     return health

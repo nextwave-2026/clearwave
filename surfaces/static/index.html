@@ -50,7 +50,7 @@
 
   <nav class="jump" aria-label="Views">
     <div class="wrap jump-in">
-      <button type="button" class="jump-link on" data-view="overview">Right now</button>
+      <button type="button" class="jump-link on" data-view="overview">Revenue impact</button>
       <button type="button" class="jump-link" data-view="queue">Incident queue</button>
       <button type="button" class="jump-link" data-view="detail">Incident detail</button>
       <button type="button" class="jump-link" data-view="escalation">Escalation</button>
@@ -61,13 +61,14 @@
   <main id="workspace" class="wrap">
     <section id="view-overview" class="screen overview view is-active" data-view="overview">
       <div class="screen-head">
-        <h2>Right now</h2>
-        <span class="who">Everything a TAM needs before scrolling</span>
+        <h2>Revenue impact</h2>
+        <span class="who">What this is costing, and the incident that explains it</span>
       </div>
-      <p class="screen-lede">Figures are copied from the highest-priority active incident. Nothing here is computed in the UI. A CRITICAL incident with LOW confidence is valid and expected. Severity and diagnostic confidence never share a badge.</p>
+      <p class="screen-lede">Money is the subject of this view; the incident below it is the explanation, not the headline. Every figure is copied from the highest-priority active incident and cites the record it came from. Nothing here is computed in the UI, and no figure is added up across incidents.</p>
       <div id="overview-board"></div>
-      <div id="overview-watch-rail"></div>
       <div id="overview-merchants"></div>
+      <div id="overview-watch-rail"></div>
+      <div id="overview-notes"></div>
     </section>
 
     <section id="view-queue" class="screen view" data-view="queue" hidden>

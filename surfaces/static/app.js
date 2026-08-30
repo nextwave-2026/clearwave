@@ -21,6 +21,7 @@
   const escalationBoard = document.getElementById("escalation-board");
   const overviewRail = document.getElementById("overview-watch-rail");
   const overviewMerchants = document.getElementById("overview-merchants");
+  const overviewNotes = document.getElementById("overview-notes");
   const queueRail = document.getElementById("queue-watch-rail");
   const evidenceBoard = document.getElementById("evidence-board");
   const judgeStatus = document.getElementById("judge-status");
@@ -150,19 +151,6 @@
     return "sev-low";
   }
 
-  function kpiKind(severity) {
-    const value = String(severity || "").toLowerCase();
-    if (value === "critical") return "red";
-    if (value === "high") return "amber";
-    return "grey";
-  }
-
-  function lampHtml(kind) {
-    if (kind === "red") return '<span class="lamp"><i class="on"></i><i></i><i></i></span>';
-    if (kind === "amber") return '<span class="lamp"><i></i><i class="on"></i><i></i></span>';
-    return '<span class="lamp"><i></i><i></i><i class="on grey"></i></span>';
-  }
-
   function badgePair(severity, confidence, lifecycle) {
     const sev = document.createElement("span");
     const sevValue = severity || "unknown";
@@ -205,67 +193,173 @@
 
   // The cite dot rides on the hint line, not the headline value: a long money
   // figure plus a trailing dot wraps the dot onto a line of its own.
-  function kpi(kind, label, value, hint, citeId) {
-    const foot = citeId
-      ? '<span class="fig">' + escapeHtml(hint) + citeButton(citeId, "cite " + label) + "</span>"
-      : escapeHtml(hint);
+  function figure(value, hint, citeId, label) {
     return (
-      '<div class="kpi kpi-' + kind + '">' +
-      lampHtml(kind) +
-      "<dt>" + escapeHtml(label) + "</dt><dd>" + escapeHtml(value) + "</dd>" +
-      "<p>" + foot + "</p></div>"
+      "<dd>" + escapeHtml(value) + "</dd>" +
+      '<p class="fig">' + escapeHtml(hint) + (citeId ? citeButton(citeId, "cite " + label) : "") + "</p>"
     );
+  }
+
+  // One money figure at headline weight. `tone` is the figure's own reading -
+  // `risk` for money exposed, `rate` for the per-hour rate, `calm` for volume
+  // that is merely context. It is not a severity and never borrows one.
+  function moneyFigure(tone, label, value, hint, citeId) {
+    return (
+      '<div class="mfig mfig-' + tone + '">' +
+      "<dt>" + escapeHtml(label) + "</dt>" +
+      figure(value, hint, citeId, label) +
+      "</div>"
+    );
+  }
+
+  // The bar's length IS the printed figure: `ratio()` already renders the
+  // stored value as a percentage string, and that same string is used as the
+  // CSS width. Nothing is subtracted, scaled or otherwise derived here, and
+  // the distance between the two bars is deliberately left undrawn - it is
+  // not a published figure.
+  function gapRow(kind, label, value, citeId, ariaLabel) {
+    const text = ratio(value);
+    const track = text === "not in store"
+      ? '<span class="gap-track"></span>'
+      : '<span class="gap-track"><i class="gap-fill gap-' + kind + '" style="width:' + text + '"></i></span>';
+    return (
+      '<div class="gap-row">' +
+      '<span class="gap-l">' + escapeHtml(label) + "</span>" +
+      track +
+      '<span class="gap-v"><span class="fig">' + escapeHtml(text) +
+      citeButton(citeId, "cite " + ariaLabel) + "</span></span>" +
+      "</div>"
+    );
+  }
+
+  function conversionGap(data, sourceId) {
+    return (
+      '<section class="gap" aria-label="Conversion against expected">' +
+      "<h3>Conversion against expected</h3>" +
+      '<p class="gap-lede">The gap between these two is what the money above is measuring. Both are copied from incident ' +
+      escapeHtml(sourceId) + ".</p>" +
+      gapRow("now", "now", data.current_conversion, "overview-actual", "current conversion") +
+      gapRow("exp", "expected", data.expected_conversion, "overview-expected", "expected conversion") +
+      '<p class="gap-cap">Each bar is drawn at its own stored value. The distance between them is not published as a figure, so it is not drawn as one.</p>' +
+      "</section>"
+    );
+  }
+
+  // Service status and the incident count are true and useful, so they stay -
+  // but as the context that explains the money, at context weight.
+  function contextStrip(headline, data, sourceId) {
+    const sev = badgePair(headline.severity, "__omit__", null).querySelector(".sev").outerHTML;
+    return (
+      '<div class="ctxbar">' +
+      '<div class="ctx"><span class="ctx-l">Service status</span><span class="ctx-v">' + sev +
+      citeButton("overview-severity", "cite service status") + "</span></div>" +
+      '<div class="ctx"><span class="ctx-l">Active incidents</span><span class="ctx-v">' +
+      escapeHtml(count(data.active_incident_count)) + "</span></div>" +
+      '<div class="ctx"><span class="ctx-l">Explained by</span><span class="ctx-v mono">' +
+      escapeHtml(sourceId) + "</span></div>" +
+      "</div>"
+    );
+  }
+
+  // Kept, deliberately and word for word. A revenue-led board is exactly where
+  // a reader looks for the invented total, so the refusal has to be on it.
+  const REFUSAL_NOTE =
+    '<div class="note warn tight"><h4>Two things this header deliberately does not show</h4>' +
+    "<p><b>A portfolio total.</b> Adding cited <code>loss_per_hour</code> figures would be a number that exists only here. A real total has to come from W2 as its own cited figure.</p>" +
+    "<p><b>Whose fault it is.</b> Attribution belongs to the investigation. A traffic light that guessed would be the worst thing this dashboard could do.</p></div>";
+
+  // A row is a merchant only when the stored cohort names one. Where it names
+  // a provider or a country instead, the row says so rather than being filed
+  // under a heading that calls it a merchant.
+  function merchantCard(row, index) {
+    const financial = row.financial_impact || {};
+    const change = row.change || {};
+    const source = row.source_incident_id || "not in store";
+    const isMerchant = Boolean(row.merchant_id);
+    const sev = badgePair(row.highest_severity, "__omit__", null).querySelector(".sev").outerHTML;
+    return (
+      '<article class="mcard">' +
+      '<div class="mcard-head">' +
+      "<h4>" + escapeHtml(row.scope_label || row.merchant_id || "Platform-wide") + "</h4>" +
+      '<span class="mkind">' + (isMerchant ? "merchant" : "cohort") + "</span>" +
+      "</div>" +
+      '<dl class="mcard-figs">' +
+      '<div class="mfig mfig-rate">' +
+      "<dt>Loss rate</dt>" +
+      figure(money(financial.loss_per_hour) + " / hour", "loss_per_hour, if it continues",
+        "merchant-burn:" + index, "loss rate for " + (row.scope_label || source)) +
+      "</div>" +
+      '<div class="mfig mfig-risk">' +
+      "<dt>Revenue at risk</dt>" +
+      figure(money(financial.gmv_at_risk), "gmv_at_risk, an estimate",
+        "merchant-risk:" + index, "revenue at risk for " + (row.scope_label || source)) +
+      "</div>" +
+      "</dl>" +
+      '<p class="mcard-foot">' + sev +
+      "<span>Converting " + escapeHtml(ratio(change.actual)) + " against " +
+      escapeHtml(ratio(change.expected)) + " expected</span>" +
+      '<span class="mono">' + escapeHtml(count(row.active_incident_count)) +
+      " active · " + escapeHtml(source) + "</span></p>" +
+      "</article>"
+    );
+  }
+
+  function renderMerchants(rows) {
+    const list = rows || [];
+    if (!list.length) {
+      overviewMerchants.innerHTML = "";
+      return;
+    }
+    overviewMerchants.innerHTML =
+      '<section class="impact" aria-label="Revenue impact by merchant">' +
+      '<div class="impact-head"><h3>Who is carrying it</h3>' +
+      '<p class="impact-lede">One row per merchant, or per cohort where the stored incident names no merchant. ' +
+      "Every figure is copied from that row's own highest-priority incident. Nothing is added up across rows.</p></div>" +
+      '<div class="merchants">' + list.map(merchantCard).join("") + "</div>" +
+      "</section>";
+    bindCites(overviewMerchants);
   }
 
   function renderOverview() {
     const data = state.overview;
     if (!data) {
       overviewBoard.innerHTML = '<p class="empty">No overview yet.</p>';
+      overviewMerchants.innerHTML = "";
+      overviewNotes.innerHTML = "";
       provSource.innerHTML = "<b>source</b> waiting for store";
       return;
     }
     const headline = (data.incidents || [])[0] || null;
     const sourceId = data.source_incident_id || "none";
     provSource.innerHTML = "<b>source</b> " + escapeHtml(sourceId);
+    overviewNotes.innerHTML = REFUSAL_NOTE;
+    renderMerchants(state.merchants);
     if (!headline) {
-      overviewMerchants.innerHTML = "";
+      // Nothing wrong is the healthy state of a business board, not a failed
+      // load. It says what is true - no money is exposed - and stays calm.
       overviewBoard.innerHTML =
-        '<p class="empty">No incidents in the store.</p>' +
-        '<div class="note warn tight"><h4>Two things this header deliberately does not show</h4>' +
-        "<p><b>A portfolio total.</b> Adding cited <code>loss_per_hour</code> figures would be a number that exists only here. A real total has to come from W2 as its own cited figure.</p>" +
-        "<p><b>Whose fault it is.</b> Attribution belongs to the investigation. A traffic light that guessed would be the worst thing this dashboard could do.</p></div>";
+        '<section class="calm">' +
+        '<span class="calm-mark" aria-hidden="true"></span>' +
+        "<div><h3>No revenue at risk</h3>" +
+        "<p>The store holds no active incident, so there is no money figure to copy. " +
+        "Figures appear here the moment detection reports one.</p></div>" +
+        "</section>";
       return;
     }
     const financial = data.financial_impact || {};
-    const merchants = (state.merchants || []).map(function (row) {
-      const sev = document.createElement("div");
-      sev.appendChild(badgePair(row.highest_severity, "__omit__", null).querySelector(".sev"));
-      return (
-        '<article class="merchant-card">' +
-        "<h3>" + escapeHtml(row.scope_label || row.merchant_id || "Platform-wide") + "</h3>" +
-        "<p>Highest stored severity: " + sev.innerHTML + "</p>" +
-        "<p>Active incidents: " + escapeHtml(String(row.active_incident_count)) + "</p>" +
-        "</article>"
-      );
-    }).join("");
     overviewBoard.innerHTML =
-      '<div class="kpis">' +
-      kpi(kpiKind(headline.severity), "Service status", String(headline.severity || "not in store"), "severity on incident " + sourceId, "overview-severity") +
-      kpi("grey", "Current conversion", ratio(data.current_conversion), "from incident " + sourceId, "overview-actual") +
-      kpi("grey", "Expected conversion", ratio(data.expected_conversion), "copied from the same record", "overview-expected") +
-      kpi("grey", "GMV", money(data.gmv), "attempted_value on that incident", "overview-gmv") +
-      kpi("grey", "GMV at risk", money(data.estimated_gmv_at_risk), "gmv_at_risk on that incident", "overview-risk") +
-      kpi("grey", "Costing / hour", money(financial.loss_per_hour), "loss_per_hour on that incident", "overview-burn") +
-      kpi("grey", "Active incidents", String(data.active_incident_count), "count of stored records") +
-      "</div>" +
-      '<div class="note warn tight"><h4>Two things this header deliberately does not show</h4>' +
-      "<p><b>A portfolio total.</b> Adding cited <code>loss_per_hour</code> figures would be a number that exists only here. A real total has to come from W2 as its own cited figure.</p>" +
-      "<p><b>Whose fault it is.</b> Attribution belongs to the investigation. A traffic light that guessed would be the worst thing this dashboard could do.</p></div>";
-    // Merchant health renders below the warning rail, not inside the same
-    // board, so a developing deviation is read before a per-merchant roll-up.
-    overviewMerchants.innerHTML =
-      "<h3>Merchant health</h3>" +
-      '<div class="merchants">' + (merchants || '<p class="empty">No merchant incidents in the store.</p>') + "</div>";
+      '<section class="topline" aria-label="Revenue at risk">' +
+      '<dl class="money">' +
+      moneyFigure("risk", "Revenue at risk", money(data.estimated_gmv_at_risk),
+        "estimated · gmv_at_risk on incident " + sourceId, "overview-risk") +
+      moneyFigure("rate", "Loss rate", money(financial.loss_per_hour) + " / hour",
+        "loss_per_hour on that incident, if it continues", "overview-burn") +
+      moneyFigure("calm", "Attempted value", money(data.gmv),
+        "attempted_value on that incident", "overview-gmv") +
+      "</dl>" +
+      conversionGap(data, sourceId) +
+      "</section>" +
+      contextStrip(headline, data, sourceId);
     bindCites(overviewBoard);
   }
 
@@ -911,6 +1005,7 @@
         body: watch.projected_loss_per_hour,
       };
     }
+    if (citeId && citeId.indexOf("merchant-") === 0) return merchantCite(citeId);
     if (citeId && citeId.indexOf("esc-") === 0) return escalationCite(citeId);
     const table = {
       "overview-severity": { title: "Incident severity", field: "incident.severity", value: headline.severity, source: overview.source_incident_id },
@@ -940,6 +1035,32 @@
     };
   }
 
+
+  // A merchant row cites the one incident record its figures were copied off,
+  // never the group: no figure on that card is a total.
+  function merchantCite(citeId) {
+    const parts = citeId.split(":");
+    const row = (state.merchants || [])[Number(parts[1])];
+    if (!row) return null;
+    const financial = row.financial_impact || {};
+    const field = parts[0] === "merchant-burn"
+      ? "financial_impact.loss_per_hour"
+      : "financial_impact.gmv_at_risk";
+    const value = parts[0] === "merchant-burn" ? financial.loss_per_hour : financial.gmv_at_risk;
+    return {
+      title: (parts[0] === "merchant-burn" ? "Loss rate · " : "Revenue at risk · ") +
+        (row.scope_label || row.merchant_id || "Platform-wide"),
+      lede: "Copied from that row's own highest-priority incident record. It is that one " +
+        "incident's figure, not a total for the row and not a total for the platform.",
+      rows: [
+        ["source", row.source_incident_id || "not in store"],
+        ["scope", row.merchant_id ? "merchant " + row.merchant_id : "cohort " + (row.scope_label || "not in store")],
+        ["field", field],
+        ["value", value == null ? "not in store" : value],
+      ],
+      body: value,
+    };
+  }
 
   // Escalation citations name the escalation_event payload the figure was
   // copied out of, the same way an incident citation names the incident record.
