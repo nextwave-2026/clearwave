@@ -103,6 +103,14 @@ What it does and does not do:
 The default `python3 -m investigation.vertical` behaviour is unchanged: seed, detect, investigate,
 against a store it recreates. The proven stage path in section 1 above is exactly as it was.
 
+To have a diagnosis appear without typing that command, run the watcher against the same file:
+`.venv/bin/python -m investigation --db "$DB"` or `make investigate-daemon DB=...`. Compose service
+`investigation` bind-mounts `./state` as `/data/clearwave.db` and runs as uid 1000 so the host can keep
+writing that file; create `state/` before `docker compose up`. Host detector and dashboard must use
+`state/clearwave.db` (not `/tmp/clearwave-live.db`) or the daemon never sees the incident. Stop with
+Ctrl-C or SIGTERM. Do not run the watcher and `make investigate` against the same store on purpose;
+claiming is safe (one winner) but the loser has nothing to do.
+
 ### The other two guaranteed scenarios
 
 `detector seed --scenario` only accepts `healthy`, `provider_incident`, `confounded`. It does not accept the catalogue names `provider-degradation`, `provider-issuer-confounded`, or `high-impact-small-percentage`. Those names exist on `python -m worker.worker --scenario` (live Kafka, and they require that scenario's own merchant: merchant-c, merchant-c, merchant-a).

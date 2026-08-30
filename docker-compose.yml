@@ -120,5 +120,18 @@ services:
       retries: 10
       start_period: 20s
 
+  investigation:
+    build:
+      context: .
+      dockerfile: investigation/Dockerfile
+    container_name: clearwave-investigation
+    user: "1000:1000"
+    environment:
+      CLEARWAVE_DB: /data/clearwave.db
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ./state:/data
+    restart: unless-stopped
+
 volumes:
   kafka-data:

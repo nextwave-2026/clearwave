@@ -114,6 +114,13 @@ behaviour is specified in `docs/contracts/evidence-tools.md`.
 investigates an incident a store already holds - a live consume included - without reseeding it. The bare
 entry point still runs seed then detect then investigate.
 
+`python3 -m investigation` (or `make investigate-daemon`) is the continuous watcher over that same store:
+it polls, claims, and diagnoses without an operator command. Stop it with SIGINT or SIGTERM; both drain
+in-flight work. The compose service is `investigation`, bind-mounting `./state` as `CLEARWAVE_DB=/data/clearwave.db`.
+Detector, dashboard and daemon must all point at that file. Do not give this service the ground-truth volume
+or `CLEARWAVE_GROUND_TRUTH_DB`. Claiming is atomic: a daemon and `make investigate` cannot both take the
+same incident.
+
 W2 also consumes W1's three live Kafka topics into that same store (`python3 -m detector consume --detect`).
 The live and file-based paths share one normalisation and one store; the file-based path imports no Kafka
 client and is the broker-free demo fallback. Consumer operator detail: `docs/live-ingestion.md`, and
