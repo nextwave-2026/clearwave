@@ -309,65 +309,67 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     connection = store.connect(args.db or store.database_path())
+    try:
+        if args.command == "ingest":
+            if args.stream:
+                summary = store.ingest_stream(
+                    connection, _stream_jsonl(args.source), batch_size=args.batch_size
+                )
+            else:
+                summary = store.ingest(connection, _load_events(args.source))
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
 
-    if args.command == "ingest":
-        if args.stream:
-            summary = store.ingest_stream(
-                connection, _stream_jsonl(args.source), batch_size=args.batch_size
+        if args.command == "seed":
+            summary = store.ingest(connection, _scenario_events(args.scenario))
+            print(json.dumps({"scenario": args.scenario, **summary}, indent=2, sort_keys=True))
+            return 0
+
+        if args.command == "consume":
+            source = consumer.KafkaSource(
+                bootstrap_servers=args.bootstrap_servers,
+                group_id=args.group_id,
+                topics=tuple(args.topics),
+                from_beginning=not args.from_latest,
             )
-        else:
-            summary = store.ingest(connection, _load_events(args.source))
-        print(json.dumps(summary, indent=2, sort_keys=True))
-        return 0
+            deadline = None if args.seconds is None else time.monotonic() + args.seconds
+            sweeps: list[dict[str, Any]] = []
+            try:
+                progress = consumer.consume(
+                    connection,
+                    source,
+                    batch_size=args.batch_size,
+                    idle_polls=args.idle_polls,
+                    max_messages=args.max_messages,
+                    deadline=deadline,
+                    on_batch=_periodic_sweeper(connection, args.detect_every, sweeps),
+                )
+            except KeyboardInterrupt:
+                # Whatever the last completed batch wrote is already durable and
+                # already acknowledged. Stopping here loses nothing and duplicates
+                # nothing.
+                progress = None
+            finally:
+                source.close()
+            summary = {
+                "consumed": (progress.as_dict() if progress is not None else "interrupted"),
+                "stored": store.stored_counts(connection),
+            }
+            if sweeps:
+                summary["periodic_detection"] = sweeps
+            if args.detect:
+                summary["detection"] = _sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
 
-    if args.command == "seed":
-        summary = store.ingest(connection, _scenario_events(args.scenario))
-        print(json.dumps({"scenario": args.scenario, **summary}, indent=2, sort_keys=True))
+        print(json.dumps(
+            _sweep(connection, args.window_buckets, persist=not args.no_persist),
+            indent=2,
+            sort_keys=True,
+        ))
         return 0
-
-    if args.command == "consume":
-        source = consumer.KafkaSource(
-            bootstrap_servers=args.bootstrap_servers,
-            group_id=args.group_id,
-            topics=tuple(args.topics),
-            from_beginning=not args.from_latest,
-        )
-        deadline = None if args.seconds is None else time.monotonic() + args.seconds
-        sweeps: list[dict[str, Any]] = []
-        try:
-            progress = consumer.consume(
-                connection,
-                source,
-                batch_size=args.batch_size,
-                idle_polls=args.idle_polls,
-                max_messages=args.max_messages,
-                deadline=deadline,
-                on_batch=_periodic_sweeper(connection, args.detect_every, sweeps),
-            )
-        except KeyboardInterrupt:
-            # Whatever the last completed batch wrote is already durable and
-            # already acknowledged. Stopping here loses nothing and duplicates
-            # nothing.
-            progress = None
-        finally:
-            source.close()
-        summary = {
-            "consumed": (progress.as_dict() if progress is not None else "interrupted"),
-            "stored": store.stored_counts(connection),
-        }
-        if sweeps:
-            summary["periodic_detection"] = sweeps
-        if args.detect:
-            summary["detection"] = _sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
-        print(json.dumps(summary, indent=2, sort_keys=True))
-        return 0
-
-    print(json.dumps(
-        _sweep(connection, args.window_buckets, persist=not args.no_persist),
-        indent=2,
-        sort_keys=True,
-    ))
-    return 0
+    finally:
+        connection.close()
 
 
 if __name__ == "__main__":

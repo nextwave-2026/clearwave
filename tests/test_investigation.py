@@ -54,7 +54,7 @@ class GatewayTests(unittest.TestCase):
         self.assertIn("fixture_failure", rendered)
 
     def test_opening_set_does_not_consume_further_call_budget(self):
-        gateway = EvidenceGateway(query_budget=0)
+        gateway = EvidenceGateway(query_budget=0, runner=lambda tool, parameters, timeout: {"ok": True})
         bundle = gateway.run_opening({"cohort_metrics": REQUEST})
         self.assertNotIn("error", bundle["cohort_metrics"])
         self.assertEqual(gateway.remaining_budget, 0)
@@ -62,7 +62,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], "budget_exceeded")
 
     def test_budget_refuses_gracefully_after_limit(self):
-        gateway = EvidenceGateway(query_budget=1)
+        gateway = EvidenceGateway(query_budget=1, runner=lambda tool, parameters, timeout: {"ok": True})
         first = gateway.call("cohort_metrics", REQUEST)
         second = gateway.call("cohort_metrics", {"cohort": {"merchant_id": "merchant-b"}, "window": WINDOW})
         self.assertNotIn("error", first)

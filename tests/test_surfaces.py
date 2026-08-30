@@ -59,6 +59,12 @@ from worker.inject import start_command, stop_command
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _stop_server(httpd, thread) -> None:
+    httpd.shutdown()
+    thread.join(timeout=5)
+    httpd.server_close()
+
+
 def _incident(incident_id, severity, onset, merchant="merchant-a", **fields):
     record = {
         "incident_id": incident_id,
@@ -686,8 +692,7 @@ class SurfacesTests(unittest.TestCase):
         httpd = make_server(self.db, host="127.0.0.1", port=0)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
-        self.addCleanup(httpd.shutdown)
-        self.addCleanup(httpd.server_close)
+        self.addCleanup(_stop_server, httpd, thread)
         port = httpd.server_address[1]
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         with opener.open(f"http://127.0.0.1:{port}/api/overview", timeout=2) as response:
@@ -1551,8 +1556,7 @@ class ServerHardeningTests(unittest.TestCase):
         self.httpd = make_server(self.db, host="127.0.0.1", port=0)
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
-        self.addCleanup(self.httpd.shutdown)
-        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(_stop_server, self.httpd, self.thread)
         self.port = self.httpd.server_address[1]
 
     def _raw_post(self, path, body, content_length_header):

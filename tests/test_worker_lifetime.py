@@ -193,6 +193,8 @@ class SignalShutdownTests(unittest.TestCase):
         return proc
 
     def test_sigterm_closes_ground_truth_record(self) -> None:
+        if os.name == "nt":
+            self.skipTest("Windows subprocesses cannot deliver a catchable SIGTERM")
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "ground_truth.db"
             proc = self._start_armed_worker(db_path)
@@ -217,6 +219,8 @@ class SignalShutdownTests(unittest.TestCase):
                     proc.wait(timeout=2)
 
     def test_sigint_closes_ground_truth_record(self) -> None:
+        if os.name == "nt":
+            self.skipTest("Windows subprocesses cannot deliver SIGINT with send_signal")
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "ground_truth.db"
             proc = self._start_armed_worker(db_path)
