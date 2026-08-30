@@ -46,9 +46,17 @@ defines the four-way work division.
 
 ## Demonstration
 
-The product is runnable. The copy-pasteable operator sequence - offline stage path and live Kafka path, including commands that fail and must not be used - is in [`docs/demo-sequence.md`](docs/demo-sequence.md).
+The product is runnable. The copy-pasteable operator sequence - pre-warmed live stack, offline stage path, and live Kafka caveats, including commands that fail and must not be used - is in [`docs/demo-sequence.md`](docs/demo-sequence.md).
 
-Safe stage path, from the repository root after `make install`. Two terminals, same `$DB`. Port `18080` avoids a busy `8080`; the product default is `8080`.
+Live product path, from the repository root, started **at least 60 minutes** before anyone watches it (detection compares against a 60-minute trailing window):
+
+```sh
+make stack-up
+```
+
+Open the URL it prints (`http://127.0.0.1:8082/`). `make stack-status` reports each piece of the loop. `make stack-down` stops it. Do not run `make e2e` then `make surfaces-serve` as the pitch; that is a scripted CLI demonstration.
+
+Safe stage path if Docker is not up, from the repository root after `make install`. Two terminals, same `$DB`. Port `18080` avoids a busy `8080`; the product default is `8080`.
 
 Terminal A:
 

@@ -133,5 +133,96 @@ services:
       - ./state:/data
     restart: unless-stopped
 
+  detector:
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+    image: clearwave-stack
+    container_name: clearwave-detector
+    working_dir: /workspaces/clearwave
+    user: "1000:1000"
+    # 45s consume-then-detect cycle: inside the 30-60s range so a developing
+    # anomaly is swept within a minute of appearing. consume --seconds N --detect
+    # exits after one sweep, including when it finds nothing; the loop (and
+    # restart: unless-stopped) start the next cycle rather than ending the
+    # service. A transient broker hiccup is the same: the cycle exits, sleep 5,
+    # retry. --idle-polls 60 keeps a quiet broker from ending the cycle after
+    # three empty polls (the CLI default) so the 45s bound is the one that wins.
+    command:
+      - bash
+      - -lc
+      - |
+        while true; do
+          python -m detector consume --seconds 45 --idle-polls 60 --detect || sleep 5
+        done
+    environment:
+      PYTHONUNBUFFERED: "1"
+      CLEARWAVE_DB: /data/clearwave.db
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+    volumes:
+      - .:/workspaces/clearwave
+      - ./state:/data
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+      worker-merchant-a:
+        condition: service_started
+      worker-merchant-b:
+        condition: service_started
+      worker-merchant-c:
+        condition: service_started
+    restart: unless-stopped
+
+  surfaces:
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+    image: clearwave-stack
+    container_name: clearwave-surfaces
+    working_dir: /workspaces/clearwave
+    user: "1000:1000"
+    # Bind 0.0.0.0 so the published port is reachable from outside the container.
+    # Deliberate for the containerised demo; host-side `make surfaces-serve` still
+    # defaults to 127.0.0.1. Host port 8082 because 8080, 8090 and 18080 are taken.
+    command: ["python", "-m", "surfaces", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "8082:8080"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      CLEARWAVE_DB: /data/clearwave.db
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - .:/workspaces/clearwave
+      - ./state:/data
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+      worker-merchant-a:
+        condition: service_started
+      worker-merchant-b:
+        condition: service_started
+      worker-merchant-c:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/overview', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
 volumes:
   kafka-data:

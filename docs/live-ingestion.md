@@ -11,7 +11,8 @@ Owner: W2 (`andres`). The contract for what a record becomes is
 
 | Path | Command | Needs |
 |---|---|---|
-| **Live** | `.venv/bin/python -m detector consume --detect` | Kafka, Schema Registry, a running W1 worker |
+| **Live (continuous)** | `make stack-up` | Docker. Leaves Kafka, workers, detector, investigation and dashboard running. |
+| **Live (one-shot)** | `.venv/bin/python -m detector consume --detect` | Kafka, Schema Registry, a running W1 worker |
 | **Offline** | `.venv/bin/python -m detector seed && .venv/bin/python -m detector detect` | the project virtualenv |
 
 The offline path is the demo fallback and does not import a Kafka client at any point. If the
@@ -23,12 +24,29 @@ doors onto the same normalisation, the same store and the same detection sweep.
 
 The copy-pasteable demo sequence, including the offline fallback that actually produces a diagnosed incident on the dashboard, is [`docs/demo-sequence.md`](demo-sequence.md). This page is the live consumer. Several commands that used to be written here fail; do not use them.
 
+The product path is a stack that is already up. `make stack-up` starts Kafka, Schema Registry,
+the three merchants, a detector that consumes and sweeps every 45 seconds, the investigation
+daemon, and the dashboard on http://127.0.0.1:8082/ . It returns only once `/api/overview`
+answers. `make stack-status` prints one fact per piece of that loop. `make stack-down` stops it.
+
+**Start it at least 60 minutes before you need it.** Detection compares the current window
+against that merchant's own trailing hour (`BASELINE_TRAILING_BUCKETS = 60` buckets of
+`BUCKET_SECONDS = 60` in `detector/config.py`). A stack started a minute before a demo has no
+baseline and will not warn on anything subtle. Leave it running.
+
+The one-shot commands below still work for debugging a single consume. They are not how the
+live product is meant to be shown.
+
 ```sh
 # 0. Dependencies. Do not use system pip; it fails with PEP 668 on Homebrew Python.
 make install
 
-# 1. Broker, Schema Registry and raul's three merchants. Use the docker compose
-#    subcommand; standalone docker-compose is not required. Wait for health.
+# 1. The continuous stack. Prefer this over bringing pieces up by hand.
+make stack-up
+
+# 1b. Broker, Schema Registry and raul's three merchants only, if you are about
+#     to run a one-shot consume yourself. Use the docker compose subcommand;
+#     standalone docker-compose is not required. Wait for health.
 docker compose up -d kafka schema-registry \
   worker-merchant-a worker-merchant-b worker-merchant-c
 
@@ -36,13 +54,13 @@ docker compose up -d kafka schema-registry \
 export CLEARWAVE_DB=state/clearwave.db
 .venv/bin/python -m detector ingest /path/to/backfill.jsonl --stream
 
-# 3. Consume for a minute, then detect. This is live traffic into the store.
-#    It is not a guaranteed C3 record: healthy 60s traffic returns incident null.
-#    Inject first (below) if you want an incident to detect.
+# 3. One-shot consume for a minute, then detect. The compose `detector` service
+#    does this on a 45s cycle so you do not have to. Healthy 60s traffic returns
+#    incident null. Inject first (below) if you want an incident to detect.
 .venv/bin/python -m detector consume --seconds 60 --detect
 ```
 
-`make e2e` is steps 1 and 3 in one command, and `make e2e BACKFILL=/path/to/backfill.jsonl`
+`make e2e` is steps 1b and 3 in one command, and `make e2e BACKFILL=/path/to/backfill.jsonl`
 includes step 2. `make backfill BACKFILL=...` is step 2 alone; `make live` is step 3 alone -
 it starts neither Kafka nor a worker and does not guarantee an incident. `make consume` reads
 until the topics go quiet and stops. All of these run on `.venv`, which is what `make install`
@@ -62,8 +80,9 @@ PYTHONUNBUFFERED=1 .venv/bin/python -m worker.worker merchant-a --interval-secon
 The workers run *healthy* traffic until something injects an incident into them. Two ways, and
 neither restarts anything:
 
-- **The dashboard.** `make surfaces-serve`, open http://127.0.0.1:8080, and use the judge toggle in
-  the masthead. On publishes a provider-scoped decline; off publishes the stop command. The target
+- **The dashboard.** After `make stack-up`, open http://127.0.0.1:8082 and use the judge toggle in
+  the masthead. Host-side `make surfaces-serve` still binds 127.0.0.1:8080; that default is unchanged.
+  On publishes a provider-scoped decline; off publishes the stop command. The target
   it fires is named in `surfaces/inject.py` and returned in the API response.
 - **The command line.** `.venv/bin/python -m worker.inject merchant-b --provider adyen --effect
   decline`, and `.venv/bin/python -m worker.inject merchant-b --stop` to clear it.
