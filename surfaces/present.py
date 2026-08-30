@@ -247,8 +247,9 @@ def merchant_health(incidents: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
     for key in sorted(grouped):
         # Active records rank ahead of closed ones, so a group with anything
         # live never publishes the money of an incident that is already over.
-        # Where every record is closed the row is history, and `source_is_active`
-        # is what lets the board say so instead of asserting a live loss rate.
+        # A group whose every record is closed is omitted entirely: publishing
+        # its money under a calm headline made the board assert loss still at
+        # risk after Clear (verify-demo beat no-stale-revenue).
         records = sorted(
             grouped[key],
             key=lambda item: (
@@ -257,19 +258,26 @@ def merchant_health(incidents: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
                 str(item.get("incident_id", "")),
             ),
         )
+        active_count = sum(1 for item in records if _is_active(item))
         top = records[0]
         cohort = _mapping(top.get("affected_cohort"))
+        source_active = _is_active(top)
+        # Closed-only groups may still appear as history, but their money must
+        # not travel: a calm board that still lists gmv_at_risk asserts a loss
+        # that is no longer live (verify-demo beat no-stale-revenue).
+        financial = top.get("financial_impact") if source_active else None
+        change = top.get("change") if source_active else None
         health.append(
             {
                 "merchant_id": _named(cohort.get("merchant_id")),
                 "scope_label": cohort_scope_label(cohort),
                 "highest_severity": top.get("severity"),
-                "active_incident_count": sum(1 for item in records if _is_active(item)),
+                "active_incident_count": active_count,
                 "incident_ids": [item.get("incident_id") for item in records],
                 "source_incident_id": top.get("incident_id"),
-                "source_is_active": _is_active(top),
-                "financial_impact": top.get("financial_impact"),
-                "change": top.get("change"),
+                "source_is_active": source_active,
+                "financial_impact": financial,
+                "change": change,
             }
         )
     return health
