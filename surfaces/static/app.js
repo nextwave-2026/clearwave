@@ -10,6 +10,7 @@
     merchants: [],
     escalations: null,
     calls: [],
+    ingestion: null,
     detail: null,
     injected: false,
     stage: "clear",
@@ -31,6 +32,7 @@
   const judgeStatus = document.getElementById("judge-status");
   const judgeButtons = document.querySelectorAll("#judge-form [data-stage]");
   const provSource = document.getElementById("prov-source");
+  const provIngest = document.getElementById("prov-ingest");
   const queueWho = document.getElementById("queue-who");
   const drawer = document.getElementById("drawer");
   const drawerTitle = document.getElementById("drawer-title");
@@ -345,6 +347,68 @@
       '<div class="merchants">' + list.map(merchantCard).join("") + "</div>" +
       "</section>";
     bindCites(overviewMerchants);
+  }
+
+  // -------------------------------------------------------------------
+  // Ingestion provenance.
+  //
+  // The question a judge actually asks is "is this actually live, or is it a
+  // mock?", and until now the only place the answer existed was a terminal.
+  // Every figure on this line is read straight out of W2's `ingest_health`
+  // evidence tool and cited like everything else on the board. Nothing here
+  // adds, subtracts, converts to an age, or decides what "fresh" means.
+  //
+  // It is deliberately provenance and not a metric: it lives on the frame
+  // edge beside the store and source line, at the same weight, below the
+  // header and far from any money figure. A judge should read it the way they
+  // read a footer, and find it holds up when they press it.
+  // -------------------------------------------------------------------
+
+  function provSegment(label, value, citeId, ariaLabel, tone) {
+    return "<span><b>" + escapeHtml(label) + "</b> " +
+      '<span class="pv' + (tone ? " " + tone : "") + '">' + escapeHtml(value) + "</span>" +
+      citeButton(citeId, "cite " + ariaLabel) + "</span>";
+  }
+
+  function renderIngestion() {
+    const data = state.ingestion;
+    if (!data) {
+      provIngest.innerHTML = "<span><b>ingest</b> waiting for store</span>";
+      return;
+    }
+    if (data.unreadable) {
+      // A stale number is worse than no number on the one line whose job is
+      // to say whether the numbers are current.
+      provIngest.innerHTML =
+        '<span><b>ingest</b> <span class="pv pv-warn">could not be read from the store</span></span>';
+      return;
+    }
+    const dead = data.dead_letter || {};
+    // `rejected` and `dead_letter.count` are one measurement under two names,
+    // equal by construction (C2 contract, section 12). They are printed as one
+    // segment so the line cannot be read as two independent facts.
+    const refused = count(data.rejected) + " rejected \u00b7 " + count(dead.count) + " dead-lettered";
+    const parts = [
+      provSegment("ingest", count(data.accepted) + " accepted", "ingest-accepted",
+        "records accepted", data.accepted ? null : "pv-quiet"),
+      provSegment("refused", refused, "ingest-refused",
+        "records refused", data.rejected ? "pv-warn" : null),
+    ];
+    if (data.newest_event_at) {
+      parts.push(provSegment("last event", data.newest_event_at, "ingest-newest",
+        "newest observed event", null));
+      parts.push(provSegment("measured through", data.watermark, "ingest-watermark",
+        "measurement watermark", null));
+    } else {
+      // A store that has observed nothing has an epoch watermark. That is the
+      // honest value and the drawer still shows it, but printing 1970 on the
+      // frame reads as a broken clock rather than as an empty store, so the
+      // line says the thing the epoch means.
+      parts.push(provSegment("last event", "nothing observed yet", "ingest-newest",
+        "newest observed event", "pv-quiet"));
+    }
+    provIngest.innerHTML = parts.join("");
+    bindCites(provIngest);
   }
 
   function renderOverview() {
@@ -1223,6 +1287,7 @@
         body: watch.projected_loss_per_hour,
       };
     }
+    if (citeId && citeId.indexOf("ingest-") === 0) return ingestCite(citeId);
     if (citeId && citeId.indexOf("ask-") === 0) return askCite(citeId);
     if (citeId && citeId.indexOf("merchant-") === 0) return merchantCite(citeId);
     if (citeId && citeId.indexOf("esc-") === 0) return escalationCite(citeId);
@@ -1254,6 +1319,104 @@
     };
   }
 
+
+  // Provenance cites the tool, not an incident record: `ingest_health` is a C2
+  // evidence tool like any other and the drawer shows the field the figure was
+  // read from, so the line can be checked rather than believed.
+  function ingestCite(citeId) {
+    const data = state.ingestion;
+    if (!data || data.unreadable) return null;
+    const dead = data.dead_letter || {};
+    const lede = "Read from the ingest_health evidence tool over the same store every other " +
+      "figure on this board comes from. Nothing on this line is computed in the page.";
+    if (citeId === "ingest-accepted") {
+      return {
+        title: "Records accepted",
+        lede: lede + " This is a row count the store holds after de-duplication, not a running " +
+          "total of what a consumer saw. Redelivered records are dropped on event_id, which is " +
+          "why duplicates is reported as not measured rather than guessed at.",
+        rows: [
+          ["tool", "ingest_health"],
+          ["field", "accepted"],
+          ["value", count(data.accepted)],
+          ["attempts", count((data.stored || {}).attempts)],
+          ["telemetry_samples", count((data.stored || {}).telemetry_samples)],
+          ["payments_closed", count((data.stored || {}).payments_closed)],
+          ["duplicates", "not measured - " + ((data.not_measured || {}).duplicates || "see the C2 contract")],
+        ],
+        body: data.stored,
+      };
+    }
+    if (citeId === "ingest-refused") {
+      return {
+        title: "Records refused",
+        lede: lede + " rejected and dead_letter.count are one measurement published under two " +
+          "names and are equal by construction: a refused record is dead-lettered in the same " +
+          "statement that rejects it. They are shown together so they cannot be read as two facts.",
+        rows: [
+          ["tool", "ingest_health"],
+          ["field", "rejected / dead_letter.count"],
+          ["rejected", count(data.rejected)],
+          ["dead_letter.count", count(dead.count)],
+          ["distinct_reasons", count(dead.distinct_reasons)],
+        ],
+        body: { reasons: dead.reasons, by_source: dead.by_source },
+      };
+    }
+    if (citeId === "ingest-newest") {
+      // The strip shows the attempt stream alone, because "payments ingested"
+      // is the claim on the line and a telemetry timestamp would quietly
+      // answer a different question. The other two readings belong here, where
+      // a reader who presses can see them.
+      const byKind = data.newest_by_kind || {};
+      return {
+        title: "Newest observed event",
+        lede: lede + " This is the event time carried by the newest payment attempt in the store. " +
+          "It is not the time that record arrived and it is not the wall clock. Telemetry samples " +
+          "and closed payments are stored beside attempts and read separately below; they do not " +
+          "move this figure or the watermark.",
+        rows: [
+          ["tool", "ingest_health"],
+          ["field", "newest_event_at"],
+          ["value", data.newest_event_at || "not in store"],
+          ["oldest_event_at", data.oldest_event_at || "not in store"],
+          ["newest_by_kind.attempts", byKind.attempts || "not in store"],
+          ["newest_by_kind.telemetry_samples", byKind.telemetry_samples || "not in store"],
+          ["newest_by_kind.payments_closed", byKind.payments_closed || "not in store"],
+        ],
+        body: {
+          oldest_event_at: data.oldest_event_at,
+          newest_event_at: data.newest_event_at,
+          newest_by_kind: data.newest_by_kind,
+        },
+      };
+    }
+    if (citeId === "ingest-watermark") {
+      return {
+        title: "Measured through",
+        lede: lede + " The watermark is the event time measurement is complete to: the newest " +
+          "observed event less the lateness grace, floored to a bucket. lag_seconds is the " +
+          "distance between the two - event time against event time, so it says how much of " +
+          "what arrived is not yet measured. It is not seconds since a record arrived, and this " +
+          "page does not present it as one.",
+        rows: [
+          ["tool", "ingest_health"],
+          ["field", "watermark"],
+          ["value", data.watermark || "not in store"],
+          ["lag_seconds", data.lag_seconds === null || data.lag_seconds === undefined
+            ? "not in store" : count(data.lag_seconds)],
+          ["lateness_grace_seconds", count(data.lateness_grace_seconds)],
+        ],
+        body: {
+          watermark: data.watermark,
+          newest_event_at: data.newest_event_at,
+          lag_seconds: data.lag_seconds,
+          lateness_grace_seconds: data.lateness_grace_seconds,
+        },
+      };
+    }
+    return null;
+  }
 
   // An answer's figure cites the query the engine tied it to, and a query in
   // the trail cites its own recorded call. Neither is verified here: the panel
@@ -1425,6 +1588,12 @@
       jsonGet("/api/merchants"),
       jsonGet("/api/calls"),
       jsonGet("/api/escalations"),
+      // The provenance line reads its own endpoint. It is the one figure on
+      // the page that must not be derived from another payload: a freshness
+      // claim assembled out of the incident feed would be describing the feed,
+      // not the ingestion behind it. A failure here darkens that line alone
+      // and leaves the rest of the board intact.
+      jsonGet("/api/ingestion").catch(function () { return { unreadable: true }; }),
     ]).then(function (payloads) {
       state.overview = payloads[0];
       state.queue = payloads[1].incidents || [];
@@ -1432,7 +1601,9 @@
       state.merchants = payloads[2].merchants || [];
       state.calls = payloads[3].calls || [];
       state.escalations = payloads[4];
+      state.ingestion = payloads[5];
       if (!state.selectedId && state.queue.length) state.selectedId = state.queue[0].incident_id;
+      renderIngestion();
       renderOverview();
       renderQueue();
       renderWatchRail();

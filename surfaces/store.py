@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from detector.store import connect as open_detector_store
 from investigation.store import connect as open_investigation_store
 from investigation.store import read_result
 
@@ -86,6 +87,24 @@ def connect(path: Path | str = DEFAULT_DB) -> sqlite3.Connection:
 @contextmanager
 def session(path: Path | str = DEFAULT_DB) -> Iterator[sqlite3.Connection]:
     connection = connect(path)
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
+@contextmanager
+def measurement_session(path: Path | str = DEFAULT_DB) -> Iterator[sqlite3.Connection]:
+    """Open the same store through W2's own opener, for a C2 tool to answer on.
+
+    `session` prepares the incident and investigation tables the board reads.
+    The C2 evidence tools measure the ingestion tables - `attempt`,
+    `telemetry_sample`, `dead_letter` - which only W2's opener declares, and a
+    board pointed at a store nothing has ingested into yet must answer "nothing
+    has arrived" rather than raising `no such table`. Same file, same rows; the
+    only difference is which schema is ensured before reading.
+    """
+    connection = open_detector_store(path)
     try:
         yield connection
     finally:

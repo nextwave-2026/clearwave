@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from detector import evidence
 from detector.store import database_path as shared_database_path
 from investigation.env import load_dotenv
 
@@ -72,6 +73,20 @@ class SurfacesApp:
                 stored = investigations.get(str(incident.get("incident_id")))
                 store.ensure_escalation(connection, incident, stored)
             return present.queue(incidents, investigations)
+
+    def ingestion(self) -> dict[str, Any]:
+        """The C2 `ingest_health` response, verbatim.
+
+        This is the one question on the board that is about the board's own
+        inputs: has anything actually arrived, was any of it refused, and how
+        recent is the newest thing measured. It is answered by W2's evidence
+        tool and passed through untouched - no field is renamed, summed,
+        rounded or turned into a wall-clock age here. That is the whole point:
+        a provenance figure computed by the surface proves nothing about the
+        pipeline it claims to describe.
+        """
+        with store.measurement_session(self.db_path) as connection:
+            return evidence.answer("ingest_health", {}, connection)
 
     def merchants(self) -> dict[str, Any]:
         with store.session(self.db_path) as connection:
@@ -161,6 +176,8 @@ class SurfacesApp:
             return 200, self.overview()
         if method == "GET" and path == "/api/incidents":
             return 200, self.queue()
+        if method == "GET" and path == "/api/ingestion":
+            return 200, self.ingestion()
         if method == "GET" and path == "/api/merchants":
             return 200, self.merchants()
         if method == "GET" and path == "/api/calls":
