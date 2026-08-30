@@ -37,6 +37,7 @@ from worker.helpers.incident import (
     DECLINE,
     DEFAULT_INCIDENT_DECLINE_REASON,
     DEFAULT_INCIDENT_LATENCY_MS,
+    INCIDENT_DECLINE_PROBABILITY,
     Incident,
 )
 
@@ -109,6 +110,9 @@ class IncidentControl:
                     effect=command.get("effect", DECLINE),
                     decline_reason=command.get("decline_reason", DEFAULT_INCIDENT_DECLINE_REASON),
                     latency_ms=command.get("latency_ms", DEFAULT_INCIDENT_LATENCY_MS),
+                    decline_probability=command.get(
+                        "decline_probability", INCIDENT_DECLINE_PROBABILITY
+                    ),
                 )
             except (ValueError, TypeError) as exc:
                 print(f"incident control: rejected start command: {exc}")

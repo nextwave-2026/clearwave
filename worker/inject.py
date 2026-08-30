@@ -8,6 +8,7 @@ from here rather than hand-rolling the JSON, so the two can never drift.
     python -m worker.inject merchant-b --provider adyen --effect outage
     python -m worker.inject merchant-b --provider adyen --effect latency --latency-ms 9000
     python -m worker.inject merchant-b --provider adyen --effect spike
+    python -m worker.inject merchant-b --provider adyen --decline-probability 0.35
     python -m worker.inject merchant-b --stop
 
 The target worker must already be running and consuming
@@ -30,6 +31,7 @@ from worker.helpers.incident import (
     DEFAULT_INCIDENT_DECLINE_REASON,
     DEFAULT_INCIDENT_LATENCY_MS,
     EFFECTS,
+    INCIDENT_DECLINE_PROBABILITY,
 )
 
 
@@ -43,6 +45,7 @@ def start_command(
     effect: str = DECLINE,
     decline_reason: str = DEFAULT_INCIDENT_DECLINE_REASON,
     latency_ms: int = DEFAULT_INCIDENT_LATENCY_MS,
+    decline_probability: float = INCIDENT_DECLINE_PROBABILITY,
 ) -> dict:
     """The one start command shape every caller publishes.
 
@@ -74,6 +77,7 @@ def start_command(
         "effect": effect,
         "decline_reason": decline_reason,
         "latency_ms": latency_ms,
+        "decline_probability": decline_probability,
     }
 
 
@@ -101,6 +105,21 @@ def publish(command: dict, bootstrap_servers: str | None = None) -> None:
         )
 
 
+def _parse_decline_probability(value: str) -> float:
+    try:
+        number = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"invalid decline-probability {value!r}"
+        ) from exc
+    if not 0.0 <= number <= 1.0:
+        raise argparse.ArgumentTypeError(
+            "decline-probability must be between 0.0 and 1.0 inclusive, "
+            f"got {number}"
+        )
+    return number
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("merchant_id", help="Target worker's merchant id, e.g. merchant-b")
@@ -125,6 +144,15 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_INCIDENT_LATENCY_MS,
         help=f"used when --effect latency. default: {DEFAULT_INCIDENT_LATENCY_MS}",
     )
+    parser.add_argument(
+        "--decline-probability",
+        type=_parse_decline_probability,
+        default=INCIDENT_DECLINE_PROBABILITY,
+        help=(
+            "used when --effect decline. default: "
+            f"{INCIDENT_DECLINE_PROBABILITY} (near-total break)"
+        ),
+    )
     parser.add_argument("--stop", action="store_true", help="clear the active incident")
     return parser.parse_args()
 
@@ -145,6 +173,7 @@ def main() -> None:
                 effect=args.effect,
                 decline_reason=args.decline_reason,
                 latency_ms=args.latency_ms,
+                decline_probability=args.decline_probability,
             )
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
