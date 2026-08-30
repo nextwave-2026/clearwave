@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import runpy
 import tempfile
 import threading
 import unittest
 import urllib.request
+from unittest.mock import patch
 from pathlib import Path
 
 from investigation.store import insert_incident, persist_result
@@ -670,6 +672,46 @@ class TwilioPhoneTests(unittest.TestCase):
     def test_place_call_falls_back_without_credentials(self):
         outcome = place_call({"incident_id": "inc-x"}, {"incident_id": "inc-x"})
         self.assertEqual(outcome["status"], "fallback_dashboard")
+
+
+class DashboardEntrypointTests(unittest.TestCase):
+    def test_dashboard_loads_dotenv_and_shell_values_win(self):
+        import investigation.env as env_module
+        import surfaces.server as server_module
+
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, ".env").write_text(
+                "CLEARWAVE_SLACK_WEBHOOK_URL=https://file.example/hook\n"
+                "CLEARWAVE_TWILIO_ACCOUNT_SID=ACfromfile\n",
+                encoding="utf-8",
+            )
+            observed = {}
+
+            def fake_server_main():
+                observed["slack"] = os.environ.get("CLEARWAVE_SLACK_WEBHOOK_URL")
+                observed["sid"] = os.environ.get("CLEARWAVE_TWILIO_ACCOUNT_SID")
+                return 0
+
+            with patch.dict(
+                os.environ,
+                {
+                    "CLEARWAVE_SLACK_WEBHOOK_URL": "https://shell.example/hook",
+                    "CLEARWAVE_TWILIO_ACCOUNT_SID": "",
+                },
+                clear=False,
+            ):
+                os.environ.pop("CLEARWAVE_TWILIO_ACCOUNT_SID")
+                with patch.object(env_module, "ROOT", Path(directory)), patch.object(
+                    server_module, "main", fake_server_main
+                ):
+                    with self.assertRaises(SystemExit) as raised:
+                        runpy.run_module("surfaces.__main__", run_name="__main__")
+
+            self.assertEqual(raised.exception.code, 0)
+            self.assertEqual(observed, {
+                "slack": "https://shell.example/hook",
+                "sid": "ACfromfile",
+            })
 
 
 class StaticContractTests(unittest.TestCase):
