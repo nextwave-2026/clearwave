@@ -722,7 +722,10 @@ class WatchStateTests(unittest.TestCase):
             "SELECT COUNT(*) FROM escalation_claim WHERE incident_id = ?", ("inc-watch",)
         ).fetchone()[0]
         self.assertEqual(claimed, 0)
-        self.assertEqual(outcomes["incidents"][0]["lifecycle_state"], "watching")
+        # The watch never entered the active queue in the first place - it
+        # is filed under its own rail, per test_a_watch_appears_in_its_own_rail.
+        self.assertEqual(outcomes["incidents"], [])
+        self.assertEqual(outcomes["watches"][0]["lifecycle_state"], "watching")
 
     def test_a_diagnosed_incident_still_escalates(self):
         """Regression guard: the escalation filter is a blocklist of watch
@@ -737,6 +740,57 @@ class WatchStateTests(unittest.TestCase):
         persist_result(connection, "inc-real", _diagnosis("inc-real"), "diagnosed")
         self.app.queue()
         self.assertNotEqual(load_escalation(connection, "inc-real"), [])
+
+    def test_a_watch_appears_in_its_own_rail_with_the_detectors_fields(self):
+        self._seed(
+            _incident(
+                "inc-watch",
+                None,
+                "2026-08-29T09:00:00Z",
+                lifecycle_state="watching",
+                floors={"z_min": False, "absolute_drop_min": True, "volume_min": True},
+                trajectory="worsening",
+                financial_impact={"projected_loss_per_hour": {"amount": 4100.0, "currency": "USD"}},
+            )
+        )
+        overview = self.app.overview()
+        self.assertEqual(overview["incidents"], [])
+        self.assertEqual(len(overview["watches"]), 1)
+        watch = overview["watches"][0]
+        self.assertEqual(watch["incident_id"], "inc-watch")
+        self.assertNotIn("severity", watch)
+        self.assertNotIn("diagnostic_confidence", watch)
+        self.assertEqual(watch["projected_loss_per_hour"], {"amount": 4100.0, "currency": "USD"})
+        self.assertEqual(
+            watch["floors"], {"z_min": False, "absolute_drop_min": True, "volume_min": True}
+        )
+        self.assertEqual(watch["trajectory"], "worsening")
+
+        queue = self.app.queue()
+        self.assertEqual(queue["incidents"], [])
+        self.assertEqual([w["incident_id"] for w in queue["watches"]], ["inc-watch"])
+
+    def test_a_watch_with_no_detector_fields_yet_reports_them_as_absent_not_fabricated(self):
+        # The detector side of the pivot (andres) may land after this one -
+        # present.py must not invent a number or a reason it was never given.
+        self._seed(_incident("inc-watch", None, "2026-08-29T09:00:00Z", lifecycle_state="watching"))
+        watch = self.app.overview()["watches"][0]
+        self.assertIsNone(watch["projected_loss_per_hour"])
+        self.assertIsNone(watch["floors"])
+        self.assertIsNone(watch["trajectory"])
+
+    def test_a_watch_is_excluded_from_merchant_health(self):
+        self._seed(
+            _incident(
+                "inc-watch",
+                None,
+                "2026-08-29T09:00:00Z",
+                lifecycle_state="watching",
+                merchant="merchant-only-watch",
+            )
+        )
+        merchant_ids = [row["merchant_id"] for row in self.app.overview()["merchant_health"]]
+        self.assertNotIn("merchant-only-watch", merchant_ids)
 
 
 class SlackBlockKitTests(unittest.TestCase):

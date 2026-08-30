@@ -37,6 +37,7 @@ def overview(
     """Business overview figures, copied from the highest-priority incident."""
     results = investigations or {}
     active = [incident for incident in incidents if _is_active(incident)]
+    watches = [incident for incident in incidents if is_watch(incident)]
     headline = active[0] if active else None
     change = _mapping(headline.get("change") if headline else None)
     financial = _mapping(headline.get("financial_impact") if headline else None)
@@ -49,8 +50,14 @@ def overview(
         "estimated_gmv_at_risk": financial.get("gmv_at_risk"),
         "change": change or None,
         "financial_impact": financial or None,
-        "merchant_health": merchant_health(incidents),
+        # A watch carries no incident severity by design, so it is excluded
+        # from this grouping rather than showing up as a merchant's "highest
+        # severity" with nothing behind it.
+        "merchant_health": merchant_health([incident for incident in incidents if not is_watch(incident)]),
         "incidents": [queue_item(incident, results.get(str(incident.get("incident_id")))) for incident in active],
+        # A quieter rail, deliberately separate from "incidents": a watch is
+        # not yet an incident and must never be mixed into the active queue.
+        "watches": [watch_item(incident) for incident in watches],
     }
 
 
@@ -59,11 +66,14 @@ def queue(
     investigations: Mapping[str, Mapping[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     results = investigations or {}
+    rows = [incident for incident in incidents if not is_watch(incident)]
+    watches = [incident for incident in incidents if is_watch(incident)]
     return {
         "incidents": [
             queue_item(incident, results.get(str(incident.get("incident_id"))))
-            for incident in incidents
-        ]
+            for incident in rows
+        ],
+        "watches": [watch_item(incident) for incident in watches],
     }
 
 
@@ -87,6 +97,31 @@ def queue_item(
         "change": incident.get("change"),
         "financial_impact": incident.get("financial_impact"),
         "narrative_available": narrative_available,
+    }
+
+
+def watch_item(incident: Mapping[str, Any]) -> dict[str, Any]:
+    """A persisted near-miss (DECISIONS.md 2026-08-30T03:59Z), not an incident.
+
+    Deliberately no severity and no diagnostic_confidence: a watch is never
+    investigated, so there is no C4 result to attach, and it must not carry
+    fields that would let it read like an incident on screen. The detector's
+    watch fields (projected loss, the floor vector, the trajectory) are read
+    as optional, because that side of the pivot may land after this one -
+    an absent field renders "not in store" like everywhere else on this
+    page, never a fabricated value.
+    """
+    financial = _mapping(incident.get("financial_impact"))
+    return {
+        "incident_id": incident.get("incident_id"),
+        "lifecycle_state": incident.get("lifecycle_state"),
+        "onset": incident.get("onset"),
+        "affected_cohort": incident.get("affected_cohort"),
+        "scope_label": cohort_scope_label(_mapping(incident.get("affected_cohort"))),
+        "change": incident.get("change"),
+        "projected_loss_per_hour": financial.get("projected_loss_per_hour"),
+        "floors": incident.get("floors"),
+        "trajectory": incident.get("trajectory"),
     }
 
 
