@@ -10,10 +10,17 @@
   <a class="skip" href="#workspace">Skip to board</a>
   <header class="mast">
     <div class="wrap mast-in">
-      <div class="brandlock">
-        <span class="brandmark" aria-hidden="true"></span>
-        <span class="rule"></span>
-        <span class="product">Control Tower <span>/ TAM console</span></span>
+      <div class="mast-id">
+        <div class="brandlock">
+          <span class="brandmark" aria-hidden="true"></span>
+          <span class="rule"></span>
+          <span class="product">Control Tower <span>/ TAM console</span></span>
+        </div>
+        <p class="fresh" id="fresh">
+          <span class="fresh-dot" id="fresh-dot" aria-hidden="true"></span>
+          <span class="vh">Store freshness:</span>
+          <span class="fresh-v" id="fresh-v">Reading the store...</span>
+        </p>
       </div>
       <div class="mast-right">
         <form id="judge-form" class="judge">
@@ -40,25 +47,6 @@
       </div>
     </div>
   </header>
-
-  <div class="prov">
-    <div class="wrap">
-      <details class="disclose prov-disclose" id="prov-disclose">
-        <summary>Provenance &amp; ingestion</summary>
-        <div class="disclose-body">
-          <div class="prov-in mono">
-            <span><b>clock</b> <span id="clock"></span></span>
-            <span><b>store</b> SQLite, CLEARWAVE_DB</span>
-            <span id="prov-source"><b>source</b> waiting for store</span>
-          </div>
-          <div class="prov-in prov-ingest mono" id="prov-ingest" aria-label="Ingestion, measured by the ingest_health evidence tool">
-            <span><b>ingest</b> waiting for store</span>
-          </div>
-          <p class="sim-note">All merchants, banks, payments, incidents and outages shown are simulated data produced by this project's simulator for demonstration. Nothing shown represents or implies a real incident, outage, or service problem at any named company. Real company names are used only to make the demonstration recognisable and realistic.</p>
-        </div>
-      </details>
-    </div>
-  </div>
 
   <nav class="jump" aria-label="Views">
     <div class="wrap jump-in">
@@ -108,6 +96,15 @@
       <div id="evidence-board" class="evidence-board"></div>
     </section>
   </main>
+
+  <footer class="foot wrap">
+    <details class="disclose">
+      <summary>About the data on this board</summary>
+      <div class="disclose-body">
+        <p>All merchants, banks, payments, incidents and outages shown are simulated data produced by this project's simulator for demonstration. Nothing shown represents or implies a real incident, outage, or service problem at any named company. Real company names are used only to make the demonstration recognisable and realistic.</p>
+      </div>
+    </details>
+  </footer>
 
   <div class="scrim" id="scrim"></div>
   <aside class="drawer" id="drawer" aria-hidden="true" aria-label="Evidence citation">

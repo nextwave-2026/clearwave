@@ -21,6 +21,12 @@
     askTurns: [],
     askPending: null,
     asking: false,
+    // Whether the store has ever answered, whether a read is in flight right
+    // now, and what the last failure said. An empty board and a broken one are
+    // different things and the page has to be able to tell them apart.
+    loaded: false,
+    loading: false,
+    loadError: null,
   };
 
   const overviewBoard = document.getElementById("overview-board");
@@ -36,8 +42,8 @@
   const evidenceBoard = document.getElementById("evidence-board");
   const judgeStatus = document.getElementById("judge-status");
   const judgeButtons = document.querySelectorAll("#judge-form [data-stage]");
-  const provSource = document.getElementById("prov-source");
-  const provIngest = document.getElementById("prov-ingest");
+  const freshValue = document.getElementById("fresh-v");
+  const freshDot = document.getElementById("fresh-dot");
   const queueWho = document.getElementById("queue-who");
   const drawer = document.getElementById("drawer");
   const drawerTitle = document.getElementById("drawer-title");
@@ -50,6 +56,176 @@
 
   function $(id) {
     return document.getElementById(id);
+  }
+
+  // ------------------------------------------------------------------- loading
+  //
+  // A board that has not answered yet and a board that is broken look the same
+  // if neither says anything, so both say something. Before the first read
+  // lands each view is drawn in its own shapes, greyed, under one honest line;
+  // once the board is populated a refresh never blanks it, and the only cue is
+  // the masthead dot. A failed read says it failed rather than leaving a
+  // loader turning forever.
+
+  function skelLines(count, klass) {
+    let out = "";
+    for (let i = 0; i < count; i += 1) {
+      out += '<span class="skel-l' + (klass ? " " + klass : "") + '" style="--i:' + i + '"></span>';
+    }
+    return out;
+  }
+
+  function skelNote() {
+    return '<p class="skel-note" role="status"><span class="skel-spin" aria-hidden="true"></span>' +
+      "Reading the store...</p>";
+  }
+
+  function skelCard(inner) {
+    return '<div class="skel-card">' + inner + "</div>";
+  }
+
+  // The overview's own shape: the money band, the conversion bar, the trend.
+  function skeletonOverview() {
+    return '<div class="skel" aria-hidden="true">' +
+      skelCard(skelLines(1, "w-30 tall") + skelLines(1, "w-55") + skelLines(1, "w-40")) +
+      '<div class="skel-row">' + skelCard(skelLines(2)) + skelCard(skelLines(2)) +
+      skelCard(skelLines(2)) + "</div>" +
+      skelCard(skelLines(1, "w-25") + skelLines(1, "chart")) +
+      "</div>" + skelNote();
+  }
+
+  function skeletonQueue() {
+    return '<div class="skel" aria-hidden="true">' +
+      skelCard(skelLines(1, "w-25")) +
+      skelCard(skelLines(4)) +
+      "</div>" + skelNote();
+  }
+
+  function skeletonDetail() {
+    return '<div class="skel" aria-hidden="true">' +
+      skelCard(skelLines(1, "w-40 tall") + skelLines(2)) +
+      '<div class="skel-row">' + skelCard(skelLines(3)) + skelCard(skelLines(3)) + "</div>" +
+      "</div>" + skelNote();
+  }
+
+  function skeletonEvidence() {
+    return '<div class="skel" aria-hidden="true">' +
+      skelCard(skelLines(1, "w-30") + skelLines(2)) +
+      skelCard(skelLines(1, "w-30") + skelLines(2)) +
+      skelCard(skelLines(1, "w-30") + skelLines(2)) +
+      "</div>" + skelNote();
+  }
+
+  function paintLoading() {
+    overviewBoard.innerHTML = skeletonOverview();
+    queueBoard.innerHTML = skeletonQueue();
+    detailBoard.innerHTML = skeletonDetail();
+    evidenceBoard.innerHTML = skeletonEvidence();
+  }
+
+  // What a first read that failed leaves behind. Not a spinner: a spinner that
+  // never stops is the board lying about being busy.
+  function paintLoadFailure(message) {
+    const html = '<div class="loadfail" role="alert"><h3>The board could not read the store</h3>' +
+      "<p>" + escapeHtml(message) + "</p>" +
+      "<p>It keeps trying every 2.5 seconds. Nothing below is stale, because nothing " +
+      "has been read yet.</p></div>";
+    overviewBoard.innerHTML = html;
+    queueBoard.innerHTML = html;
+    detailBoard.innerHTML = html;
+    evidenceBoard.innerHTML = html;
+  }
+
+  // The quiet cue for every read after the first. It rides on the masthead dot
+  // that is already there, so nothing moves and nothing is blanked.
+  function setFetching(busy) {
+    state.loading = busy;
+    document.body.classList.toggle("is-fetching", !!busy);
+  }
+
+  // ------------------------------------------------------------------- time
+  //
+  // Every instant this system stores is UTC, and a raw `2026-08-30T13:48:46Z`
+  // is not something a TAM reads at a glance in the middle of an incident. So
+  // every instant is written into the reader's own zone before it reaches a
+  // sentence.
+  //
+  // That is rendering and not computation: the instant is the one the store
+  // published, spelled in the clock the reader is holding. Nothing here derives
+  // a new figure, and the citation drawer still shows the stored string exactly
+  // as it is, so a local wording is never the only record of what the store
+  // holds (docs/ownership.md, W4).
+
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  const STAMP_RE = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/;
+
+  function isStamp(value) {
+    return typeof value === "string" && STAMP_RE.test(value.trim());
+  }
+
+  // A stored instant with no zone marker is UTC - that is what W2 writes - so
+  // it is read as UTC rather than as the browser's local wall time, which would
+  // silently shift the reading by the viewer's offset.
+  function parseStamp(value) {
+    if (!isStamp(value)) return null;
+    let text = String(value).trim().replace(" ", "T");
+    if (!/(Z|[+-]\d{2}:?\d{2})$/.test(text)) text += "Z";
+    const at = new Date(text);
+    return isFinite(at.getTime()) ? at : null;
+  }
+
+  function pad2(value) {
+    return value < 10 ? "0" + value : String(value);
+  }
+
+  // The viewer's zone, named once. It is printed where the reader would
+  // otherwise have to guess which clock a time is in, and left off the figures
+  // that sit beside one that already says it.
+  const LOCAL_ZONE = (function () {
+    try {
+      const parts = new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
+        .formatToParts(new Date());
+      for (let i = 0; i < parts.length; i += 1) {
+        if (parts[i].type === "timeZoneName" && parts[i].value) return parts[i].value;
+      }
+    } catch (error) {
+      // An engine with no Intl still gets a board; it just says "local time".
+    }
+    return "local time";
+  })();
+
+  // "30 Aug 08:48" - and with seconds where the reader is watching something
+  // move, which is the masthead and the evidence trail.
+  function localStamp(value, seconds) {
+    const at = parseStamp(value);
+    if (!at) return null;
+    return String(at.getDate()) + " " + MONTHS[at.getMonth()] + " " +
+      pad2(at.getHours()) + ":" + pad2(at.getMinutes()) +
+      (seconds ? ":" + pad2(at.getSeconds()) : "");
+  }
+
+  // Just the clock face, for an axis or a window where the day is carried
+  // beside it rather than repeated on every label.
+  function localClock(value, seconds) {
+    const at = parseStamp(value);
+    if (!at) return null;
+    return pad2(at.getHours()) + ":" + pad2(at.getMinutes()) +
+      (seconds ? ":" + pad2(at.getSeconds()) : "");
+  }
+
+  function localDay(value) {
+    const at = parseStamp(value);
+    if (!at) return null;
+    return String(at.getDate()) + " " + MONTHS[at.getMonth()];
+  }
+
+  // A stored instant, written for a reader. Anything that is not an instant is
+  // passed through untouched, so "not in store" stays those words rather than
+  // being formatted into a date that was never measured.
+  function stampWords(value, fallback) {
+    if (value === null || value === undefined || value === "") return fallback || "not in store";
+    return localStamp(value, true) || String(value);
   }
 
   function fmt(value) {
@@ -66,6 +242,7 @@
       }
       return JSON.stringify(value);
     }
+    if (isStamp(value)) return localStamp(value, true) || String(value);
     return String(value);
   }
 
@@ -440,65 +617,54 @@
   }
 
   // -------------------------------------------------------------------
-  // Ingestion provenance.
+  // Freshness.
   //
-  // The question a judge actually asks is "is this actually live, or is it a
-  // mock?", and until now the only place the answer existed was a terminal.
-  // Every figure on this line is read straight out of W2's `ingest_health`
-  // evidence tool and cited like everything else on the board. Nothing here
-  // adds, subtracts, converts to an age, or decides what "fresh" means.
+  // "Is this board live, or is it a mock?" is the one question the old
+  // provenance band was earning its space for, and it was answering it in
+  // four lines of vocabulary nobody wanted on screen. What survives is one
+  // stamp in the masthead: the event time of the newest record the store
+  // holds, in the reader's own zone, cited like every other figure.
   //
-  // It is deliberately provenance and not a metric: it lives on the frame
-  // edge beside the store and source line, at the same weight, below the
-  // header and far from any money figure. A judge should read it the way they
-  // read a footer, and find it holds up when they press it.
+  // It is read straight out of W2's `ingest_health` evidence tool. Nothing
+  // here converts it to an age, decides what "fresh" means, or lets the wall
+  // clock stand in for it - a board whose store has stopped moving shows a
+  // stamp that has stopped moving, which is the honest reading.
   // -------------------------------------------------------------------
 
-  function provSegment(label, value, citeId, ariaLabel, tone) {
-    return "<span><b>" + escapeHtml(label) + "</b> " +
-      '<span class="pv' + (tone ? " " + tone : "") + '">' + escapeHtml(value) + "</span>" +
-      citeButton(citeId, "cite " + ariaLabel) + "</span>";
-  }
-
-  function renderIngestion() {
+  function renderFreshness() {
     const data = state.ingestion;
+    if (state.loadError) {
+      freshDot.className = "fresh-dot is-bad";
+      freshValue.textContent = "Store read failed. " + state.loadError;
+      return;
+    }
     if (!data) {
-      provIngest.innerHTML = "<span><b>ingest</b> waiting for store</span>";
+      freshDot.className = "fresh-dot is-waiting";
+      freshValue.textContent = "Reading the store...";
       return;
     }
     if (data.unreadable) {
-      // A stale number is worse than no number on the one line whose job is
-      // to say whether the numbers are current.
-      provIngest.innerHTML =
-        '<span><b>ingest</b> <span class="pv pv-warn">could not be read from the store</span></span>';
+      // A stale stamp is worse than no stamp on the one figure whose job is to
+      // say whether the figures are current.
+      freshDot.className = "fresh-dot is-bad";
+      freshValue.textContent = "Freshness could not be read from the store.";
       return;
     }
-    const dead = data.dead_letter || {};
-    // `rejected` and `dead_letter.count` are one measurement under two names,
-    // equal by construction (C2 contract, section 12). They are printed as one
-    // segment so the line cannot be read as two independent facts.
-    const refused = count(data.rejected) + " rejected \u00b7 " + count(dead.count) + " dead-lettered";
-    const parts = [
-      provSegment("ingest", count(data.accepted) + " accepted", "ingest-accepted",
-        "records accepted", data.accepted ? null : "pv-quiet"),
-      provSegment("refused", refused, "ingest-refused",
-        "records refused", data.rejected ? "pv-warn" : null),
-    ];
-    if (data.newest_event_at) {
-      parts.push(provSegment("last event", data.newest_event_at, "ingest-newest",
-        "newest observed event", null));
-      parts.push(provSegment("measured through", data.watermark, "ingest-watermark",
-        "measurement watermark", null));
-    } else {
-      // A store that has observed nothing has an epoch watermark. That is the
-      // honest value and the drawer still shows it, but printing 1970 on the
-      // frame reads as a broken clock rather than as an empty store, so the
-      // line says the thing the epoch means.
-      parts.push(provSegment("last event", "nothing observed yet", "ingest-newest",
-        "newest observed event", "pv-quiet"));
+    freshDot.className = "fresh-dot";
+    if (!data.newest_event_at) {
+      // A store that has observed nothing has an epoch watermark. The drawer
+      // still shows it; the masthead says the thing the epoch means rather
+      // than printing 1970 and reading as a broken clock.
+      freshValue.innerHTML = '<span class="fresh-q">Nothing observed yet</span>' +
+        citeButton("ingest-newest", "cite the newest observed event");
+      bindCites(freshValue);
+      return;
     }
-    provIngest.innerHTML = parts.join("");
-    bindCites(provIngest);
+    freshValue.innerHTML = "as of " +
+      '<b class="mono">' + escapeHtml(stampWords(data.newest_event_at)) + "</b> " +
+      '<span class="fresh-z">' + escapeHtml(LOCAL_ZONE) + "</span>" +
+      citeButton("ingest-newest", "cite the newest observed event");
+    bindCites(freshValue);
   }
 
   // -------------------------------------------------------------------
@@ -733,7 +899,7 @@
       "metric_series · " + escapeHtml(String(series.metric || "not in store")) + second +
       " · " + escapeHtml(count(buckets)) + " buckets of " +
       escapeHtml(count(series.bucket_seconds)) + "s · measured through " +
-      escapeHtml(String(series.measured_through || "not in store")) +
+      escapeHtml(stampWords(series.measured_through)) +
       citeButton("trend-series", "cite the conversion series") + "</p>";
   }
 
@@ -743,12 +909,10 @@
       overviewBoard.innerHTML = '<p class="empty">No overview yet.</p>';
       overviewMerchants.innerHTML = "";
       overviewNotes.innerHTML = "";
-      provSource.innerHTML = "<b>source</b> waiting for store";
       return;
     }
     const headline = (data.incidents || [])[0] || null;
     const sourceId = data.source_incident_id || "none";
-    provSource.innerHTML = "<b>source</b> " + escapeHtml(sourceId);
     overviewNotes.innerHTML = REFUSAL_NOTE;
     renderMerchants(state.merchants);
     if (!headline) {
@@ -898,7 +1062,7 @@
   // eight hours stale is a different answer.
   function askAsOf(payload) {
     if (!payload.as_of) return "";
-    return '<p class="ask-asof mono">measured as of ' + escapeHtml(payload.as_of) + "</p>";
+    return '<p class="ask-asof mono">measured as of ' + escapeHtml(stampWords(payload.as_of)) + "</p>";
   }
 
   // Four outcomes, four designs. `ambiguous` and `insufficient_evidence` are
@@ -1449,8 +1613,6 @@
   // these helpers is the number the store published - docs/ownership.md's W4
   // rule makes a figure that exists only in the UI a defect of this layer.
 
-  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
   const DIMENSION_WORDS = {
     merchant_id: "merchant",
     provider: "provider",
@@ -1465,19 +1627,23 @@
   }
 
   function clockOf(stamp) {
+    const local = localClock(stamp);
+    if (local) return local;
     const match = /T(\d{2}:\d{2})/.exec(String(stamp || ""));
     return match ? match[1] : null;
   }
 
   function dayOf(stamp) {
+    const local = localDay(stamp);
+    if (local) return local;
     const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(stamp || ""));
     if (!match) return null;
     return String(Number(match[3])) + " " + (MONTHS[Number(match[2]) - 1] || match[2]);
   }
 
-  // "05:14-05:19 UTC on 30 Aug". A window that does not parse returns null and
-  // the sentence is built without it, rather than half-formatted into something
-  // that reads like a different interval.
+  // "05:14-05:19 CEST on 30 Aug", in the reader's own zone. A window that does
+  // not parse returns null and the sentence is built without it, rather than
+  // half-formatted into something that reads like a different interval.
   function windowPhrase(window) {
     if (!window || typeof window !== "object") return null;
     const from = clockOf(window.start);
@@ -1486,9 +1652,9 @@
     const startDay = dayOf(window.start);
     const endDay = dayOf(window.end);
     if (startDay && endDay && startDay !== endDay) {
-      return from + " on " + startDay + " to " + to + " on " + endDay + " UTC";
+      return from + " on " + startDay + " to " + to + " on " + endDay + " " + LOCAL_ZONE;
     }
-    return from + "-" + to + " UTC" + (startDay ? " on " + startDay : "");
+    return from + "-" + to + " " + LOCAL_ZONE + (startDay ? " on " + startDay : "");
   }
 
   function cohortWords(cohort) {
@@ -1613,7 +1779,7 @@
     const rows = [];
     function add(label, value) {
       if (value === null || value === undefined || value === "") return;
-      rows.push([label, String(value)]);
+      rows.push([label, isStamp(value) ? stampWords(value) : String(value)]);
     }
     if (response.error) {
       add("refused", response.error.code || "error");
@@ -2227,7 +2393,7 @@
         escapeHtml(name) + "</h4><p>" + escapeHtml(CHANNEL_NOTE[name] || "Stored channel outcome.") + "</p>" +
         '<p class="state">' + escapeHtml(status) +
         (event && event.detail ? " · " + escapeHtml(event.detail) : "") + "</p>" +
-        '<p class="state mono">' + escapeHtml((event && event.created_at) || "not in store") + "</p>" +
+        '<p class="state mono">' + escapeHtml(stampWords(event && event.created_at)) + "</p>" +
         "</article>";
     }).join("") + "</div>";
   }
@@ -2255,7 +2421,7 @@
       escapeHtml((event && event.status) || "not in store") + ".</p>" +
       '<div class="slackish"><div class="bar mono"><span>' +
       escapeHtml(slackChannelName()) + "</span><span>" +
-      escapeHtml((event && event.created_at) || "not in store") + "</span></div>" +
+      escapeHtml(stampWords(event && event.created_at)) + "</span></div>" +
       '<div class="msg"><div class="av" aria-hidden="true"><span class="avmark"></span></div>' +
       '<div class="msg-body"><div class="who">Control Tower <em>APP</em></div>' +
       '<div class="block ' + sevClass + '">' +
@@ -2265,7 +2431,7 @@
       '<span class="fig">' + escapeHtml(ratio(change.expected)) + citeButton("esc-expected", "cite expected conversion") + "</span>" +
       " &rarr; " +
       '<span class="fig">' + escapeHtml(ratio(change.actual)) + citeButton("esc-actual", "cite current conversion") + "</span>" +
-      " since " + escapeHtml(String(payload.onset || group.onset || "not in store")) + ". " +
+      " since " + escapeHtml(stampWords(payload.onset || group.onset)) + ". " +
       '<span class="fig">' + escapeHtml(count(lost.payments)) + citeButton("esc-lost", "cite payments lost") + "</span>" +
       " payments lost, " +
       '<span class="fig">' + escapeHtml(money(financial.gmv_at_risk)) + citeButton("esc-risk", "cite GMV at risk") + "</span>" +
@@ -2295,7 +2461,7 @@
             "<b>" + escapeHtml(String(payload.severity || "not in store")) + " · " +
             escapeHtml(String(payload.scope_label || "Platform-wide")) + "</b>" +
             '<span class="sub mono">' + escapeHtml(String(call.incident_id)) + "</span>" +
-            '<span class="sub mono">queued ' + escapeHtml(String(call.created_at || "not in store")) + "</span>" +
+            '<span class="sub mono">queued ' + escapeHtml(stampWords(call.created_at)) + "</span>" +
             "</article>";
         }).join("") + "</div>"
       : '<p class="empty">No call is queued. A call is only queued when the phone channel could not place it.</p>';
@@ -2500,96 +2666,50 @@
   function ingestCite(citeId) {
     const data = state.ingestion;
     if (!data || data.unreadable) return null;
+    if (citeId !== "ingest-newest") return null;
+    // The masthead shows the attempt stream alone, because "how fresh is this
+    // board" is the claim on the line and a telemetry timestamp would quietly
+    // answer a different question. Everything else `ingest_health` measured -
+    // the other two streams, the watermark, the lag - belongs here, where a
+    // reader who presses can see it.
+    const byKind = data.newest_by_kind || {};
     const dead = data.dead_letter || {};
-    const lede = "Read from the ingest_health evidence tool over the same store every other " +
-      "figure on this board comes from. Nothing on this line is computed in the page.";
-    if (citeId === "ingest-accepted") {
-      return {
-        title: "Records accepted",
-        lede: lede + " This is a row count the store holds after de-duplication, not a running " +
-          "total of what a consumer saw. Redelivered records are dropped on event_id, which is " +
-          "why duplicates is reported as not measured rather than guessed at.",
-        rows: [
-          ["tool", "ingest_health"],
-          ["field", "accepted"],
-          ["value", count(data.accepted)],
-          ["attempts", count((data.stored || {}).attempts)],
-          ["telemetry_samples", count((data.stored || {}).telemetry_samples)],
-          ["payments_closed", count((data.stored || {}).payments_closed)],
-          ["duplicates", "not measured - " + ((data.not_measured || {}).duplicates || "see the C2 contract")],
-        ],
-        body: data.stored,
-      };
-    }
-    if (citeId === "ingest-refused") {
-      return {
-        title: "Records refused",
-        lede: lede + " rejected and dead_letter.count are one measurement published under two " +
-          "names and are equal by construction: a refused record is dead-lettered in the same " +
-          "statement that rejects it. They are shown together so they cannot be read as two facts.",
-        rows: [
-          ["tool", "ingest_health"],
-          ["field", "rejected / dead_letter.count"],
-          ["rejected", count(data.rejected)],
-          ["dead_letter.count", count(dead.count)],
-          ["distinct_reasons", count(dead.distinct_reasons)],
-        ],
-        body: { reasons: dead.reasons, by_source: dead.by_source },
-      };
-    }
-    if (citeId === "ingest-newest") {
-      // The strip shows the attempt stream alone, because "payments ingested"
-      // is the claim on the line and a telemetry timestamp would quietly
-      // answer a different question. The other two readings belong here, where
-      // a reader who presses can see them.
-      const byKind = data.newest_by_kind || {};
-      return {
-        title: "Newest observed event",
-        lede: lede + " This is the event time carried by the newest payment attempt in the store. " +
-          "It is not the time that record arrived and it is not the wall clock. Telemetry samples " +
-          "and closed payments are stored beside attempts and read separately below; they do not " +
-          "move this figure or the watermark.",
-        rows: [
-          ["tool", "ingest_health"],
-          ["field", "newest_event_at"],
-          ["value", data.newest_event_at || "not in store"],
-          ["oldest_event_at", data.oldest_event_at || "not in store"],
-          ["newest_by_kind.attempts", byKind.attempts || "not in store"],
-          ["newest_by_kind.telemetry_samples", byKind.telemetry_samples || "not in store"],
-          ["newest_by_kind.payments_closed", byKind.payments_closed || "not in store"],
-        ],
-        body: {
-          oldest_event_at: data.oldest_event_at,
-          newest_event_at: data.newest_event_at,
-          newest_by_kind: data.newest_by_kind,
-        },
-      };
-    }
-    if (citeId === "ingest-watermark") {
-      return {
-        title: "Measured through",
-        lede: lede + " The watermark is the event time measurement is complete to: the newest " +
-          "observed event less the lateness grace, floored to a bucket. lag_seconds is the " +
-          "distance between the two - event time against event time, so it says how much of " +
-          "what arrived is not yet measured. It is not seconds since a record arrived, and this " +
-          "page does not present it as one.",
-        rows: [
-          ["tool", "ingest_health"],
-          ["field", "watermark"],
-          ["value", data.watermark || "not in store"],
-          ["lag_seconds", data.lag_seconds === null || data.lag_seconds === undefined
-            ? "not in store" : count(data.lag_seconds)],
-          ["lateness_grace_seconds", count(data.lateness_grace_seconds)],
-        ],
-        body: {
-          watermark: data.watermark,
-          newest_event_at: data.newest_event_at,
-          lag_seconds: data.lag_seconds,
-          lateness_grace_seconds: data.lateness_grace_seconds,
-        },
-      };
-    }
-    return null;
+    return {
+      title: "Newest observed event",
+      lede: "Read from the ingest_health evidence tool over the same store every other figure " +
+        "on this board comes from. Nothing on this line is computed in the page. This is the " +
+        "event time carried by the newest payment attempt in the store. It is not the time that " +
+        "record arrived and it is not the wall clock. The watermark below is the event time " +
+        "measurement is complete to: the newest observed event less the lateness grace, floored " +
+        "to a bucket. lag_seconds is the distance between the two - event time against event " +
+        "time, so it says how much of what arrived is not yet measured. It is " +
+        "not seconds since a record arrived, and this page does not present it as one.",
+      rows: [
+        ["tool", "ingest_health"],
+        ["field", "newest_event_at"],
+        ["value", data.newest_event_at || "not in store"],
+        ["oldest_event_at", data.oldest_event_at || "not in store"],
+        ["newest_by_kind.attempts", byKind.attempts || "not in store"],
+        ["newest_by_kind.telemetry_samples", byKind.telemetry_samples || "not in store"],
+        ["newest_by_kind.payments_closed", byKind.payments_closed || "not in store"],
+        ["watermark", data.watermark || "not in store"],
+        ["lag_seconds", data.lag_seconds === null || data.lag_seconds === undefined
+          ? "not in store" : count(data.lag_seconds)],
+        ["lateness_grace_seconds", count(data.lateness_grace_seconds)],
+        ["accepted", count(data.accepted)],
+        ["rejected / dead_letter.count", count(data.rejected) + " / " + count(dead.count)],
+        ["duplicates", "not measured - " + ((data.not_measured || {}).duplicates || "see the C2 contract")],
+      ],
+      body: {
+        oldest_event_at: data.oldest_event_at,
+        newest_event_at: data.newest_event_at,
+        newest_by_kind: data.newest_by_kind,
+        watermark: data.watermark,
+        lag_seconds: data.lag_seconds,
+        lateness_grace_seconds: data.lateness_grace_seconds,
+        stored: data.stored,
+      },
+    };
   }
 
   // An answer's figure cites the query the engine tied it to, and a query in
@@ -2720,7 +2840,13 @@
     drawerLede.textContent = rec.lede;
     drawerBody.innerHTML =
       "<dl>" + rec.rows.map(function (row) {
-        return "<dt>" + escapeHtml(row[0]) + "</dt><dd class=\"mono\">" + escapeHtml(pretty(row[1])) + "</dd>";
+        // The stored string, exactly as the store holds it. This drawer is the
+        // provenance, so a local rendering is only ever set beside the record
+        // and never in place of it.
+        const local = isStamp(row[1]) ? localStamp(row[1], true) : null;
+        return "<dt>" + escapeHtml(row[0]) + "</dt><dd class=\"mono\">" + escapeHtml(pretty(row[1])) +
+          (local ? '<span class="cite-local">' + escapeHtml(local + " " + LOCAL_ZONE) + "</span>" : "") +
+          "</dd>";
       }).join("") + "</dl><h4>Record</h4><pre>" + escapeHtml(pretty(rec.body)) + "</pre>";
     drawer.classList.add("open");
     drawer.setAttribute("aria-hidden", "false");
@@ -2757,16 +2883,17 @@
   // merchant health, pending calls and escalation outcomes each come from the
   // endpoint that owns them rather than being re-derived off one payload.
   function refresh() {
+    setFetching(true);
     return Promise.all([
       jsonGet("/api/overview"),
       jsonGet("/api/incidents"),
       jsonGet("/api/merchants"),
       jsonGet("/api/calls"),
       jsonGet("/api/escalations"),
-      // The provenance line reads its own endpoint. It is the one figure on
+      // The freshness stamp reads its own endpoint. It is the one figure on
       // the page that must not be derived from another payload: a freshness
       // claim assembled out of the incident feed would be describing the feed,
-      // not the ingestion behind it. A failure here darkens that line alone
+      // not the ingestion behind it. A failure here darkens that stamp alone
       // and leaves the rest of the board intact.
       jsonGet("/api/ingestion").catch(function () { return { unreadable: true }; }),
     ]).then(function (payloads) {
@@ -2778,15 +2905,32 @@
       state.escalations = payloads[4];
       state.ingestion = payloads[5];
       if (!state.selectedId && state.queue.length) state.selectedId = state.queue[0].incident_id;
-      renderIngestion();
+      state.loaded = true;
+      state.loadError = null;
+      renderFreshness();
       renderOverview();
       loadSeries((payloads[0] || {}).source_incident_id);
       renderQueue();
       renderWatchRail();
       renderEscalation();
       if (state.selectedId) return loadDetail(state.selectedId);
+      // No incident to open. The detail and evidence views draw their own
+      // honest empty, so the skeleton is not left standing over a store that
+      // has already answered.
+      state.detail = null;
+      renderDetail();
+      renderEvidence();
     }).catch(function (err) {
-      judgeStatus.textContent = "Store read failed. " + (err && err.error ? err.error : "Retrying.");
+      // The server's own words where it gave any; otherwise a plain sentence,
+      // rather than the browser's internal "Failed to fetch".
+      state.loadError = (err && err.error) || "The store did not answer.";
+      // A populated board is never blanked to report a failed refresh: the
+      // figures on screen are still the last thing the store actually said.
+      // The masthead stamp is what goes red.
+      if (!state.loaded) paintLoadFailure(state.loadError);
+      renderFreshness();
+    }).then(function () {
+      setFetching(false);
     });
   }
 
@@ -2859,7 +3003,8 @@
     const stage = submitter && submitter.getAttribute("data-stage");
     if (!stage || JUDGE_STAGES.indexOf(stage) === -1) return;
     setJudgeBusy(true);
-    judgeStatus.textContent = "Sending your change into the live traffic.";
+    judgeStatus.innerHTML = '<span class="judge-spin" aria-hidden="true"></span>' +
+      "Sending your change into the live traffic.";
     fetch("/api/trigger", {
       method: "POST",
       cache: "no-store",
@@ -2993,9 +3138,10 @@
     submitAsk();
   });
 
+  // The only clock left on the page is the elapsed reading on an open agent
+  // run, and that one counts from the stored `started_at` rather than from a
+  // page load.
   function tick() {
-    const now = new Date();
-    $("clock").textContent = now.toISOString().replace(".000Z", "Z");
     tickAgentRun();
   }
 
@@ -3003,6 +3149,8 @@
   setInterval(tick, 1000);
   renderAskExamples();
   renderAsk();
+  renderFreshness();
+  paintLoading();
   loadJudgeState();
   refresh();
   setInterval(refresh, 2500);
