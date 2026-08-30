@@ -50,6 +50,7 @@ CALLS = {
     "incident_history": {"merchant_id": "merchant-a"},
     "financial_impact": {"incident_id": "inc-2026-08-30-unknown"},
     "metric_series": {"cohort": COHORT, "window": SERIES_WINDOW},
+    "ingest_health": {},
 }
 
 _OPEN: list = []
@@ -130,6 +131,107 @@ class EmptyStoreTests(unittest.TestCase):
         self.assertFalse(response["structurally_inseparable"])
         self.assertEqual(response["cross_tabulation"]["rows"], [])
         self.assertIn("cannot be established", response["interpretation"])
+
+
+
+class IngestHealthTests(unittest.TestCase):
+    """The tool that answers "is this actually live?" must not be able to lie."""
+
+    def test_an_empty_store_reports_nothing_ingested_rather_than_failing(self):
+        response = evidence.answer("ingest_health", {}, loaded())
+        self.assertEqual(response["accepted"], 0)
+        self.assertEqual(response["rejected"], 0)
+        self.assertEqual(response["dead_letter"]["count"], 0)
+        self.assertEqual(response["dead_letter"]["reasons"], [])
+        self.assertIsNone(response["newest_event_at"])
+        self.assertIsNone(response["lag_seconds"])
+
+    def test_accepted_is_the_row_count_the_store_actually_holds(self):
+        connection = loaded(synthetic.with_provider_incident())
+        response = evidence.answer("ingest_health", {}, connection)
+        stored = connection.execute("SELECT COUNT(*) AS n FROM attempt").fetchone()["n"]
+        self.assertEqual(response["accepted"], stored)
+        self.assertEqual(response["stored"]["attempts"], stored)
+        self.assertGreater(response["accepted"], 0)
+
+    def test_a_redelivered_record_is_not_counted_twice(self):
+        """Exactly-once counting over at-least-once delivery, seen from outside."""
+        events = synthetic.with_provider_incident()
+        connection = loaded(events)
+        once = evidence.answer("ingest_health", {}, connection)["accepted"]
+        store.ingest(connection, events)
+        self.assertEqual(evidence.answer("ingest_health", {}, connection)["accepted"], once)
+
+    def test_a_refused_record_is_reported_with_its_reason(self):
+        connection = loaded()
+        store.write_batch(connection, [("attempt", {"not": "a payment"})])
+        connection.commit()
+        response = evidence.answer("ingest_health", {}, connection)
+        self.assertEqual(response["accepted"], 0)
+        self.assertEqual(response["rejected"], 1)
+        self.assertEqual(response["dead_letter"]["count"], 1)
+        self.assertEqual(response["dead_letter"]["distinct_reasons"], 1)
+        self.assertEqual(response["dead_letter"]["reasons"][0]["count"], 1)
+        self.assertTrue(response["dead_letter"]["reasons"][0]["reason"])
+        self.assertEqual(
+            response["dead_letter"]["by_source"], [{"source": "ingest", "count": 1}]
+        )
+
+    def test_rejected_and_the_dead_letter_count_never_disagree(self):
+        connection = loaded(synthetic.with_provider_incident())
+        store.write_batch(connection, [("attempt", {"a": 1}), ("telemetry", {"b": 2})])
+        connection.commit()
+        response = evidence.answer("ingest_health", {}, connection)
+        self.assertEqual(response["rejected"], response["dead_letter"]["count"])
+        self.assertEqual(response["rejected"], 2)
+
+    def test_the_reason_list_is_bounded_but_the_distinct_count_is_not(self):
+        connection = loaded()
+        limit = evidence.DEAD_LETTER_REASON_LIMIT
+        for index in range(limit + 3):
+            connection.execute(
+                "INSERT INTO dead_letter (reason, payload, source) VALUES (?, ?, ?)",
+                (f"reason-{index}", "{}", "ingest"),
+            )
+        connection.commit()
+        response = evidence.answer("ingest_health", {}, connection)
+        self.assertEqual(len(response["dead_letter"]["reasons"]), limit)
+        self.assertEqual(response["dead_letter"]["distinct_reasons"], limit + 3)
+        self.assertEqual(response["rejected"], limit + 3)
+
+    def test_lag_is_event_time_against_the_watermark_and_not_the_clock(self):
+        connection = loaded(synthetic.with_provider_incident())
+        response = evidence.answer("ingest_health", {}, connection)
+        bounds = store.window_bounds(connection)
+        self.assertEqual(
+            response["lag_seconds"], bounds[1] - evidence.watermark(connection)
+        )
+        self.assertEqual(response["newest_event_at"], evidence.schema.iso_utc(bounds[1]))
+        self.assertEqual(response["oldest_event_at"], evidence.schema.iso_utc(bounds[0]))
+        self.assertEqual(
+            response["watermark"], evidence.schema.iso_utc(evidence.watermark(connection))
+        )
+        self.assertEqual(response["as_of"], response["watermark"])
+        self.assertEqual(
+            response["lateness_grace_seconds"], config.LATENESS_GRACE_SECONDS
+        )
+
+    def test_duplicates_is_named_as_unmeasured_rather_than_invented(self):
+        response = evidence.answer("ingest_health", {}, loaded())
+        self.assertIn("duplicates", response["not_measured"])
+        self.assertNotIn("duplicates", response)
+
+    def test_an_input_is_refused_rather_than_silently_widened(self):
+        with self.assertRaises(evidence.EvidenceError) as raised:
+            evidence.answer("ingest_health", {"cohort": {"provider": "p"}}, loaded())
+        self.assertEqual(raised.exception.code, "invalid_input")
+        self.assertIn("cohort", raised.exception.message)
+
+    def test_the_same_events_in_a_different_order_give_the_same_answer(self):
+        events = synthetic.with_provider_incident()
+        forward = evidence.answer("ingest_health", {}, loaded(events))
+        backward = evidence.answer("ingest_health", {}, loaded(list(reversed(events))))
+        self.assertEqual(forward, backward)
 
 
 class MeasuredAnswerTests(unittest.TestCase):
