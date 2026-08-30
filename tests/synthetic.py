@@ -8,6 +8,7 @@ and it is seeded so every run produces identical input.
 from __future__ import annotations
 
 import random
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -423,3 +424,149 @@ def two_stage_deviation_mild_only(**kwargs: Any) -> list[dict[str, Any]]:
     collapse_minute = kwargs.get("collapse_minute", 83)
     cutoff = (BASE + timedelta(minutes=collapse_minute)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return [event for event in two_stage_deviation(**kwargs) if event["occurred_at"] < cutoff]
+
+
+# Live-vocabulary healthy history. The fixtures above stay on the detector's
+# test names (provider-p2, bank-x, USD) so existing assertions keep passing.
+# The demo workers emit a different vocabulary - merchant-b/adyen in COP on
+# Colombian banks - and a baseline is per-cohort, so history written in the
+# test names would leave the judge's cohort with no trailing window at all.
+# PaymentAttemptBuilder cannot fill that gap: it stamps wall-clock now and
+# sleeps 50ms per retry, which cannot produce backdated event time in seconds.
+# This generator is the smallest bridge: canonical events, worker profiles
+# for the live names, synthetic's seeded construction for time and rate.
+
+LIVE_HISTORY_SEED = 20260830
+DEMO_MERCHANT_ID = "merchant-b"
+DEMO_PROVIDER = "adyen"
+LIVE_HISTORY_HOURS = 8.0
+LIVE_HISTORY_PER_MERCHANT_PER_MINUTE = 24
+_HEALTHY_LATENCY_MS = 220
+
+
+def _live_merchant_specs() -> tuple[dict[str, Any], ...]:
+    """Read the live names from W1. Do not restate them here."""
+    from worker.helpers.payment import CARD_NETWORKS, CURRENCY_RANGES
+    from worker.profiles.merchant_a import PROFILE as merchant_a
+    from worker.profiles.merchant_b import PROFILE as merchant_b
+    from worker.profiles.merchant_c import PROFILE as merchant_c
+    from worker.reference.banks import BANKS
+
+    specs = []
+    for profile in (merchant_a, merchant_b, merchant_c):
+        specs.append(
+            {
+                "merchant_id": profile.merchant_id,
+                "country": profile.country,
+                "currency": profile.currency,
+                "payment_methods": tuple(profile.payment_methods),
+                "providers": tuple(profile.providers),
+                "banks": tuple(BANKS[profile.country]),
+                "amount_range": CURRENCY_RANGES[profile.currency],
+                "card_networks": tuple(CARD_NETWORKS),
+            }
+        )
+    return tuple(specs)
+
+
+def _anchor(as_of: datetime) -> datetime:
+    aware = as_of.astimezone(timezone.utc) if as_of.tzinfo else as_of.replace(tzinfo=timezone.utc)
+    return aware.replace(second=0, microsecond=0)
+
+
+def _iso(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _minute_outcomes(count: int, decline_probability: float, rng: random.Random) -> list[bool]:
+    """Exact decline count for one minute, shuffled. Bernoulli noise is what
+    trips a watch on otherwise healthy history."""
+    declines = int(round(count * decline_probability))
+    declines = min(max(declines, 0), count)
+    flags = [False] * declines + [True] * (count - declines)
+    rng.shuffle(flags)
+    return flags
+
+
+def iter_live_healthy_history(
+    *,
+    hours: float | None = None,
+    minutes: int | None = None,
+    per_merchant_per_minute: int = LIVE_HISTORY_PER_MERCHANT_PER_MINUTE,
+    seed: int = LIVE_HISTORY_SEED,
+    as_of: datetime | None = None,
+) -> Iterator[dict[str, Any]]:
+    """Healthy live-vocabulary attempts sitting immediately behind `as_of`.
+
+    Event time, not wall-clock: history occupies the `hours` immediately
+    behind and including the anchored `as_of`, so a stack that then starts
+    publishing stitches onto this window rather than a hard-coded date.
+    Randomness is seeded; the same `(as_of, seed, hours)` pair reproduces the
+    same history. Conversion is held flat on purpose - this is context, not
+    an incident.
+    """
+    if minutes is not None and hours is not None:
+        raise ValueError("pass hours or minutes, not both")
+    if minutes is None:
+        span_hours = LIVE_HISTORY_HOURS if hours is None else hours
+        if span_hours <= 0:
+            raise ValueError("hours must be positive")
+        minutes = int(round(span_hours * 60))
+    if minutes < 1:
+        raise ValueError("history must cover at least one minute")
+    if per_merchant_per_minute < 1:
+        raise ValueError("per_merchant_per_minute must be at least 1")
+
+    from worker.helpers.payment import BASELINE_DECLINE_PROBABILITY
+
+    rng = random.Random(seed)
+    specs = _live_merchant_specs()
+    end = _anchor(as_of or datetime.now(timezone.utc))
+    index = 0
+    # Inclusive of the anchor minute so `hours=6` is six hours of event time,
+    # not 5h59m, which is below MERCHANT_NORMAL_MIN_HOURS. Live traffic for
+    # that same minute is healthy too and INSERT OR IGNORE-dedupes on event_id.
+    for minute in range(minutes + 1):
+        minute_start = end - timedelta(minutes=minutes - minute)
+        for spec in specs:
+            outcomes = _minute_outcomes(
+                per_merchant_per_minute, BASELINE_DECLINE_PROBABILITY, rng
+            )
+            providers = spec["providers"]
+            methods = spec["payment_methods"]
+            banks = spec["banks"]
+            networks = spec["card_networks"]
+            lo, hi = spec["amount_range"]
+            for slot, approved in enumerate(outcomes):
+                index += 1
+                payment_method = methods[slot % len(methods)]
+                occurred = minute_start + timedelta(
+                    seconds=slot % 60, milliseconds=(index % 10) * 10
+                )
+                event = {
+                    "event_id": f"hist-{seed}-{index:07d}",
+                    "payment_id": f"pay-hist-{index:07d}",
+                    "attempt_id": f"att-hist-{index:07d}-1",
+                    "attempt_number": 1,
+                    "occurred_at": _iso(occurred),
+                    "merchant_id": spec["merchant_id"],
+                    "provider": providers[slot % len(providers)],
+                    "payment_method": payment_method,
+                    "card_network": (
+                        networks[slot % len(networks)] if payment_method == "card" else None
+                    ),
+                    "country": spec["country"],
+                    "issuing_bank": banks[slot % len(banks)],
+                    "status": "approved" if approved else "declined",
+                    "amount": rng.randint(lo, hi) / 100.0,
+                    "currency": spec["currency"],
+                    "latency_ms": _HEALTHY_LATENCY_MS,
+                }
+                if not approved:
+                    event["normalized_decline_reason"] = "insufficient_funds"
+                yield event
+
+
+def live_healthy_history(**kwargs: Any) -> list[dict[str, Any]]:
+    """Materialise `iter_live_healthy_history` for tests that want a list."""
+    return list(iter_live_healthy_history(**kwargs))

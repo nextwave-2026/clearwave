@@ -127,7 +127,7 @@ client and is the broker-free demo fallback. Compose now runs that consumer as s
 consume-and-sweep cycle) and the dashboard as service `surfaces` on host port 8082, both on
 `CLEARWAVE_DB=/data/clearwave.db` matching the investigation daemon. `make stack-up` brings the whole
 loop up and prints the URL; `make stack-status` reports each piece; `make stack-down` tears it down.
-Start the stack at least 60 minutes before a demo for the trailing detection baseline (`BASELINE_TRAILING_BUCKETS` is 60 one-minute buckets). Merchant-relative severity needs 6 hours (`MERCHANT_NORMAL_MIN_HOURS`); below that floor those fields read null.
+`make stack-up` first writes healthy live-vocabulary history into `state/clearwave.db` (`scripts/prepare_history.py`, eight event-time hours behind now, merchant-b/adyen included) so the trailing detection baseline (`BASELINE_TRAILING_BUCKETS` = 60) and the merchant-relative floor (`MERCHANT_NORMAL_MIN_HOURS` = 6) are already warm. `make stack-status` reports those two floors separately. The anomaly is still live: do not pre-create incidents or watches. Re-running `stack-up` replaces the store (clean start is the default, because leftover rehearsal rows promote a later band).
 Consumer operator detail: `docs/live-ingestion.md`. The copy-pasteable demo runbook is `docs/demo-sequence.md`.
 Use `.venv/bin/python` on the host. Do not use `--mode anomaly` or system pip, and do not treat `make live`
 as a one-step demo: it is the consume step alone and starts neither Kafka nor a worker. Host

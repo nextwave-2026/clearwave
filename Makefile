@@ -16,7 +16,7 @@ install:
 	@printf '%s\n' 'install: dependencies installed from every requirements.txt'
 
 lint:
-	@$(PYTHON) -m compileall -q detector investigation tests stubs \
+	@$(PYTHON) -m compileall -q detector investigation tests stubs scripts \
 	  && printf '%s\n' 'lint: all Python sources compile'
 
 test:
