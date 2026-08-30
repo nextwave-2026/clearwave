@@ -7,13 +7,6 @@ from typing import Any
 
 INACTIVE_STATES = {"resolved", "mitigated"}
 
-# A watch is a persisted near-miss, not yet an incident (DECISIONS.md
-# 2026-08-30T03:59Z): the detection floors have not all passed. It must never
-# be counted as active, never head the overview, and never enter the active
-# incident queue - a quieter rail shows it instead. See surfaces/store.py's
-# NON_ESCALATING_STATES for the matching escalation guard.
-WATCH_STATES = {"watching"}
-
 _SCOPE_ORDER = (
     "provider",
     "payment_method",
@@ -37,7 +30,6 @@ def overview(
     """Business overview figures, copied from the highest-priority incident."""
     results = investigations or {}
     active = [incident for incident in incidents if _is_active(incident)]
-    watches = [incident for incident in incidents if is_watch(incident)]
     headline = active[0] if active else None
     change = _mapping(headline.get("change") if headline else None)
     financial = _mapping(headline.get("financial_impact") if headline else None)
@@ -50,14 +42,8 @@ def overview(
         "estimated_gmv_at_risk": financial.get("gmv_at_risk"),
         "change": change or None,
         "financial_impact": financial or None,
-        # A watch carries no incident severity by design, so it is excluded
-        # from this grouping rather than showing up as a merchant's "highest
-        # severity" with nothing behind it.
-        "merchant_health": merchant_health([incident for incident in incidents if not is_watch(incident)]),
+        "merchant_health": merchant_health(incidents),
         "incidents": [queue_item(incident, results.get(str(incident.get("incident_id")))) for incident in active],
-        # A quieter rail, deliberately separate from "incidents": a watch is
-        # not yet an incident and must never be mixed into the active queue.
-        "watches": [watch_item(incident) for incident in watches],
     }
 
 
@@ -66,14 +52,11 @@ def queue(
     investigations: Mapping[str, Mapping[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     results = investigations or {}
-    rows = [incident for incident in incidents if not is_watch(incident)]
-    watches = [incident for incident in incidents if is_watch(incident)]
     return {
         "incidents": [
             queue_item(incident, results.get(str(incident.get("incident_id"))))
-            for incident in rows
-        ],
-        "watches": [watch_item(incident) for incident in watches],
+            for incident in incidents
+        ]
     }
 
 
@@ -97,41 +80,6 @@ def queue_item(
         "change": incident.get("change"),
         "financial_impact": incident.get("financial_impact"),
         "narrative_available": narrative_available,
-    }
-
-
-def watch_item(incident: Mapping[str, Any]) -> dict[str, Any]:
-    """A persisted near-miss (DECISIONS.md 2026-08-30T03:59Z), not an incident.
-
-    Deliberately no severity and no diagnostic_confidence: a watch is never
-    investigated, so there is no C4 result to attach, and it must not carry
-    fields that would let it read like an incident on screen - the contract
-    forces `severity: low` on a watch record (docs/contracts/incident.md) but
-    this shape never reads it, so it is structurally impossible for a watch
-    to render a severity badge regardless of what the record carries.
-
-    The detector's own explanation lives at `detection.watch`
-    (detector/detect.py:_watch_block): a `statement` already written in
-    prose, plus `not_yet_met`, the named floors still failing. Both are
-    copied through rather than reconstructed from the floor booleans, so
-    this never drifts from the detector's own wording. `detection` is
-    documented as W2 provenance, safe for any consumer to ignore, so every
-    field here is read as optional - an absent one renders "not in store"
-    like everywhere else on this page, never a fabricated value.
-    """
-    financial = _mapping(incident.get("financial_impact"))
-    watch = _mapping(_mapping(incident.get("detection")).get("watch"))
-    return {
-        "incident_id": incident.get("incident_id"),
-        "lifecycle_state": incident.get("lifecycle_state"),
-        "onset": incident.get("onset"),
-        "affected_cohort": incident.get("affected_cohort"),
-        "scope_label": cohort_scope_label(_mapping(incident.get("affected_cohort"))),
-        "change": incident.get("change"),
-        "projected_loss_per_hour": financial.get("projected_loss_per_hour"),
-        "trajectory": watch.get("trajectory"),
-        "reason": watch.get("statement"),
-        "not_yet_met": watch.get("not_yet_met"),
     }
 
 
@@ -258,13 +206,7 @@ def merchant_health(incidents: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _is_active(incident: Mapping[str, Any]) -> bool:
-    state = str(incident.get("lifecycle_state", "")).lower()
-    return state not in INACTIVE_STATES and state not in WATCH_STATES
-
-
-def is_watch(incident: Mapping[str, Any]) -> bool:
-    """True for a persisted near-miss. Never true for an active incident."""
-    return str(incident.get("lifecycle_state", "")).lower() in WATCH_STATES
+    return str(incident.get("lifecycle_state", "")).lower() not in INACTIVE_STATES
 
 
 def _narrative_available(investigation: Mapping[str, Any] | None) -> bool:
