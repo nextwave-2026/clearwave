@@ -40,9 +40,11 @@ from surfaces.inject import (
     fire_hidden_incident,
     injected_incident_command,
 )
+from surfaces import present
 from surfaces.present import cohort_scope_label, merchant_health
 from surfaces.server import SurfacesApp, make_server
 from surfaces.store import (
+    ESCALATABLE_STATES,
     connect,
     ensure_escalation,
     list_incidents,
@@ -142,6 +144,47 @@ def _diagnosis(incident_id, outcome="diagnosed"):
         },
         "outcome": outcome,
     }
+
+
+def _watch(incident_id="inc-watch", merchant="merchant-w", **fields):
+    """A C3 row in `lifecycle_state: watching`, in the shape detector/detect.py
+    stores one: forced to `low`, carrying a projected figure under its own key,
+    and carrying both floor vectors so the page can say why it is not yet an
+    incident."""
+    record = _incident(incident_id, "low", "2026-08-29T09:30:00Z", merchant=merchant)
+    record["lifecycle_state"] = "watching"
+    record["financial_impact"]["projected_loss_per_hour"] = {
+        "amount": 15798.36,
+        "currency": "USD",
+        "basis": "the measured conversion shortfall applied to this cohort's typical "
+        "hourly attempted value. It is not money already lost, and it never ranks severity.",
+    }
+    record["detection"] = {
+        "detection_floors": {
+            "has_measurement": True,
+            "z_min": False,
+            "absolute_drop_min": True,
+            "volume_min": True,
+        },
+        "watch": {
+            "reasons": ["conversion_near_miss"],
+            "watch_floors": {
+                "has_measurement": True,
+                "not_already_an_incident": True,
+                "volume_min": True,
+                "statistically_real": True,
+                "materially_large": True,
+                "worsening": True,
+            },
+            "not_yet_met": [],
+            "trajectory": 1,
+            "leading_indicators": {"timeout_share": {"degraded": False}},
+            "degraded_leading_indicators": [],
+            "statement": "This cohort is unusual for itself against its last hour and is getting worse.",
+        },
+    }
+    record.update(fields)
+    return record
 
 
 class SurfacesTests(unittest.TestCase):
@@ -1571,3 +1614,216 @@ class ServerHardeningTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WatchRailTests(unittest.TestCase):
+    """A watch must read as a quieter rail, never as an active incident.
+
+    `INACTIVE_STATES` was `{"resolved", "mitigated"}` and `_is_active` treated
+    everything else as active, so `watching` - which is neither - counted as an
+    active incident: it inflated the "Right now" business figures and dropped
+    into the incident queue styled like a crossed floor.
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.db = Path(self._tmpdir.name) / "clearwave.db"
+        seed = connect(self.db)
+        insert_incident(seed, _incident("inc-live", "critical", "2026-08-29T10:00:00Z"))
+        insert_incident(seed, _watch("inc-watch"), lifecycle_state="watching")
+        seed.close()
+        self.app = SurfacesApp(self.db)
+
+    def test_a_watch_is_never_counted_as_an_active_incident(self):
+        overview = self.app.overview()
+        self.assertEqual(overview["active_incident_count"], 1)
+        self.assertEqual(overview["source_incident_id"], "inc-live")
+        self.assertEqual(
+            [item["incident_id"] for item in overview["incidents"]], ["inc-live"]
+        )
+
+    def test_a_watch_never_inflates_an_overview_figure(self):
+        overview = self.app.overview()
+        # Every headline figure is copied off the one active incident, so the
+        # watch cannot have contributed to any of them.
+        self.assertEqual(overview["gmv"], {"amount": 100000.0, "currency": "USD"})
+        self.assertEqual(
+            overview["financial_impact"]["loss_per_hour"],
+            {"amount": 112000.0, "currency": "USD"},
+        )
+        self.assertEqual(
+            [row["merchant_id"] for row in overview["merchant_health"]], ["merchant-a"]
+        )
+
+    def test_a_watch_is_not_in_the_incident_queue_but_is_on_the_rail(self):
+        queue = self.app.queue()
+        self.assertEqual([item["incident_id"] for item in queue["incidents"]], ["inc-live"])
+        self.assertEqual([item["incident_id"] for item in queue["watches"]], ["inc-watch"])
+        self.assertEqual(
+            [item["incident_id"] for item in self.app.overview()["watches"]], ["inc-watch"]
+        )
+
+    def test_a_watch_is_not_a_row_on_the_escalation_view(self):
+        # It fires no channel by construction, so listing it there would read as
+        # an incident that failed to escalate.
+        groups = self.app.escalations()["incidents"]
+        self.assertEqual([group["incident_id"] for group in groups], ["inc-live"])
+
+    def test_the_rail_carries_the_projected_figure_and_both_floor_vectors(self):
+        watch = self.app.queue()["watches"][0]
+        self.assertEqual(watch["lifecycle_state"], "watching")
+        self.assertEqual(watch["severity"], "low")
+        # Projected, under its own stored key, never merged into loss_per_hour.
+        self.assertEqual(watch["projected_loss_per_hour"]["amount"], 15798.36)
+        self.assertIn("not money already lost", watch["projected_loss_per_hour"]["basis"])
+        # The reason it is not yet an incident: the detection floor it has not
+        # crossed, the watch predicate that did hold, and the trajectory.
+        self.assertFalse(watch["detection_floors"]["z_min"])
+        self.assertTrue(watch["watch_floors"]["worsening"])
+        self.assertEqual(watch["trajectory"], 1)
+        self.assertEqual(watch["reasons"], ["conversion_near_miss"])
+        self.assertEqual(watch["scope_label"], "merchant-w")
+
+    def test_present_recomputes_nothing_for_the_rail(self):
+        stored = _watch("inc-copy")
+        item = present.watch_item(stored)
+        self.assertEqual(
+            item["projected_loss_per_hour"], stored["financial_impact"]["projected_loss_per_hour"]
+        )
+        self.assertEqual(item["detection_floors"], stored["detection"]["detection_floors"])
+        self.assertEqual(item["statement"], stored["detection"]["watch"]["statement"])
+
+
+class WatchNeverPagesTests(unittest.TestCase):
+    """The no-paging guarantee must be structural, not a chain of conventions.
+
+    Before this, a watch could not page only because `ensure_escalation` gates
+    on a C4 result and the investigation daemon claims `detected`, so a watch
+    never gets one. Nothing checked the lifecycle state. These tests point
+    `ensure_escalation` at a watch that does have a result - the mistake derek's
+    constraint names - and require silence.
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.db = Path(self._tmpdir.name) / "clearwave.db"
+        self.connection = connect(self.db)
+        self.addCleanup(self.connection.close)
+        self.fired = []
+
+        def spy(incident, result, **kwargs):
+            self.fired.append(incident.get("incident_id"))
+            return [{"channel": "slack", "status": "delivered", "payload": {}}]
+
+        patcher = patch("surfaces.store.escalate", spy)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_ensure_escalation_refuses_a_watch_that_has_an_investigation_result(self):
+        insert_incident(self.connection, _watch("inc-watch"), lifecycle_state="watching")
+        persist_result(
+            self.connection, "inc-watch", _diagnosis("inc-watch"), "diagnosed", trail=[_trail_entry()]
+        )
+        stored = load_incident(self.connection, "inc-watch")
+        self.assertEqual(stored["lifecycle_state"], "watching")
+
+        outcomes = ensure_escalation(
+            self.connection, stored, load_investigation(self.connection, "inc-watch")
+        )
+
+        self.assertEqual(outcomes, [])
+        self.assertEqual(self.fired, [], "no channel may fire for a watch")
+        self.assertEqual(load_escalation(self.connection, "inc-watch"), [])
+        rows = self.connection.execute(
+            "SELECT COUNT(*) FROM escalation_claim WHERE incident_id = 'inc-watch'"
+        ).fetchone()[0]
+        self.assertEqual(rows, 0, "a watch is refused before anything is claimed")
+
+    def test_the_lifecycle_state_is_what_refuses_it(self):
+        # The same row, the same result, differing only in lifecycle state. If
+        # the guard were removed the first call would fire and this test would
+        # fail on the watch, not on the incident.
+        for incident_id, state, expected in (("inc-watch", "watching", []), ("inc-real", "detected", ["inc-real"])):
+            record = _watch(incident_id)
+            record["lifecycle_state"] = state
+            insert_incident(self.connection, record, lifecycle_state=state)
+            persist_result(
+                self.connection, incident_id, _diagnosis(incident_id), "diagnosed", trail=[_trail_entry()]
+            )
+            ensure_escalation(
+                self.connection,
+                load_incident(self.connection, incident_id),
+                load_investigation(self.connection, incident_id),
+            )
+        self.assertEqual(self.fired, ["inc-real"])
+
+    def test_only_detected_and_beyond_may_escalate(self):
+        self.assertNotIn("watching", ESCALATABLE_STATES)
+        self.assertEqual(
+            ESCALATABLE_STATES,
+            frozenset(
+                {"detected", "investigating", "diagnosed", "acknowledged", "mitigated", "resolved"}
+            ),
+        )
+
+    def test_a_dashboard_read_of_a_store_holding_a_watch_pages_nothing(self):
+        insert_incident(self.connection, _watch("inc-watch"), lifecycle_state="watching")
+        persist_result(
+            self.connection, "inc-watch", _diagnosis("inc-watch"), "diagnosed", trail=[_trail_entry()]
+        )
+        app = SurfacesApp(self.db)
+        app.overview()
+        app.queue()
+        app.detail("inc-watch")
+        self.assertEqual(self.fired, [])
+
+
+class WatchRailPageTests(unittest.TestCase):
+    """The rail must be drawn, quiet, and never in a severity colour."""
+
+    def setUp(self):
+        static = ROOT / "surfaces" / "static"
+        self.html = (static / "index.html").read_text(encoding="utf-8")
+        self.js = (static / "app.js").read_text(encoding="utf-8")
+        self.css = (static / "styles.css").read_text(encoding="utf-8")
+
+    def test_the_rail_has_its_own_region_apart_from_the_incident_queue(self):
+        self.assertIn('id="overview-watch-rail"', self.html)
+        self.assertIn('id="queue-watch-rail"', self.html)
+        # It is never appended into the queue table itself.
+        self.assertIn("renderWatchRail", self.js)
+        render_queue = self.js.split("function renderQueue")[1].split("// The warning rail.")[0]
+        self.assertNotIn('class="rail', render_queue)
+        self.assertNotIn("state.watches", render_queue)
+
+    def test_the_badge_says_watching_and_is_not_a_severity(self):
+        self.assertIn('class="watching"', self.js)
+        self.assertIn(">watching<", self.js)
+        self.assertRegex(self.css, r"\.watching\s*\{")
+        # No severity badge markup is reused for a watch.
+        rail_js = self.js.split("function watchRow")[1].split("function onsetLine")[0]
+        self.assertNotIn("badgePair", rail_js)
+        self.assertNotIn("severityClass", rail_js)
+
+    def test_no_rule_on_the_rail_reaches_for_a_critical_colour(self):
+        start = self.css.index("/* The warning rail.")
+        rail_css = self.css[start:]
+        for banned in ("--sev-critical", "--sev-high", "--sev-medium"):
+            self.assertNotIn(banned, rail_css)
+
+    def test_the_projection_is_worded_as_a_projection(self):
+        self.assertIn("if this continues", self.js)
+        self.assertIn("projected_loss_per_hour", self.js)
+        # "loss" alone would present a projection as a realised figure.
+        self.assertNotIn("Loss / hour", self.js)
+
+    def test_the_rail_computes_nothing(self):
+        rail_js = self.js.split("// The warning rail.")[1].split("function readoutCell")[0]
+        for arithmetic in ("* 100", " / 60", "reduce(", "+ Number("):
+            self.assertNotIn(arithmetic, rail_js)
+
+    def test_the_empty_rail_is_deliberate_rather_than_half_drawn(self):
+        self.assertIn("Nothing is being watched", self.js)
+        self.assertRegex(self.css, r"\.rail\.is-quiet")
