@@ -1364,17 +1364,31 @@
       };
     }
     if (citeId === "ingest-newest") {
+      // The strip shows the attempt stream alone, because "payments ingested"
+      // is the claim on the line and a telemetry timestamp would quietly
+      // answer a different question. The other two readings belong here, where
+      // a reader who presses can see them.
+      const byKind = data.newest_by_kind || {};
       return {
         title: "Newest observed event",
-        lede: lede + " This is the event time carried by the newest record in the store. It is " +
-          "not the time that record arrived and it is not the wall clock.",
+        lede: lede + " This is the event time carried by the newest payment attempt in the store. " +
+          "It is not the time that record arrived and it is not the wall clock. Telemetry samples " +
+          "and closed payments are stored beside attempts and read separately below; they do not " +
+          "move this figure or the watermark.",
         rows: [
           ["tool", "ingest_health"],
           ["field", "newest_event_at"],
           ["value", data.newest_event_at || "not in store"],
           ["oldest_event_at", data.oldest_event_at || "not in store"],
+          ["newest_by_kind.attempts", byKind.attempts || "not in store"],
+          ["newest_by_kind.telemetry_samples", byKind.telemetry_samples || "not in store"],
+          ["newest_by_kind.payments_closed", byKind.payments_closed || "not in store"],
         ],
-        body: { oldest_event_at: data.oldest_event_at, newest_event_at: data.newest_event_at },
+        body: {
+          oldest_event_at: data.oldest_event_at,
+          newest_event_at: data.newest_event_at,
+          newest_by_kind: data.newest_by_kind,
+        },
       };
     }
     if (citeId === "ingest-watermark") {
