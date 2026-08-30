@@ -2,6 +2,12 @@
 
     python3 -m investigation.vertical
 
+To investigate a store that has *already* been detected against - a live Kafka
+run, or any prepared store - without reseeding it:
+
+    python3 -m investigation.vertical --investigate-only
+    python3 -m investigation.vertical --incident-id inc-2026-08-30-715ab9c3
+
 Without OPENAI_API_KEY the investigation agent cannot run. That is the
 correct venue-network behaviour: opening evidence still executes against
 the measured store, the ledger is seeded from the pre-filter, and the
@@ -72,6 +78,7 @@ class VerticalOutcome:
     result: dict[str, Any]
     trail: list[dict[str, Any]] = field(default_factory=list)
     run: InvestigationRun | None = None
+    path: str = "vertical-path"
 
     @property
     def outcome(self) -> str:
@@ -110,10 +117,44 @@ def seed_and_detect(db_path: Path) -> list[dict[str, Any]]:
     return [row for row in detector_rows if row.get("lifecycle_state") == "detected"]
 
 
+def list_detected(db_path: Path) -> list[dict[str, Any]]:
+    """Detected C3 incidents already in the store, newest onset first."""
+    resolved = db_path.resolve()
+    connection = investigation_connect(resolved)
+    try:
+        rows = list_detector_incidents(connection)
+    finally:
+        connection.close()
+    return [row for row in rows if row.get("lifecycle_state") == "detected"]
+
+
+def select_detected(
+    detected: list[dict[str, Any]],
+    incident_id: str | None = None,
+) -> dict[str, Any]:
+    """Pick the named detected incident, or the newest one when unnamed."""
+    if not detected:
+        raise RuntimeError(
+            "this store holds no incident with lifecycle_state detected. "
+            "Run `python3 -m detector detect` (or `detector consume --detect`) against the same "
+            "CLEARWAVE_DB first."
+        )
+    if incident_id is None:
+        return dict(detected[0])
+    for row in detected:
+        if str(row.get("incident_id")) == incident_id:
+            return dict(row)
+    known = ", ".join(str(row.get("incident_id")) for row in detected)
+    raise RuntimeError(
+        f"no detected incident {incident_id} in this store. Detected: {known}"
+    )
+
+
 def investigate_store(
     db_path: Path,
     *,
     use_model: bool | None = None,
+    incident_ids: list[str] | None = None,
 ) -> tuple[str, list[InvestigationRun]]:
     """Claim detected incidents through the real runner.
 
@@ -132,7 +173,7 @@ def investigate_store(
         agent = InvestigationAgent(client=UnavailableClient())
         mode = "agent_unavailable"
     connection = investigation_connect(resolved)
-    runner = InvestigationRunner(connection, agent)
+    runner = InvestigationRunner(connection, agent, incident_ids=incident_ids)
     try:
         runs = runner.poll_once(wait=True)
     finally:
@@ -155,10 +196,57 @@ def execute_vertical_path(
     if not detected:
         raise RuntimeError("vertical-path: detector produced no incident with lifecycle_state detected")
     incident = dict(detected[0])
+    return _investigate_detected(
+        resolved,
+        detected,
+        incident,
+        use_model=use_model,
+        incident_ids=None,
+        label="vertical-path",
+    )
+
+
+def execute_investigation_only(
+    db_path: Path,
+    *,
+    incident_id: str | None = None,
+    use_model: bool | None = None,
+) -> VerticalOutcome:
+    """Investigate one already-detected incident in a prepared store. No seed, no detect.
+
+    This is the join between a store that detection already wrote to - a live
+    Kafka run included - and one investigation against that stored incident.
+    The store is never reset and never reseeded.
+    """
+    resolved = db_path.resolve()
+    if not resolved.exists():
+        raise RuntimeError(f"no store at {resolved}")
+    os.environ["CLEARWAVE_DB"] = str(resolved)
+    detected = list_detected(resolved)
+    incident = select_detected(detected, incident_id)
+    return _investigate_detected(
+        resolved,
+        detected,
+        incident,
+        use_model=use_model,
+        incident_ids=[str(incident.get("incident_id"))],
+        label="investigate-only",
+    )
+
+
+def _investigate_detected(
+    resolved: Path,
+    detected: list[dict[str, Any]],
+    incident: dict[str, Any],
+    *,
+    use_model: bool | None,
+    incident_ids: list[str] | None,
+    label: str,
+) -> VerticalOutcome:
     lifecycle_after_detect = str(incident.get("lifecycle_state", ""))
-    mode, runs = investigate_store(resolved, use_model=use_model)
+    mode, runs = investigate_store(resolved, use_model=use_model, incident_ids=incident_ids)
     if not runs:
-        raise RuntimeError("vertical-path: investigation runner claimed no incident")
+        raise RuntimeError(f"{label}: investigation runner claimed no incident")
     run = runs[0]
     connection = investigation_connect(resolved)
     try:
@@ -178,6 +266,7 @@ def execute_vertical_path(
     if persisted.get("trail"):
         trail = list(persisted["trail"])
     return VerticalOutcome(
+        path=label,
         mode=mode,
         api_key_present=api_key_present(),
         database=resolved,
@@ -276,9 +365,14 @@ def format_report(outcome: VerticalOutcome) -> str:
         if not unverified
         else f"Citations: {len(unverified)} cited query ids are missing from the trail"
     )
+    title = (
+        "Clearwave investigation of a stored incident"
+        if outcome.path == "investigate-only"
+        else "Clearwave vertical path"
+    )
     lines = [
-        "Clearwave vertical path",
-        "=======================",
+        title,
+        "=" * len(title),
         *mode_lines,
         "",
         f"Store: {outcome.database}",
@@ -322,19 +416,35 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--keep",
         action="store_true",
-        help="do not recreate the store before seeding",
+        help="do not recreate the store before seeding (still seeds and detects)",
+    )
+    parser.add_argument(
+        "--investigate-only",
+        action="store_true",
+        help="investigate an already-detected incident in a prepared store; never seeds or detects",
+    )
+    parser.add_argument(
+        "--incident-id",
+        default=None,
+        help="investigate this stored incident id (implies --investigate-only; "
+        "default is the newest detected incident)",
     )
     args = parser.parse_args(argv)
     load_dotenv()
     db_path = Path(args.db or os.environ.get("CLEARWAVE_DB") or DEFAULT_DB)
+    investigate_only = args.investigate_only or args.incident_id is not None
     try:
-        outcome = execute_vertical_path(db_path, recreate=not args.keep)
+        if investigate_only:
+            outcome = execute_investigation_only(db_path, incident_id=args.incident_id)
+        else:
+            outcome = execute_vertical_path(db_path, recreate=not args.keep)
     except RuntimeError as exc:
         message = redact_secrets(str(exc))
         if "OPENAI_API_KEY" in message:
             print(MISSING_KEY_MESSAGE, file=sys.stderr)
             return 1
-        print(f"vertical-path: {message}", file=sys.stderr)
+        prefix = "investigate-only" if investigate_only else "vertical-path"
+        print(f"{prefix}: {message}", file=sys.stderr)
         return 1
     print(format_report(outcome))
     InvestigationResult.model_validate(outcome.result)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
@@ -29,6 +29,7 @@ class InvestigationRunner:
         *,
         max_concurrency: int = 1,
         poll_interval_seconds: float = 0.25,
+        incident_ids: Sequence[str] | None = None,
     ) -> None:
         if max_concurrency < 1:
             raise ValueError("max_concurrency must be positive")
@@ -38,6 +39,7 @@ class InvestigationRunner:
         self.agent = agent or InvestigationAgent()
         self.max_concurrency = int(max_concurrency)
         self.poll_interval_seconds = float(poll_interval_seconds)
+        self.incident_ids = tuple(str(value) for value in incident_ids) if incident_ids else None
         self._executor = ThreadPoolExecutor(max_workers=self.max_concurrency)
         self._futures: set[Future[InvestigationRun]] = set()
         self._lock = threading.Lock()
@@ -93,11 +95,20 @@ class InvestigationRunner:
     start = run_forever
 
     def _claim_detected(self, limit: int) -> list[dict[str, Any]]:
-        rows = self.connection.execute(
-            "SELECT incident_id, record FROM incident "
-            "WHERE lifecycle_state = 'detected' ORDER BY created_at, incident_id LIMIT ?",
-            (limit,),
-        ).fetchall()
+        if self.incident_ids is None:
+            rows = self.connection.execute(
+                "SELECT incident_id, record FROM incident "
+                "WHERE lifecycle_state = 'detected' ORDER BY created_at, incident_id LIMIT ?",
+                (limit,),
+            ).fetchall()
+        else:
+            placeholders = ",".join("?" for _ in self.incident_ids)
+            rows = self.connection.execute(
+                "SELECT incident_id, record FROM incident "
+                f"WHERE lifecycle_state = 'detected' AND incident_id IN ({placeholders}) "
+                "ORDER BY created_at, incident_id LIMIT ?",
+                (*self.incident_ids, limit),
+            ).fetchall()
         claimed: list[dict[str, Any]] = []
         for row in rows:
             incident_id = str(row["incident_id"])

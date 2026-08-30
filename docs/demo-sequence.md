@@ -71,13 +71,37 @@ What this produced here:
 
 This path is the broker-free default `detector seed` scenario (`provider_incident`). It is not Kafka, and it is not the judge clicking Fire hidden incident.
 
-### There is no command that investigates an already-detected store
+### Investigating a store that is already detected against
 
-Say this plainly rather than discovering it live:
+This is the join from detection to investigation, and it is a product command now. Use it whenever
+the store was written by something other than `investigation.vertical` itself - a live Kafka
+consume, the judge toggle, a store you preloaded before the pitch.
 
-- `python -m detector detect` writes a C3 row and stops.
-- `python -m investigation.vertical` always runs seed then detect then investigate. `--keep` only skips deleting the file first; it still reseeds.
-- There is no CLI that takes a prepared store and runs one investigation against it. The Python function `investigation.vertical.investigate_store` can do that; it is not a product command. Do not start writing Python in front of a judge.
+```sh
+DB=/tmp/clearwave-live.db
+.venv/bin/python -m investigation.vertical --db "$DB" --investigate-only
+# or, to name the incident rather than take the newest detected one:
+.venv/bin/python -m investigation.vertical --db "$DB" --incident-id inc-2026-08-30-715ab9c3
+```
+
+`make investigate DB=/tmp/clearwave-live.db` is the same thing, and takes an optional
+`INCIDENT=inc-...`.
+
+What it does and does not do:
+
+- It **never seeds, never detects, and never resets the store.** It claims one incident that is
+  already `lifecycle_state: detected`, runs the real investigation runner against it, persists C4,
+  and moves that incident to `diagnosed`.
+- With no `--incident-id` it takes the **newest detected** incident (`onset` descending). With one,
+  it takes exactly that incident, or refuses by name and lists what is detected.
+- A store with nothing detected is an error that says so and points at `detector detect`. It does
+  not quietly seed one for you.
+- A store path that does not exist is an error. Investigate-only never creates a store.
+- `--keep` has nothing to do with this. `--keep` still seeds and detects; it only skips deleting the
+  file first. `--investigate-only` is the flag that skips seed and detect.
+
+The default `python3 -m investigation.vertical` behaviour is unchanged: seed, detect, investigate,
+against a store it recreates. The proven stage path in section 1 above is exactly as it was.
 
 ### The other two guaranteed scenarios
 
@@ -112,7 +136,7 @@ Then point the dashboard at the same `CLEARWAVE_DB`. Expect `incident: null` aft
 
 `--mode anomaly` does not exist (`unrecognized arguments: --mode anomaly`). Replacements that do exist: omit incident flags for healthy traffic and inject after the worker is up; or `--incident-provider dlocal --incident-effect decline`; or `--scenario provider-degradation` on **merchant-c** (not merchant-a). `--scenario-duration-seconds` is a C6 timestamp, not a process lifetime. The worker loop does not stop. SIGINT did not stop it in the live run; use `timeout` / SIGTERM until that is fixed.
 
-`make live` is not one step. Its recipe is `.venv/bin/python -m detector consume --seconds 60 --detect`. It runs on the venv, but it starts neither Kafka nor a worker and does not guarantee an incident. `make e2e` is the one that brings the stack up and consumes; it still does not inject for you.
+`make live` is not one step. Its recipe is `.venv/bin/python -m detector consume --seconds 60 --detect`. It runs on the venv, but it starts neither Kafka nor a worker and does not guarantee an incident. `make e2e` is the one that brings the stack up and consumes; it now consumes for three minutes rather than sixty seconds (`CONSUME_SECONDS`, default 180), because sixty is not enough sustained contrast. It still does not inject for you.
 
 Host worker stdout is block-buffered without `PYTHONUNBUFFERED=1`. The worker image sets this; a host command must too. An empty log is not a dead worker.
 
@@ -135,7 +159,7 @@ More operator detail for the consumer itself: [`docs/live-ingestion.md`](live-in
 | Inject, then start the worker | command silently lost |
 | `python3 -m investigation.vertical` on system Python | `No module named 'openai'` |
 | Judge **Fire hidden incident** with no broker | reports `delivered: false` and injects nothing; start Kafka and the workers first |
-| `investigation.vertical --keep` on a prepared store | reseeds anyway |
+| `investigation.vertical --keep` on a prepared store | reseeds anyway; use `--investigate-only` |
 
 ## Simulated demo data
 
@@ -223,7 +247,6 @@ Also still open on `main`, not for W4 to resolve:
 - C5 is not yet the current `INTERFACES.md` shape.
 - The judge-trigger seam is closed (PR #45): W4's adapter calls W1's `worker.inject`, and the toggle starts and stops a live incident from the browser.
 - juank's request for a high-value transaction id on C2/C3 (`STATUS.md` 2026-08-29T21:07Z) belongs to andres.
-- No CLI investigates an already-detected store (see Operator runbook).
 - Live `--scenario` does not stop on duration or, in the observed run, on SIGINT.
 
 ## Where W4 fits
