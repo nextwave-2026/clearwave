@@ -798,6 +798,58 @@ class WatchTests(unittest.TestCase):
         self.assertEqual(adopted, watch["incident_id"])
         self.assertEqual(walked["onset"], watch["onset"])
 
+    def test_orthogonal_axes_of_one_inject_are_one_episode(self):
+        # A mild inject first appears as provider=adyen and payment_method=card
+        # in separate single-axis views. Those are one episode, not two rows.
+        self.assertTrue(
+            detect.cohorts_same_episode(
+                {"provider": "adyen"},
+                {"payment_method": "card"},
+            )
+        )
+        self.assertTrue(
+            detect.cohorts_same_episode(
+                {},
+                {"provider": "adyen", "merchant_id": "merchant-b"},
+            )
+        )
+        self.assertFalse(
+            detect.cohorts_same_episode(
+                {"provider": "adyen"},
+                {"provider": "stripe"},
+            )
+        )
+
+    def test_a_detected_incident_resolves_when_traffic_recovers(self):
+        connection, first = self._sweep(synthetic.two_stage_deviation_mild_only())
+        watch_id = first["watches"][0]["incident_id"]
+        store.ingest(connection, synthetic.two_stage_deviation())
+        detected = cli._sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
+        self.assertEqual(detected["incident"]["incident_id"], watch_id)
+        self.assertEqual(detected["incident"]["lifecycle_state"], "detected")
+        # Force the lifecycle to diagnosed - the state Clear left active on the
+        # live board - then feed healthy traffic and require the row to resolve.
+        connection.execute(
+            "UPDATE incident SET lifecycle_state = ? WHERE incident_id = ?",
+            ("diagnosed", watch_id),
+        )
+        connection.commit()
+        later = []
+        for event in synthetic.healthy(minutes=10, per_minute=20):
+            shifted = dict(event)
+            stamp = datetime.strptime(event["occurred_at"], "%Y-%m-%dT%H:%M:%SZ")
+            shifted["occurred_at"] = (stamp + timedelta(minutes=200)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            shifted["payment_id"] = f"{event['payment_id']}-recovered"
+            shifted["attempt_id"] = f"{event['attempt_id']}-recovered"
+            later.append(shifted)
+        store.ingest(connection, later)
+        recovered = cli._sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
+        self.assertIsNone(recovered["incident"])
+        row = store.load_incident(connection, watch_id)
+        self.assertEqual(row["lifecycle_state"], "resolved")
+
     def test_a_watch_that_is_no_longer_true_is_resolved(self):
         connection, first = self._sweep(synthetic.two_stage_deviation_mild_only())
         watch_id = first["watches"][0]["incident_id"]
