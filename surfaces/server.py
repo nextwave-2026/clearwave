@@ -1,4 +1,15 @@
-"""Read-only localhost HTTP server for the W4 dashboard."""
+"""Localhost HTTP server for the W4 dashboard.
+
+Every read is read-only over the shared store: the dashboard renders what
+detection and investigation already wrote and computes nothing of its own.
+
+The one write is the judge trigger. `POST /api/trigger` publishes a start or
+stop command to W1's incident-control topic through `surfaces.inject`, which
+changes the behaviour of a running worker. It writes nothing to the store -
+the incident it produces arrives the same way every other incident does, by
+being detected in the traffic - but calling this server read-only would be a
+lie, so it is not called that.
+"""
 
 from __future__ import annotations
 
@@ -30,6 +41,7 @@ class SurfacesApp:
 
     def __init__(self, db_path: Path | str | None = None) -> None:
         self.db_path = Path(db_path) if db_path is not None else shared_database_path()
+        self.injected = False
 
     def overview(self) -> dict[str, Any]:
         with store.session(self.db_path) as connection:
@@ -63,8 +75,22 @@ class SurfacesApp:
             events = store.ensure_escalation(connection, incident, investigation)
             return present.detail(incident, investigation, events)
 
-    def trigger(self) -> dict[str, Any]:
-        return inject.fire_hidden_incident()
+    def trigger(self, active: bool = True) -> dict[str, Any]:
+        """Toggle W1's hidden incident, remembering only what we published.
+
+        `self.injected` is this control's own record of its last successful
+        command, which is what the toggle's visible state reflects. It is not
+        a reading of the worker: nothing here interrogates W1, so a worker
+        restarted underneath us is honestly outside what this can know.
+        """
+        outcome = inject.fire_hidden_incident(active)
+        if outcome.get("delivered"):
+            self.injected = bool(active)
+        return {**outcome, "active": self.injected}
+
+    def trigger_state(self) -> dict[str, Any]:
+        """What the control last published, for a page that has just loaded."""
+        return inject.describe(active=self.injected)
 
     def pending_calls(self) -> dict[str, Any]:
         with store.session(self.db_path) as connection:
@@ -75,7 +101,8 @@ class SurfacesApp:
             return {"acknowledged": store.acknowledge_call(connection, incident_id)}
 
     def handle(self, method: str, path: str, body: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
-        del body
+        if method == "GET" and path in {"/api/trigger", "/api/judge/trigger"}:
+            return 200, self.trigger_state()
         if method == "GET" and path == "/api/overview":
             return 200, self.overview()
         if method == "GET" and path == "/api/incidents":
@@ -93,7 +120,11 @@ class SurfacesApp:
                 return 404, {"error": "incident not found", "incident_id": incident_id}
             return 200, payload
         if method == "POST" and path in {"/api/trigger", "/api/judge/trigger"}:
-            return 200, self.trigger()
+            # Only the on/off intent crosses this boundary. Any other key in
+            # the body - a scenario id above all - is ignored by construction,
+            # because nothing else is read out of it.
+            active = True if body is None else bool(body.get("active", True))
+            return 200, self.trigger(active)
         if method == "POST" and path.startswith("/api/calls/") and path.endswith("/ack"):
             incident_id = path[len("/api/calls/") : -len("/ack")].strip("/")
             return 200, self.acknowledge_call(incident_id)

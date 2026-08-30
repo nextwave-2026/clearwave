@@ -108,6 +108,44 @@ html, body {
   background: rgba(242, 201, 160, 0.12);
 }
 
+.judge button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.judge button[disabled] {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.judge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid #f2c9a0;
+  background: transparent;
+  flex: none;
+}
+
+/* On means an incident is injected right now: the control reads as armed, in
+   the same heat colour the board already uses for a live problem. */
+.judge button[data-on="true"] {
+  border-color: var(--heat);
+  background: var(--danger-wash);
+  color: var(--paper);
+}
+
+.judge button[data-on="true"]:hover {
+  background: rgba(255, 59, 78, 0.22);
+}
+
+.judge button[data-on="true"] .judge-dot {
+  border-color: var(--heat);
+  background: var(--heat);
+}
+
 #judge-status {
   margin: 0;
   font-size: 12px;

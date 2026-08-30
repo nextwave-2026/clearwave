@@ -2,6 +2,7 @@
 
     python3 -m detector seed                      # deterministic demo traffic
     python3 -m detector ingest events.json        # a file of canonical events
+    python3 -m detector ingest backfill.jsonl --stream   # a backfill too big to hold
     python3 -m detector consume                   # W1's live Kafka topics
     python3 -m detector detect                    # one detection sweep
 
@@ -22,6 +23,7 @@ import hashlib
 import json
 import sys
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +64,30 @@ def _load_events(path: Path) -> list[dict[str, Any]]:
             return payload["events"]
         return [payload]
     raise SystemExit(f"{path}: expected a JSON object, an array, or an events envelope")
+
+
+def _stream_jsonl(path: Path) -> Iterator[tuple[str, Any]]:
+    """Yield one ``(kind, raw)`` per JSON Lines record, holding one line at a time.
+
+    The point of the whole streaming path: `_load_events` reads the file into a
+    string and then into a list, which is fine for a fixture and wrong for a
+    15-day backfill. This never holds more than a line plus the caller's batch.
+
+    A line that is not JSON is handed on as ``unroutable`` rather than aborting
+    the load. `_load_events` refuses the file instead, which is the right call
+    for a small file somebody can fix by hand; over 100,000 lines it would throw
+    away every good record for one bad one, and the store's rule is that a
+    rejection stays visible in `dead_letter` with its reason.
+    """
+    with path.open(encoding="utf-8") as handle:
+        for number, line in enumerate(handle, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield ("attempt", json.loads(line))
+            except json.JSONDecodeError as exc:
+                yield ("unroutable", {"reason": f"{path}:{number}: not valid JSON ({exc.msg})"})
 
 
 def _scenario_events(scenario: str) -> list[dict[str, Any]]:
@@ -134,6 +160,16 @@ def main(argv: list[str] | None = None) -> int:
 
     ingest = sub.add_parser("ingest", help="normalise and store canonical events")
     ingest.add_argument("source", type=Path, help="JSON file of canonical events")
+    ingest.add_argument(
+        "--stream", action="store_true",
+        help="read the file as JSON Lines one line at a time and write in "
+             "batches, instead of loading it whole. Use it for anything the "
+             "size of a backfill; the fixtures are small enough not to care.",
+    )
+    ingest.add_argument(
+        "--batch-size", type=int, default=1000,
+        help="records written per transaction when --stream is set",
+    )
 
     seed = sub.add_parser("seed", help="load deterministic synthetic events into the store")
     seed.add_argument("--scenario", choices=SCENARIOS, default="provider_incident")
@@ -198,7 +234,12 @@ def main(argv: list[str] | None = None) -> int:
     connection = store.connect(args.db or store.database_path())
 
     if args.command == "ingest":
-        summary = store.ingest(connection, _load_events(args.source))
+        if args.stream:
+            summary = store.ingest_stream(
+                connection, _stream_jsonl(args.source), batch_size=args.batch_size
+            )
+        else:
+            summary = store.ingest(connection, _load_events(args.source))
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 0
 

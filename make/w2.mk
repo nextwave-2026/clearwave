@@ -1,6 +1,6 @@
 # W2 detection - owner: andres
 
-.PHONY: test-detector seed detect consume live
+.PHONY: test-detector seed detect consume live backfill e2e
 
 test-detector:
 	@python3 -m unittest tests.test_detector tests.test_evidence tests.test_mappers tests.test_consumer
@@ -13,8 +13,26 @@ detect:
 
 # Live path. Needs the broker from docker-compose.yml and one of raul's workers
 # running; `make seed detect` is the same demonstration with no broker at all.
+# These two run on the venv, not bare python3: the consumer is the only part of
+# W2 that needs confluent-kafka, and `make install` is what puts it there.
 consume:
-	@python3 -m detector consume
+	@$(PYTHON) -m detector consume
 
 live:
-	@python3 -m detector consume --seconds 60 --detect
+	@$(PYTHON) -m detector consume --seconds 60 --detect
+
+# W1's replayable history, streamed rather than held in memory. Point BACKFILL
+# at the file; it is not in the repository, and at 83 MB it never will be.
+backfill:
+	@test -n "$(BACKFILL)" || { echo "set BACKFILL=/path/to/backfill.jsonl"; exit 1; }
+	@$(PYTHON) -m detector ingest "$(BACKFILL)" --stream
+
+# The whole live end-to-end of docs/live-ingestion.md in one command, for the
+# person reproducing this at 03:00: raul's stack, the backfill if they have
+# one, then live traffic through to a stored C3 record. Then `make
+# surfaces-serve` and hit the judge toggle on the dashboard.
+e2e:
+	@docker compose up -d kafka schema-registry \
+	  worker-merchant-a worker-merchant-b worker-merchant-c
+	@test -z "$(BACKFILL)" || $(PYTHON) -m detector ingest "$(BACKFILL)" --stream
+	@$(PYTHON) -m detector consume --seconds 60 --detect

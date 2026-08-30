@@ -22,14 +22,16 @@ A message not naming this worker's merchant_id is ignored, so one shared
 topic works for every running merchant process. Each worker consumes with
 a fresh, uncommitted consumer group so it only reacts to commands sent
 after it started - a restarted worker never replays stale commands.
+
+`confluent_kafka` is imported where it is used rather than at module scope, so
+that importing CONTROL_TOPIC costs no Kafka client. W4's judge toggle reuses
+this topic name and W1's command shape (worker/inject.py), and its tests run
+offline.
 """
 
 import json
 import os
 import uuid
-
-from confluent_kafka import Consumer
-from confluent_kafka.admin import AdminClient, NewTopic
 
 from worker.helpers.incident import (
     DECLINE,
@@ -51,6 +53,8 @@ def _ensure_topic_exists(bootstrap_servers: str, topic: str) -> None:
     slow to notice it. Creating the topic first removes the race instead of
     trying to out-poll it.
     """
+    from confluent_kafka.admin import AdminClient, NewTopic
+
     admin = AdminClient({"bootstrap.servers": bootstrap_servers})
     futures = admin.create_topics([NewTopic(topic, num_partitions=1, replication_factor=1)])
     for _, future in futures.items():
@@ -63,6 +67,8 @@ def _ensure_topic_exists(bootstrap_servers: str, topic: str) -> None:
 
 class IncidentControl:
     def __init__(self, merchant_id: str, initial: Incident | None = None):
+        from confluent_kafka import Consumer
+
         self.merchant_id = merchant_id
         self.incident = initial
         bootstrap_servers = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")

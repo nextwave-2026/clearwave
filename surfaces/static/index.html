@@ -15,7 +15,10 @@
     </div>
     <p class="clock" id="clock" aria-live="polite"></p>
     <form id="judge-form" class="judge">
-      <button type="submit" id="judge-trigger">Fire hidden incident</button>
+      <button type="submit" id="judge-trigger" data-on="false" aria-pressed="false">
+        <span class="judge-dot" aria-hidden="true"></span>
+        <span id="judge-label">Fire hidden incident</span>
+      </button>
       <p id="judge-status" role="status">Judge trigger ready. The scenario stays hidden.</p>
     </form>
   </header>
