@@ -1674,6 +1674,9 @@ class MerchantImpactPayloadTests(unittest.TestCase):
         self.assertEqual(rows[0]["source_incident_id"], "inc-old")
         self.assertFalse(rows[0]["source_is_active"])
         self.assertEqual(rows[0]["active_incident_count"], 0)
+        # History must not carry live money figures onto a calm board.
+        self.assertIsNone(rows[0]["financial_impact"])
+        self.assertIsNone(rows[0]["change"])
 
     def test_a_cohort_without_a_merchant_keeps_merchant_id_null(self):
         record = _incident("inc-p", "high", "2026-08-29T10:00:00Z", merchant=None)

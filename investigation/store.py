@@ -124,13 +124,13 @@ def connect(path: Path | str = DEFAULT_DB) -> sqlite3.Connection:
 
 
 def claim_incident(connection: sqlite3.Connection, incident_id: str) -> bool:
-    """Atomically move one watch or detected incident to ``investigating``.
+    """Atomically claim one watch or detected incident for investigation.
 
-    The lifecycle predicate is part of the UPDATE. SQLite serialises writers,
-    so exactly one concurrent caller can observe a changed row count. A watch
-    and a detected incident share this guard so two runners cannot split one
-    cohort into two investigations. The claim lease is written in the same
-    transaction so a crash before persist can be reclaimed.
+    A detected incident moves to ``investigating``. A watch stays ``watching``:
+    preventive investigation must not look like an incident on the board, must
+    not enter the paging allowlist, and must leave the lifecycle a judge can
+    still point at as a watch. The claim row is the mutex in both cases so two
+    runners cannot split one cohort, and a crash before persist can be reclaimed.
     """
     prepare(connection)
     with connection:
@@ -143,6 +143,20 @@ def claim_incident(connection: sqlite3.Connection, incident_id: str) -> bool:
         previous = str(row["lifecycle_state"])
         if previous not in CLAIMABLE_STATES:
             return False
+        existing = connection.execute(
+            "SELECT 1 FROM investigation_claim WHERE incident_id = ?",
+            (incident_id,),
+        ).fetchone()
+        if existing is not None:
+            return False
+        if previous == "watching":
+            # Keep watching. The claim row alone owns the investigation slot.
+            connection.execute(
+                """INSERT INTO investigation_claim
+                   (incident_id, claimed_at, claimed_from) VALUES (?, ?, ?)""",
+                (incident_id, _utc_now(), previous),
+            )
+            return True
         cursor = connection.execute(
             "UPDATE incident SET lifecycle_state = 'investigating' "
             "WHERE incident_id = ? AND lifecycle_state = ?",
@@ -168,23 +182,27 @@ def reclaim_expired_claims(
     now: str | None = None,
     lease_seconds: int = CLAIM_LEASE_SECONDS,
 ) -> list[str]:
-    """Return abandoned ``investigating`` rows to the state they were claimed from.
+    """Return abandoned claims so the next poll can take the row again.
 
-    A crash after the claim UPDATE and before persist leaves the demo pointing
-    at a record that ``_pending_rows`` would otherwise never see again. An
-    expired lease, or an investigating row with no lease at all, is restored
-    so the next poll can claim it. A live claim inside the lease is left alone.
+    Detected rows that moved to ``investigating`` are restored to the state they
+    were claimed from. Watch claims never left ``watching`` - only the lease is
+    dropped. An expired lease, or an investigating row with no lease at all, is
+    restored so the next poll can claim it. A live claim inside the lease is
+    left alone.
     """
     prepare(connection)
     cutoff = _iso_minus(now or _utc_now(), lease_seconds)
     reclaimed: list[str] = []
     with connection:
         expired = connection.execute(
-            """SELECT c.incident_id, c.claimed_from
+            """SELECT c.incident_id, c.claimed_from, i.lifecycle_state
                FROM investigation_claim AS c
                JOIN incident AS i ON i.incident_id = c.incident_id
-               WHERE i.lifecycle_state = 'investigating'
-                 AND c.claimed_at <= ?""",
+               WHERE c.claimed_at <= ?
+                 AND (
+                   i.lifecycle_state = 'investigating'
+                   OR (i.lifecycle_state = 'watching' AND c.claimed_from = 'watching')
+                 )""",
             (cutoff,),
         ).fetchall()
         orphans = connection.execute(
@@ -194,12 +212,28 @@ def reclaim_expired_claims(
                WHERE i.lifecycle_state = 'investigating'
                  AND c.incident_id IS NULL"""
         ).fetchall()
-        pending = [(str(row["incident_id"]), _restore_state(row["claimed_from"])) for row in expired]
+        pending = [
+            (
+                str(row["incident_id"]),
+                _restore_state(row["claimed_from"]),
+                str(row["lifecycle_state"]),
+            )
+            for row in expired
+        ]
         for row in orphans:
             record = json.loads(row["record"]) if row["record"] else {}
             previous = record.get("lifecycle_state") if isinstance(record, Mapping) else None
-            pending.append((str(row["incident_id"]), _restore_state(previous)))
-        for incident_id, restore in pending:
+            pending.append(
+                (str(row["incident_id"]), _restore_state(previous), "investigating")
+            )
+        for incident_id, restore, current in pending:
+            if current == "watching" and restore == "watching":
+                connection.execute(
+                    "DELETE FROM investigation_claim WHERE incident_id = ?",
+                    (incident_id,),
+                )
+                reclaimed.append(incident_id)
+                continue
             cursor = connection.execute(
                 "UPDATE incident SET lifecycle_state = ? "
                 "WHERE incident_id = ? AND lifecycle_state = 'investigating'",
