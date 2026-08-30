@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; the claim-only-detected property is superseded by ADR 0025
 
 ## Context
 

@@ -204,7 +204,7 @@ class InvestigateOnlyTests(unittest.TestCase):
         execute_investigation_only(self.db, use_model=False)
         with self.assertRaises(RuntimeError) as raised:
             execute_investigation_only(self.db, use_model=False)
-        self.assertIn("lifecycle_state detected", str(raised.exception))
+        self.assertIn("watching or detected", str(raised.exception))
 
     def test_a_missing_store_is_never_created_by_investigate_only(self):
         absent = Path(self._dir.name) / "absent.db"

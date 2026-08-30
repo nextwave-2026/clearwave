@@ -100,13 +100,22 @@ walked onset does not mint a second row. When a sweep no longer wants a watch - 
 recovered, or it was only warmup - the row moves to `resolved`. A watch is a claim about the
 present; it does not sit on the board after that claim has stopped being true.
 
-A watch is not an incident, and three behaviours make that true rather than merely stated:
+A watch is not an incident. Two behaviours still make that true rather than merely stated, and a
+third has changed:
 
-- **`detected` remains the sole handoff signal.** The investigation daemon claims
-  `lifecycle_state = 'detected'` and therefore never claims a watch. Re-examining a watch is a
-  detector loop, not a model loop.
-- **`severity` on a watch is always `low`.** C5 routes on severity alone, so a watch cannot reach
-  Slack or a phone even if escalation were later pointed at the row by mistake.
+- **Investigation now starts on a watch.** The daemon claims `lifecycle_state IN ('detected',
+  'watching')` so it can advise while there is still time to act. After a watch investigation the
+  row returns to `watching`; it does not move to `diagnosed`. A later crossing of the floors
+  enriches the same record. Re-investigation happens only when the evidence fingerprint changes,
+  not on a timer. ADR 0025 records the reversal of the earlier claim-only-detected rule.
+- **C5 does not escalate a watch.** `ensure_escalation` refuses any row whose `lifecycle_state` is
+  not in `ESCALATABLE_STATES` (`detected`, `investigating`, `diagnosed`, `acknowledged`,
+  `mitigated`, `resolved`) before it reads severity, claims a channel, or fires. That lifecycle
+  allowlist is the no-paging mechanism. `watching` is not on it, including when the row already
+  holds a C4 result.
+- **`severity` on a watch is always `low`.** That is defence in depth, not the gate. C5's channel
+  map would still not page a `low` row, but a caller that pointed escalation at a watch while
+  copying a high severity would still be stopped by the lifecycle allowlist.
 - **`financial_impact.projected_loss_per_hour`** is what an hour at the currently measured
   shortfall would cost, applied to the cohort's typical hourly attempted value from the trailing
   baseline. It is labelled projected because it is not realised money, it is a separate key from

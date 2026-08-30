@@ -75,6 +75,8 @@ class InvestigationRun(Mapping[str, Any]):
     started_at: str | None = None
     completed_at: str | None = None
     duration_ms: float | None = None
+    claimed_from: str = "detected"
+    evidence_fingerprint: str = ""
 
     @property
     def outcome(self) -> str:

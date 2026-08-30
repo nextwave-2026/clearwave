@@ -24,7 +24,7 @@ from investigation.daemon import (
     serve,
 )
 from investigation.degrade import degrade_result
-from investigation.store import connect, insert_incident
+from investigation.store import connect, insert_incident, model_call_summary
 from investigation.vertical import UnavailableClient
 from surfaces.escalation import SLACK_ENV, TWILIO_ENV_VARS
 from surfaces.store import connect as surfaces_connect
@@ -194,6 +194,58 @@ class DaemonServeTests(unittest.TestCase):
         self.assertEqual(agent.calls, ["inc-daemon-1"])
         self.assertEqual(_lifecycle(self.db, "inc-daemon-1"), "diagnosed")
         self.assertEqual(_result_count(self.db, "inc-daemon-1"), 1)
+
+    def test_investigates_a_watch_without_paging(self) -> None:
+        watch = dict(INCIDENT)
+        watch["incident_id"] = "inc-watch-1"
+        watch["severity"] = "low"
+        watch["lifecycle_state"] = "watching"
+        connection = connect(self.db)
+        insert_incident(connection, watch, lifecycle_state="watching")
+        connection.close()
+        agent = CountingAgent()
+        code = serve(
+            self.db,
+            poll_interval_seconds=0.05,
+            max_polls=3,
+            agent=agent,
+            install_signal_handlers=False,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(agent.calls, ["inc-watch-1"])
+        self.assertEqual(_lifecycle(self.db, "inc-watch-1"), "watching")
+        self.assertEqual(_result_count(self.db, "inc-watch-1"), 1)
+
+        connection = surfaces_connect(self.db)
+        try:
+            stored = load_investigation(connection, "inc-watch-1")
+            self.assertIsNotNone(stored)
+            events = ensure_escalation(connection, watch, stored)
+            cost = model_call_summary(connection)
+        finally:
+            connection.close()
+        self.assertEqual(events, [])
+        self.assertEqual(cost["total"], 1)
+
+    def test_does_not_reinvestigate_an_unchanged_watch(self) -> None:
+        watch = dict(INCIDENT)
+        watch["incident_id"] = "inc-watch-1"
+        watch["severity"] = "low"
+        watch["lifecycle_state"] = "watching"
+        connection = connect(self.db)
+        insert_incident(connection, watch, lifecycle_state="watching")
+        connection.close()
+        agent = CountingAgent()
+        code = serve(
+            self.db,
+            poll_interval_seconds=0.05,
+            max_polls=6,
+            agent=agent,
+            install_signal_handlers=False,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(agent.calls, ["inc-watch-1"])
+        self.assertEqual(_lifecycle(self.db, "inc-watch-1"), "watching")
 
     def test_idle_store_does_not_call_the_agent(self) -> None:
         connect(self.db).close()
