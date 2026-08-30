@@ -845,6 +845,19 @@ class WatchTests(unittest.TestCase):
         )
         # Five minutes of mild inject on merchant-b/adyen only, at the effective
         # rate the worker produces (inject p then baseline fallback).
+        #
+        # The live segment has to be built the same way the baseline above it
+        # is, or the fixture disagrees with itself and the disagreement reads
+        # as a platform-wide incident. `iter_live_healthy_history` models a
+        # payment as W1 does - an attempt *chain*, retried away from the
+        # provider that declined it - so its payment conversion sits near 0.95.
+        # A single-attempt live segment sits at 1 - BASELINE_DECLINE_PROBABILITY,
+        # about 0.88, and the six-point gap between the two is a deviation on
+        # every cohort at once: measured, the root qualified at z=-5.91 and the
+        # localiser never descended. So retries are modelled here too, and an
+        # incident-affected attempt always retries, exactly as W1 does.
+        from worker.helpers.payment import MAX_ATTEMPTS, RETRY_PROBABILITY
+
         effective = 0.12 + (1.0 - 0.12) * BASELINE_DECLINE_PROBABILITY
         rng = __import__("random").Random(99)
         specs = synthetic._live_merchant_specs()
@@ -855,20 +868,11 @@ class WatchTests(unittest.TestCase):
             for spec in specs:
                 for slot in range(30):
                     index += 1
-                    provider = spec["providers"][slot % len(spec["providers"])]
-                    key = (spec["merchant_id"], provider)
-                    p_dec = effective if key == ("merchant-b", "adyen") else BASELINE_DECLINE_PROBABILITY
-                    approved = rng.random() >= p_dec
                     payment_method = spec["payment_methods"][slot % len(spec["payment_methods"])]
                     occurred = minute_start + timedelta(seconds=slot % 60)
-                    event = {
-                        "event_id": f"dilute-{index:07d}",
+                    shared = {
                         "payment_id": f"pay-dilute-{index:07d}",
-                        "attempt_id": f"att-dilute-{index:07d}-1",
-                        "attempt_number": 1,
-                        "occurred_at": occurred.strftime("%Y-%m-%dT%H:%M:%SZ"),
                         "merchant_id": spec["merchant_id"],
-                        "provider": provider,
                         "payment_method": payment_method,
                         "card_network": (
                             spec["card_networks"][slot % len(spec["card_networks"])]
@@ -877,16 +881,40 @@ class WatchTests(unittest.TestCase):
                         ),
                         "country": spec["country"],
                         "issuing_bank": spec["banks"][slot % len(spec["banks"])],
-                        "status": "approved" if approved else "declined",
                         "amount": 10.0,
                         "currency": spec["currency"],
                         "latency_ms": 220.0,
                     }
-                    if not approved:
-                        event["normalized_decline_reason"] = (
-                            "provider_timeout" if p_dec > BASELINE_DECLINE_PROBABILITY else "insufficient_funds"
+                    provider = spec["providers"][slot % len(spec["providers"])]
+                    for attempt_number in range(1, MAX_ATTEMPTS + 1):
+                        injected = (spec["merchant_id"], provider) == ("merchant-b", "adyen")
+                        p_dec = effective if injected else BASELINE_DECLINE_PROBABILITY
+                        approved = rng.random() >= p_dec
+                        event = dict(
+                            shared,
+                            event_id=f"dilute-{index:07d}-{attempt_number}",
+                            attempt_id=f"att-dilute-{index:07d}-{attempt_number}",
+                            attempt_number=attempt_number,
+                            occurred_at=occurred.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            provider=provider,
+                            status="approved" if approved else "declined",
                         )
-                    events.append(event)
+                        if not approved:
+                            event["normalized_decline_reason"] = (
+                                "provider_timeout" if injected else "insufficient_funds"
+                            )
+                        events.append(event)
+                        if approved or attempt_number == MAX_ATTEMPTS:
+                            break
+                        # W1 always retries an incident-affected decline; an
+                        # ordinary one is retried RETRY_PROBABILITY of the time.
+                        if not injected and rng.random() > RETRY_PROBABILITY:
+                            break
+                        alternatives = [
+                            name for name in spec["providers"] if name != provider
+                        ]
+                        if alternatives:
+                            provider = rng.choice(alternatives)
 
         connection, sweep = self._sweep(events)
         self.assertIsNone(sweep["incident"], sweep)
