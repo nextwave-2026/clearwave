@@ -593,11 +593,22 @@ def financial_impact(
     start: int,
     end: int,
     expected_conversion: float,
+    typical_hourly_value: float | None = None,
 ) -> dict[str, Any]:
     """GMV at risk, priced on payments and never on attempts.
 
     Pricing attempts would inflate the loss exactly when a retry storm makes
     the number matter most.
+
+    When `typical_hourly_value` is supplied, a second and clearly separate
+    figure is published: `projected_loss_per_hour`, what this deviation would
+    cost over a full hour if it continued at the rate now measured. It is
+    labelled projected because it is not realised money - it is the shortfall
+    applied to the cohort's own typical hourly volume rather than to the few
+    minutes actually observed, which is the only honest way to state the cost
+    of a deviation that has been running for four minutes. It is deliberately
+    a separate key from `loss_per_hour`: nothing that ranks severity may read
+    it, or a warning would page a phone on money nobody has lost yet.
     """
     payments = payment_metrics(connection, cohort, start, end)
     attempted_value = payments["attempted_value_usd"]
@@ -623,6 +634,30 @@ def financial_impact(
             "amount": round(gmv_at_risk / window_hours, 2),
             "currency": config.REPORTING_CURRENCY,
         },
+        **(
+            {}
+            if typical_hourly_value is None
+            else {
+                "projected_loss_per_hour": {
+                    "amount": round(
+                        max(
+                            0.0,
+                            expected_conversion - (payments["approval_conversion"] or 0.0),
+                        )
+                        * typical_hourly_value,
+                        2,
+                    ),
+                    "currency": config.REPORTING_CURRENCY,
+                    "basis": (
+                        "the measured conversion shortfall applied to this cohort's typical "
+                        f"hourly attempted value of {round(typical_hourly_value, 2)} "
+                        f"{config.REPORTING_CURRENCY}, taken from the trailing baseline window. "
+                        "It is what an hour at the rate now measured would cost, not money "
+                        "already lost, and it never ranks severity."
+                    ),
+                }
+            }
+        ),
         "assumptions": [
             "GMV at risk is an estimate of approved volume not captured, not a platform-revenue claim.",
             "Expected approval rate is the measured baseline for this cohort, not a target.",
@@ -630,3 +665,75 @@ def financial_impact(
             f"Currency conversion uses the frozen table in config {config.CONFIG_VERSION}.",
         ],
     }
+
+
+def attempt_pressure(
+    connection: sqlite3.Connection,
+    cohort: dict[str, Any] | None,
+    start: int,
+    end: int,
+) -> dict[str, Any]:
+    """Timeout share and mean latency: the two signals that move before conversion.
+
+    A timeout is recorded two ways in the canonical model - as a `timeout`
+    status and as the closed-vocabulary decline reason `timeout` - because a
+    provider that answers slowly and one that never answers are the same story
+    told by different native codes. Counting either is what makes the share
+    comparable across providers, which is the whole point of the vocabulary.
+
+    Latency is reported as a mean rather than a percentile, and that is the one
+    non-obvious choice here. `operational_metrics` publishes p50/p95/p99, and a
+    p95 is the wrong statistic to *baseline* against: the trailing window's own
+    tail is exactly where a forming degradation already sits, so a few degraded
+    minutes at the end of an hour move the baseline p95 all the way up to the
+    degraded value and the comparison silently cancels itself out. A mean moves
+    in proportion to how much of the window is degraded, which is the same
+    property that makes a mean conversion rate a usable baseline.
+
+    Attempts, not payments: a retry that times out is another timeout, and a
+    share that hid retries would flatten exactly the amplification a degrading
+    provider produces.
+    """
+    where, params = _where(cohort, start, end)
+    row = connection.execute(
+        f"""
+        SELECT COUNT(*) AS attempts,
+               SUM(CASE WHEN status = 'timeout' OR normalized_decline_reason = 'timeout'
+                        THEN 1 ELSE 0 END) AS timeouts,
+               AVG(latency_ms) AS mean_latency_ms
+        FROM attempt WHERE {where}
+        """,
+        params,
+    ).fetchone()
+    attempts = int(row["attempts"] or 0)
+    timeouts = int(row["timeouts"] or 0)
+    return {
+        "attempts": attempts,
+        "timeouts": timeouts,
+        "timeout_share": (timeouts / attempts) if attempts else None,
+        "mean_latency_ms": (
+            round(float(row["mean_latency_ms"]), 3) if row["mean_latency_ms"] is not None else None
+        ),
+    }
+
+
+def typical_hourly_attempted_value(
+    connection: sqlite3.Connection,
+    cohort: dict[str, Any] | None,
+    start: int,
+    trailing_buckets: int = config.BASELINE_TRAILING_BUCKETS,
+) -> float | None:
+    """This cohort's ordinary attempted value per hour, from the trailing window.
+
+    The same window `baseline_conversion` reads, so the projected figure and
+    the expectation it is applied to come from one span of history rather than
+    two. Returns None when the window holds nothing to average.
+    """
+    trailing_start = start - trailing_buckets * config.BUCKET_SECONDS
+    if trailing_start >= start:
+        return None
+    trailing = payment_metrics(connection, cohort, trailing_start, start)
+    if trailing["attempted_payments"] == 0:
+        return None
+    hours = (start - trailing_start) / 3600.0
+    return trailing["attempted_value_usd"] / hours

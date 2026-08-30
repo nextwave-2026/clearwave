@@ -136,7 +136,9 @@ def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
     start = bounds[0]
     if window_buckets > 0:
         start = max(start, end - window_buckets * config.BUCKET_SECONDS)
-    incident = detect.build_incident(connection, start, end)
+    # One aggregate for the whole sweep rather than one per candidate cohort.
+    merchant_normals = detect.merchant_normal_hourly_value(connection)
+    incident = detect.build_incident(connection, start, end, merchant_normals=merchant_normals)
     stored = False
     if incident is not None:
         incident["incident_id"] = incident_id_for(incident)
@@ -145,9 +147,25 @@ def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
             # (DECISIONS.md, 2026-08-29T19:43Z), so detection writes it durably
             # rather than calling investigation.
             stored = store.save_incident(connection, incident)
+    # Watches are C3 records in `lifecycle_state: watching` on the same table,
+    # written through the same identifier rule, so the row a cohort is watched
+    # on is the row it is later detected on.
+    watches = detect.build_watches(
+        connection,
+        start,
+        end,
+        formed_cohort=(incident or {}).get("affected_cohort"),
+        merchant_normals=merchant_normals,
+        identify=incident_id_for,
+    )
+    if persist:
+        for watch in watches:
+            store.save_incident(connection, watch, lifecycle_state=store.WATCHING)
+
     return {
         "incident": incident,
         "stored": stored,
+        "watches": watches,
         "window": {"start": schema.iso_utc(start), "end": schema.iso_utc(end)},
         "config_version": config.CONFIG_VERSION,
     }

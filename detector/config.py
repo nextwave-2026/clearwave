@@ -90,3 +90,74 @@ FX_TO_USD = {
     "MXN": 0.055,
     "EUR": 1.08,
 }
+
+# Recurrence promotes, because a fault that keeps coming back is a worse fault
+# than one that happened once. The count is prior *matching* incidents on the
+# same cohort inside the lookback - the number `incident_history` already
+# publishes as `recurrence.prior_matching_incidents`. The ladder mirrors
+# SEVERITY_LOSS_RATE_CEILING in shape and points the other way: that one caps a
+# band, this one lifts it, and both are read after the weighted sum.
+RECURRENCE_LOOKBACK_SECONDS = 6 * 3600
+SEVERITY_RECURRENCE_PROMOTION = (  # (prior matching incidents, bands promoted)
+    (2, 1),
+    (4, 2),
+    (8, 3),
+)
+
+# --- merchant-relative severity ---------------------------------------------
+# The dollar ladder above asks one question of every merchant on the platform:
+# how many dollars an hour. An airline and a fast-food chain do not answer it
+# on the same scale, so a chain losing sixty percent of its own traffic can sit
+# under $2,000/hour and be capped at `medium` - it never rings a phone.
+#
+# So the loss is also expressed as a share of that merchant's own normal hour,
+# and read on its own ladder. The effective ceiling is whichever of the two
+# bands is HIGHER, which is what lets a genuinely enormous absolute loss rank
+# on a large merchant and a proportionally catastrophic one rank on a small.
+#
+# The thresholds: below 2% of a normal hour the loss is inside the ordinary
+# hour-to-hour variance of any merchant's traffic and is not an outage; 10% is
+# a material dent somebody should see on a board but not be woken for; above
+# 35% more than a third of that merchant's revenue for the hour has stopped
+# arriving, which is a page for a merchant of any size.
+SEVERITY_LOSS_SHARE_CEILING = (
+    (0.02, "low"),
+    (0.10, "medium"),
+    (0.35, "high"),
+)
+# A normal hour cannot be learned from a handful of minutes: traffic is
+# diurnal, and a short store would hand back the incident's own hour as the
+# merchant's normal. Below either floor the merchant's normal is *unknown* and
+# severity falls back to the dollars-only ladder, which is today's behaviour
+# exactly.
+MERCHANT_NORMAL_MIN_HOURS = 6.0
+MERCHANT_NORMAL_MIN_PAYMENTS = 200
+
+# --- leading indicators -----------------------------------------------------
+# A provider does not fail instantly. Latency rises, timeouts appear in the
+# decline mix, retries amplify, queues build, and conversion falls last. These
+# are the floors for calling the earlier signals materially degraded against
+# the same trailing baseline the conversion test already uses. Nothing here is
+# trained, fitted or forecast: it reports that a cohort is degrading now, and
+# never a future number.
+FORMING_TIMEOUT_SHARE_DELTA = 0.05    # +5 points of timeout share over baseline
+FORMING_LATENCY_P95_RATIO = 1.5       # p95 latency half again its baseline
+FORMING_LATENCY_MIN_BASELINE_MS = 50.0  # below this a ratio is noise, not a signal
+# A cohort routed around entirely shows no declines at all - its volume simply
+# goes to zero, and a cohort with no traffic can never clear N_PAYMENTS_MIN. So
+# volume is compared to its own trailing baseline too, at the same bucket rate.
+FORMING_VOLUME_COLLAPSE_RATIO = 0.25  # under a quarter of its own normal rate
+FORMING_VOLUME_BASELINE_MIN = 60      # payments of trailing history before we judge it
+
+# --- the watch -------------------------------------------------------------
+# The near-miss predicate, beside the four detection floors rather than inside
+# them. All of it must hold, and none of it lowers the bar for an incident: a
+# watch is a separate, quieter state that never pages.
+#
+# Tuned against the measured near-miss the pivot is built on: z -2.3 is watched
+# and z -1.0 is not, so a real developing deviation appears inside the four
+# minutes before the cliff while ordinary minute-to-minute noise does not. A
+# looser bar floods the dashboard; a tighter one never fires in time.
+WATCH_Z_MAX = -1.5
+WATCH_ABS_DROP_MIN = 0.01
+WATCH_TRAJECTORY = 1  # worsening; a recovering dip is not worth a warning
