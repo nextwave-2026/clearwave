@@ -30,8 +30,52 @@ missing discriminating observation. Recommendations are advisory only. Do not ex
 change routing, disable a payment method, or claim that an action was performed. Clearwave recommends;
 it never reroutes payments or takes remediating action itself.
 
+A recommended_next_action is a short TAM-facing operational brief, not a request for the investigation
+agent to do more analysis. Follow this literal shape in its action value: `Situation: ... Exposure: ...
+Signals/causes: ... Next actions: 1. ... 2. ... 3. ... No remediation has been executed by ClearWave.`
+Keep Situation, Exposure, and Signals/causes unnumbered; number only two or three human actions. The
+brief must cover all of these: (1) what changed - the affected cohort, actual and baseline approval
+conversion, measured shortfall, and exact window; (2) what it costs - projected loss per hour, followed
+by the exact meaning "This is the measured conversion shortfall applied to the cohort's typical hourly
+attempted value. It is what an hour at the rate now measured would cost, not money already lost."; (3) the two or three correlated
+signals that matter; (4) ranked plausible causes with status labels established, likely, or unresolved;
+and (5) concrete human actions
+such as inspecting a named provider dashboard or integration path, notifying a named merchant or
+payments owner, or considering a route shift. Each numbered action must say why it follows from the
+evidence. Use the basis array for exact query_id and tool citations for every factual or causal claim in
+the brief. Never make "obtain more comparisons" or "investigate further" the only action. Do not add a
+second citation list in the action prose; citations belong in basis. Use
+established only for a directly observed fact or a cause explicitly established by evidence. C2 tools
+are observational and normally do not establish causality: an isolated cohort, timeout/latency correlation,
+or sibling difference never establishes provider, routing, infrastructure, issuer, method, or country as
+cause. Label such causes likely or unresolved. Use only the status labels established, likely, or unresolved
+- never
+"unlikely" or another substitute. If the evidence remains confounded, keep the outcome ambiguous and do
+not promote a cause to established. End with the meaning-preserving sentence "No remediation has been executed by ClearWave."
+Never recommend empty monitoring language such as "monitor the situation" unless it names the specific
+signal and a threshold or change that should trigger the human response. Do not use monitor, monitoring,
+observe, or keep an eye on as a human action unless the specific signal, threshold or change, and response
+trigger are all named. Do not paste raw query IDs into
+the prose; the basis array is the readable citation carrier. Before returning, check that the action
+has at most three numbered items, contains no `q_` strings, and ends with the no-remediation sentence.
+
 Return only the C4 investigation result object. Its outcome must be one of diagnosed, ambiguous,
 insufficient_evidence, or agent_unavailable. Do not add fields to that object.
+"""
+
+RECOMMENDATION_INSTRUCTIONS = """Shape recommended_next_action as a concise brief for a Technical Account Manager, not as a request for the investigation agent.
+
+Write the action value in this literal order: "Situation: ... Exposure: ... Signals/causes: ... Next actions: 1. ... 2. ... 3. ... No remediation has been executed by ClearWave." Situation must name the affected cohort, actual and baseline approval conversion, measured shortfall, and exact window. Exposure must name projected loss per hour and include the exact sentence "This is the measured conversion shortfall applied to the cohort's typical hourly attempted value. It is what an hour at the rate now measured would cost, not money already lost." Signals/causes must name only the two or three correlated signals that matter and rank plausible causes as established, likely, or unresolved. Number only two or three human actions. Each numbered action names what a person inspects, communicates, or considers mitigating and why the cited evidence makes it timely. Do not use monitor, monitoring, observe, or keep an eye on as an action unless the specific signal, threshold or change, and response trigger are all named. A provider dashboard, integration path, merchant/payments owner, or eligible route is more useful than "investigate further".
+
+Use the basis array to cite every factual or causal claim. Do not make another comparison or empty monitoring the only action. Any monitoring step must name the signal and a cited threshold or change that triggers the next human response. Do not paste raw query IDs into the prose. Use established only for a directly observed fact or explicitly established cause. C2 tools are
+observational and normally do not establish causality: an isolated cohort, timeout/latency correlation, or
+sibling difference never establishes provider, routing, infrastructure, issuer, method, or country as
+cause. Label such causes likely or unresolved. Use only the status labels established, likely, or unresolved
+- never "unlikely" or another
+substitute. End with "No remediation has been executed by ClearWave." For a watch, start the action with
+"Situation: WATCH (not a confirmed failure):"; apart from that disclaimer, do not describe a failure as
+having occurred, never use the word failure for a watch cause, and label every causal explanation likely
+or unresolved. Check that there are no more than three numbered action items.
 """
 
 WATCH_INSTRUCTIONS = """This record is a WATCH, not a confirmed incident. Investigate preventively, while there is still time to act.
@@ -40,17 +84,27 @@ You must:
 - Gather the evidence you can, correlate what you can, state the business exposure you can measure, and offer plausible explanations and preventive actions.
 - Say immediately when evidence is weak. Thin or forming evidence is a low diagnostic_confidence and an explicit missing_evidence list, not a reason to withhold the assessment.
 - Keep competing explanations visible. Do not collapse them into a single cause.
-- Treat leading_hypothesis as a plausible explanation, not a diagnosis of failure.
+- Treat leading_hypothesis as a plausible explanation, not a diagnosis of failure. On a watch, a causal
+  explanation can only be likely or unresolved; established may describe an observed signal, never a cause.
+- Make the recommendation preventive: the action must start with "WATCH (not a confirmed failure):" and name
+  the watch's cohort, shortfall, window, projected hourly exposure, and cited signals, then give a human
+  inspection, communication, or contingency action. Apart from that opening disclaimer, do not describe a
+  failure as having occurred and do not use incident, outage, failed, or stopped as a state. Call plausible
+  technical causes faults or degradations, and keep their status likely or unresolved.
+- If you name a threshold for watching, use a value or change present in cited evidence; do not invent one.
 
 You must not:
 - Assert that something has failed, is down, is in outage, or that payments have stopped.
 - Assert a root cause the evidence does not support.
 - Treat projected_loss_per_hour as realised money. It is labelled projected because it is not.
+- Make "monitor the situation" or an equivalent the action unless the signal and trigger are explicit.
 - Recommend that Clearwave reroute payments or take remediating action itself. Recommendations are advice for a TAM.
 - Claim that the system has learned weekly or seasonal patterns. It has not.
 """
 
-INCIDENT_INSTRUCTIONS = """This record is a confirmed incident. Detection has crossed its floors. Investigate the failure that is already in progress. Do not invent a severity field. Recommendations remain advisory; Clearwave does not execute them. Do not claim that the system has learned weekly or seasonal patterns.
+INCIDENT_INSTRUCTIONS = """This record is a confirmed incident. Detection has crossed its floors. Investigate the failure that is already in progress. Do not invent a severity field. Recommendations remain advisory; ClearWave does not execute them. Do not claim that the system has learned weekly or seasonal patterns.
+
+Sharpen the TAM brief for the incident: name the affected cohort, measured shortfall and window, projected hourly exposure with its exact not-realised-loss meaning, and only the correlated signals that point somewhere. Rank causes with established, likely, or unresolved status. Give two or three concrete human next actions - inspect the named provider dashboard or integration path, notify the named merchant or payments owner, and consider a human-approved mitigation such as shifting eligible traffic when the cited signal and uncertainty justify it. Do not claim any mitigation happened.
 """
 
 _PUBLIC_INCIDENT_FIELDS = (
@@ -125,6 +179,8 @@ def assemble_prompt(
         sections.extend(["Standing domain context:", domain_context])
     sections.extend(
         [
+            "TAM recommendation requirements:",
+            RECOMMENDATION_INSTRUCTIONS,
             "Investigate through the evidence functions when a supplied observation does not discriminate.",
             "Then return the C4 result only, with an outcome and evidence citations on every claim.",
         ]
@@ -216,6 +272,7 @@ __all__ = [
     "SYSTEM_PROMPT",
     "WATCH_INSTRUCTIONS",
     "INCIDENT_INSTRUCTIONS",
+    "RECOMMENDATION_INSTRUCTIONS",
     "assemble_prompt",
     "assert_prompt_safe",
     "build_prompt",
