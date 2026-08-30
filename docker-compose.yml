@@ -6,6 +6,8 @@ services:
     command: sleep infinity
     volumes:
       - .:/workspaces/clearwave:cached
+    tmpfs:
+      - /workspaces/clearwave/state/ground_truth
     depends_on:
       kafka:
         condition: service_healthy
@@ -167,6 +169,7 @@ services:
       - ./state:/data
     tmpfs:
       - /data/ground_truth
+      - /workspaces/clearwave/state/ground_truth
     depends_on:
       kafka:
         condition: service_healthy
@@ -205,6 +208,7 @@ services:
       - ./state:/data
     tmpfs:
       - /data/ground_truth
+      - /workspaces/clearwave/state/ground_truth
     depends_on:
       kafka:
         condition: service_healthy
