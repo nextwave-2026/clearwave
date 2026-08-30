@@ -1,0 +1,61 @@
+# Isolated prepared fallback. It never binds the live demo ports 8082/9092.
+services:
+  kafka:
+    container_name: clearwave-fallback-demo-kafka
+    ports: !override
+      - "39092:9092"
+
+  schema-registry:
+    container_name: clearwave-fallback-demo-schema-registry
+    ports: !override
+      - "38081:8081"
+
+  surfaces:
+    container_name: clearwave-fallback-demo-surfaces
+    image: clearwave-fallback-demo-surfaces
+    depends_on: !override
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+      worker-merchant-b:
+        condition: service_started
+    ports: !override
+      - "38082:8080"
+    volumes: !override
+      - .:/workspaces/clearwave
+      - ./state/fallback-demo:/data
+    tmpfs:
+      - /data/ground_truth
+      - /workspaces/clearwave/state/ground_truth
+
+  detector:
+    container_name: clearwave-fallback-demo-detector
+    image: clearwave-fallback-demo-detector
+    entrypoint: ["sh", "-c"]
+    command: ["sleep 90; exec python -m detector daemon"]
+    depends_on: !override
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+      worker-merchant-b:
+        condition: service_started
+    volumes: !override
+      - ./state/fallback-demo:/data
+    tmpfs:
+      - /data/ground_truth
+
+  investigation:
+    container_name: clearwave-fallback-demo-investigation
+    volumes: !override
+      - ./state/fallback-demo:/data
+    tmpfs:
+      - /data/ground_truth
+
+  worker-merchant-b:
+    container_name: clearwave-fallback-demo-worker-merchant-b
+    command: ["merchant-b", "--interval-seconds", "1"]
+    volumes: !override
+      - ./state/fallback-demo/ground_truth/merchant-b:/hidden-truth
+

@@ -405,8 +405,19 @@
     );
   }
 
+  function hasMerchantImpact(row) {
+    const financial = row && row.financial_impact;
+    const change = row && row.change;
+    return Boolean(
+      financial && typeof financial === "object" &&
+      financial.loss_per_hour && financial.gmv_at_risk &&
+      change && typeof change === "object" &&
+      typeof change.actual === "number" && typeof change.expected === "number"
+    );
+  }
+
   function renderMerchants(rows) {
-    const list = rows || [];
+    const list = (rows || []).filter(hasMerchantImpact);
     if (!list.length) {
       overviewMerchants.innerHTML = "";
       return;

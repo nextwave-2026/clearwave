@@ -1759,6 +1759,13 @@ class RevenueFirstOverviewTests(unittest.TestCase):
         self.assertIn('worded in the past because it is over', self.js)
         self.assertRegex(self.css, r"\.mcard\.is-past")
 
+    def test_a_merchant_card_is_not_drawn_without_its_stored_figures(self):
+        self.assertIn("function hasMerchantImpact(row)", self.js)
+        self.assertIn("const list = (rows || []).filter(hasMerchantImpact);", self.js)
+        self.assertIn('financial.loss_per_hour && financial.gmv_at_risk', self.js)
+        self.assertIn('typeof change.actual === "number"', self.js)
+        self.assertIn('typeof change.expected === "number"', self.js)
+
     def test_the_watch_rail_still_sits_apart_and_below_the_real_incident(self):
         board = self.html.index('id="overview-board"')
         merchants = self.html.index('id="overview-merchants"')
@@ -2688,6 +2695,11 @@ class WatchRailTests(unittest.TestCase):
         )
         self.assertEqual(item["detection_floors"], stored["detection"]["detection_floors"])
         self.assertEqual(item["statement"], stored["detection"]["watch"]["statement"])
+
+    def test_an_expired_watch_is_not_presented_as_cost_history(self):
+        expired = _watch("inc-expired")
+        expired["lifecycle_state"] = "resolved"
+        self.assertEqual(merchant_health([expired]), [])
 
 
 class WatchNeverPagesTests(unittest.TestCase):
