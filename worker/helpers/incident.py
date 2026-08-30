@@ -84,6 +84,10 @@ class Incident:
             raise ValueError("an Incident needs at least one scoped dimension")
         if self.effect not in EFFECTS:
             raise ValueError(f"unknown effect {self.effect!r}, expected one of: {EFFECTS}")
+        if isinstance(self.decline_probability, bool) or not isinstance(self.decline_probability, (int, float)):
+            raise ValueError(f"decline_probability must be a number, got {self.decline_probability!r}")
+        if not 0.0 <= self.decline_probability <= 1.0:
+            raise ValueError(f"decline_probability must be between 0.0 and 1.0, got {self.decline_probability}")
         if self.effect == OUTAGE and set(self.scope) != {"provider"}:
             raise ValueError("an outage incident must be scoped to provider only - a bank or method outage isn't something the merchant can route around")
         if self.confound_bank is not None and not {"provider", "issuing_bank"} <= set(self.scope):

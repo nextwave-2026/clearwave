@@ -5,10 +5,16 @@ toggle (`surfaces/inject.py`) calls `start_command`/`stop_command`/`publish`
 from here rather than hand-rolling the JSON, so the two can never drift.
 
     python -m worker.inject merchant-b --issuing-bank "Nu Brasil"
+    python -m worker.inject merchant-b --provider adyen --decline-probability 0.35
     python -m worker.inject merchant-b --provider adyen --effect outage
     python -m worker.inject merchant-b --provider adyen --effect latency --latency-ms 9000
     python -m worker.inject merchant-b --provider adyen --effect spike
     python -m worker.inject merchant-b --stop
+
+--decline-probability tunes how hard effect=decline bites, so a mild
+deviation can be injected before a hard collapse without touching the
+dashboard. It defaults to the near-total break the judge toggle has always
+fired, so omitting it changes nothing.
 
 The target worker must already be running and consuming
 worker.helpers.control.CONTROL_TOPIC - this only publishes the command. See
@@ -30,6 +36,7 @@ from worker.helpers.incident import (
     DEFAULT_INCIDENT_DECLINE_REASON,
     DEFAULT_INCIDENT_LATENCY_MS,
     EFFECTS,
+    INCIDENT_DECLINE_PROBABILITY,
 )
 
 
@@ -42,6 +49,7 @@ def start_command(
     card_network: str | None = None,
     effect: str = DECLINE,
     decline_reason: str = DEFAULT_INCIDENT_DECLINE_REASON,
+    decline_probability: float = INCIDENT_DECLINE_PROBABILITY,
     latency_ms: int = DEFAULT_INCIDENT_LATENCY_MS,
 ) -> dict:
     """The one start command shape every caller publishes.
@@ -49,6 +57,11 @@ def start_command(
     Carries a cohort scope and an effect and nothing else - never a scenario
     identifier, which is what keeps the hidden truth hidden from anything
     downstream of the worker.
+
+    decline_probability is rejected here as well as on the worker, so a judge
+    who types a percentage instead of a ratio is told at their own terminal
+    rather than publishing a command the worker discards into a log nobody is
+    watching.
     """
     scope = {
         dimension: value
@@ -67,12 +80,20 @@ def start_command(
         )
     if effect not in EFFECTS:
         raise ValueError(f"unknown effect {effect!r}, expected one of: {EFFECTS}")
+    if isinstance(decline_probability, bool) or not isinstance(decline_probability, (int, float)):
+        raise ValueError(f"decline_probability must be a number, got {decline_probability!r}")
+    if not 0.0 <= decline_probability <= 1.0:
+        raise ValueError(
+            f"decline_probability must be between 0.0 and 1.0, got {decline_probability} "
+            f"- it is a ratio, not a percentage"
+        )
     return {
         "merchant_id": merchant_id,
         "action": "start",
         "scope": scope,
         "effect": effect,
         "decline_reason": decline_reason,
+        "decline_probability": decline_probability,
         "latency_ms": latency_ms,
     }
 
@@ -120,6 +141,16 @@ def parse_args() -> argparse.Namespace:
         help=f"used when --effect decline. default: {DEFAULT_INCIDENT_DECLINE_REASON!r}",
     )
     parser.add_argument(
+        "--decline-probability",
+        type=float,
+        default=INCIDENT_DECLINE_PROBABILITY,
+        help=(
+            f"used when --effect decline. a ratio in 0.0-1.0, not a percentage. "
+            f"default: {INCIDENT_DECLINE_PROBABILITY} (near-total break). "
+            f"try 0.35 for a mild deviation."
+        ),
+    )
+    parser.add_argument(
         "--latency-ms",
         type=int,
         default=DEFAULT_INCIDENT_LATENCY_MS,
@@ -144,6 +175,7 @@ def main() -> None:
                 card_network=args.card_network,
                 effect=args.effect,
                 decline_reason=args.decline_reason,
+                decline_probability=args.decline_probability,
                 latency_ms=args.latency_ms,
             )
         except ValueError as exc:
