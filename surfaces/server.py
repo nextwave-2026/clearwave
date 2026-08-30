@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from urllib.parse import urlparse
 from detector.store import database_path as shared_database_path
 from investigation.env import load_dotenv
 
+from . import ask as ask_engine
 from . import escalation, inject, present, store
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -47,6 +49,11 @@ class SurfacesApp:
         self.db_path = Path(db_path) if db_path is not None else shared_database_path()
         self.injected = False
         self.stage = "clear"
+        # One question at a time. A judge pressing the button again while an
+        # answer is in flight must not stack a second model call behind the
+        # first: the lock is taken without blocking, and a second press is told
+        # so rather than queued.
+        self._ask_lock = threading.Lock()
 
     def overview(self) -> dict[str, Any]:
         with store.session(self.db_path) as connection:
@@ -131,6 +138,22 @@ class SurfacesApp:
         with store.session(self.db_path) as connection:
             return {"acknowledged": store.acknowledge_call(connection, incident_id)}
 
+    def ask(self, question: str) -> tuple[int, dict[str, Any]]:
+        """Answer one question from the store. Costs a model call, so it is
+        reachable only from an explicit press - never from the board's poll."""
+        text = (question or "").strip()
+        if not text:
+            return 400, {"error": "a question is required", "field": "question"}
+        if not self._ask_lock.acquire(blocking=False):
+            return 409, {
+                "error": "a question is already running",
+                "detail": "One question runs at a time. This press did not start a second.",
+            }
+        try:
+            return 200, ask_engine.answer(text, self.db_path)
+        finally:
+            self._ask_lock.release()
+
     def handle(self, method: str, path: str, body: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
         if method == "GET" and path in {"/api/trigger", "/api/judge/trigger"}:
             return 200, self.trigger_state()
@@ -152,6 +175,16 @@ class SurfacesApp:
             if payload is None:
                 return 404, {"error": "incident not found", "incident_id": incident_id}
             return 200, payload
+        if method == "POST" and path == "/api/ask":
+            return self.ask("" if body is None else str(body.get("question") or ""))
+        if path == "/api/ask":
+            # Deliberately not a GET. This endpoint calls a model, and the
+            # board polls every few seconds: a readable GET is one careless
+            # fetch away from a model call per tick.
+            return 405, {
+                "error": "ask is POST only",
+                "detail": "This endpoint calls a model and is never read by the board's poll.",
+            }
         if method == "POST" and path in {"/api/trigger", "/api/judge/trigger"}:
             # Stage and the legacy on/off boolean are the only intents that
             # cross this boundary. Any other key in the body - a scenario id

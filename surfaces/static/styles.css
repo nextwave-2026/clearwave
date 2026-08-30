@@ -1146,6 +1146,209 @@ figure.chart.binding { max-width: 760px; }
    only, so the gutter survives. */
 .mast-right, .judge > * { min-width: 0; }
 
+/* Ask the data.
+
+   The board's one interactive question. It supports the money above it and
+   never competes with it: no display weight, no severity colour, the same
+   surfaces and ink ramp as every other panel. What it does spend its emphasis
+   on is the citation trail, because that is the whole claim - an answer whose
+   queries are visible is a different object from an answer that just appears. */
+
+.ask {
+  margin-top: 34px;
+  padding-top: 26px;
+  border-top: 1px solid var(--line);
+}
+
+.ask-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.ask-lede { margin: 6px 0 0; font-size: 11.5px; color: var(--ink-3); line-height: 1.55; max-width: 84ch; }
+
+.ask-form { display: flex; gap: 10px; margin: 16px 0 0; align-items: stretch; }
+
+.ask-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 11px 14px;
+}
+
+.ask-input::placeholder { color: var(--ink-3); }
+.ask-input:hover { border-color: var(--ink-3); }
+.ask-input:focus { outline: none; border-color: var(--yuno-blue-lift); box-shadow: 0 0 0 3px rgba(107, 123, 255, 0.18); }
+
+.ask-go {
+  flex: none;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--yuno-blue);
+  border: 0;
+  border-radius: var(--r-md);
+  padding: 0 22px;
+  cursor: pointer;
+  transition: background 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ask-go:hover { background: var(--yuno-blue-lift); }
+.ask-go[disabled] { opacity: 0.5; cursor: progress; }
+
+.ask-egs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 11px; }
+
+.ask-eg {
+  font: inherit;
+  font-size: 11px;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 100px;
+  padding: 6px 13px;
+  cursor: pointer;
+  transition: color 0.16s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ask-eg:hover { color: var(--ink); border-color: var(--ink-3); }
+
+.ask-result:empty { display: none; }
+
+.ask-card {
+  margin-top: 18px;
+  padding: 20px 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+}
+
+/* An answer is the loud one; a limit and an unconfigured engine are calm.
+   None of the three is drawn in a severity colour - the answer is not an
+   incident and the limit is not a fault. */
+.ask-card.is-answer { border-color: var(--line); }
+.ask-card.is-limit { background: var(--surface); }
+.ask-card.is-off { background: var(--surface); border-style: dashed; }
+.ask-card.is-pending, .ask-card.is-busy { background: var(--surface); }
+
+.ask-asked {
+  margin: 0 0 14px;
+  font-size: 11px;
+  color: var(--ink-3);
+  font-family: "Geist Mono", ui-monospace, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.ask-answer {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  max-width: 72ch;
+}
+
+.ask-card h4 { margin: 0 0 6px; font-size: 14.5px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
+.ask-card .ask-lede { margin: 0; max-width: 72ch; }
+.ask-detail { margin: 12px 0 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.6; max-width: 72ch; }
+
+.ask-status { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--ink); }
+.ask-card.is-pending p, .ask-card.is-busy p { margin: 8px 0 0; font-size: 11.5px; color: var(--ink-3); line-height: 1.55; max-width: 72ch; }
+
+.ask-spin {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  border-top-color: var(--yuno-blue-lift);
+  animation: ask-turn 0.7s linear infinite;
+}
+
+@keyframes ask-turn { to { transform: rotate(360deg); } }
+
+.ask-figs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 16px 24px;
+  margin: 20px 0 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.ask-fig dt {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-3);
+  margin-bottom: 6px;
+}
+
+.ask-fig dd {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.ask-fig dd small { display: block; margin-top: 5px; font-size: 10px; font-weight: 400; letter-spacing: 0; color: var(--ink-3); }
+.ask-uncited { color: var(--ink-2); }
+.ask-nocite { color: var(--sev-medium); }
+
+.ask-trail { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line-soft); }
+.ask-trail h5, .ask-missing h5 {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-3);
+}
+
+.ask-missing { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
+.ask-missing ul { margin: 10px 0 0; padding: 0 0 0 18px; }
+.ask-missing li { margin: 0 0 6px; font-size: 12.5px; color: var(--ink); line-height: 1.55; max-width: 72ch; }
+.ask-missing li:last-child { margin-bottom: 0; }
+
+.ask-asof { margin: 14px 0 0; font-size: 10px; color: var(--ink-3); }
+.ask-trailcap { margin: 8px 0 12px; font-size: 10.5px; color: var(--ink-3); line-height: 1.5; max-width: 72ch; }
+
+.ask-cites { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; background: var(--line-soft); border: 1px solid var(--line-soft); border-radius: var(--r-sm); overflow: hidden; }
+
+.ask-cite {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1.1fr) minmax(0, 1.4fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  background: var(--surface);
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+.ask-seq { color: var(--ink-3); font-size: 10.5px; }
+.ask-tool { color: var(--ink); font-weight: 500; overflow-wrap: anywhere; }
+.ask-qid { color: var(--ink-3); font-size: 10.5px; overflow-wrap: anywhere; }
+.ask-outcome { color: var(--ink-3); font-size: 10.5px; text-align: right; }
+
+@media (max-width: 640px) {
+  .ask-form { flex-wrap: wrap; }
+  .ask-go { width: 100%; padding: 11px 22px; }
+  .ask-card { padding: 18px 16px; }
+  .ask-answer { font-size: 15px; }
+  .ask-cite { grid-template-columns: 24px minmax(0, 1fr) auto; row-gap: 4px; }
+  .ask-qid { grid-column: 2 / -1; }
+  .ask-outcome { grid-column: 2 / -1; text-align: left; }
+}
+
 /* The warning rail.
 
    A watch is a deviation detection deliberately chose not to report: it has
