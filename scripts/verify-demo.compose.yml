@@ -1,0 +1,56 @@
+# Isolated overlay for `make verify-demo`.
+# Remaps every host port and container_name so a live demo on 8082/9092 is left alone.
+# Project name must be `clearwave-verify-demo` (the script refuses `clearwave`).
+
+services:
+  kafka:
+    container_name: clearwave-verify-demo-kafka
+    ports: !override
+      - "19092:9092"
+
+  schema-registry:
+    container_name: clearwave-verify-demo-schema-registry
+    ports: !override
+      - "18081:8081"
+
+  surfaces:
+    container_name: clearwave-verify-demo-surfaces
+    image: clearwave-verify-demo-surfaces
+    ports: !override
+      - "18082:8080"
+    volumes: !override
+      - .:/workspaces/clearwave
+      - ./state/verify-demo:/data
+    tmpfs:
+      - /data/ground_truth
+      - /workspaces/clearwave/state/ground_truth
+
+  detector:
+    container_name: clearwave-verify-demo-detector
+    image: clearwave-verify-demo-detector
+    volumes: !override
+      - ./state/verify-demo:/data
+    tmpfs:
+      - /data/ground_truth
+
+  investigation:
+    container_name: clearwave-verify-demo-investigation
+    volumes: !override
+      - ./state/verify-demo:/data
+    tmpfs:
+      - /data/ground_truth
+
+  worker-merchant-a:
+    container_name: clearwave-verify-demo-worker-merchant-a
+    volumes: !override
+      - ./state/verify-demo/ground_truth/merchant-a:/hidden-truth
+
+  worker-merchant-b:
+    container_name: clearwave-verify-demo-worker-merchant-b
+    volumes: !override
+      - ./state/verify-demo/ground_truth/merchant-b:/hidden-truth
+
+  worker-merchant-c:
+    container_name: clearwave-verify-demo-worker-merchant-c
+    volumes: !override
+      - ./state/verify-demo/ground_truth/merchant-c:/hidden-truth

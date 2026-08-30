@@ -7,7 +7,7 @@ STACK_WAIT_TIMEOUT ?= 300
 PREPARE_HOURS ?= 8
 PREPARE_SEED ?= 20260830
 
-.PHONY: stack-up stack-status stack-down stack-prepare
+.PHONY: stack-up stack-status stack-down stack-prepare verify-demo
 
 stack-prepare:
 	@mkdir -p state
@@ -26,3 +26,7 @@ stack-status:
 
 stack-down:
 	@docker compose down
+
+# Isolated from a live demo on 8082/9092. Extra args: make verify-demo ARGS='--keep-stack'
+verify-demo:
+	@python3 -S scripts/verify_demo.py $(ARGS)
