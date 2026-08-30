@@ -317,7 +317,7 @@
         '<p class="watch-reason">' + reason + "</p>" +
         (notYetMet
           ? '<p class="watch-reason mono">Not yet met: ' + escapeHtml(notYetMet) + "</p>"
-          : "") +
+          : '<p class="watch-reason mono">Not yet met: not in store.</p>') +
         "</article>"
       );
     }).join("");

@@ -911,6 +911,7 @@ class WatchStateTests(unittest.TestCase):
         )
         merchant_ids = [row["merchant_id"] for row in self.app.overview()["merchant_health"]]
         self.assertNotIn("merchant-only-watch", merchant_ids)
+        self.assertEqual(self.app.merchants()["merchants"], [])
 
 
 class SlackBlockKitTests(unittest.TestCase):
@@ -1272,6 +1273,11 @@ class StaticContractTests(unittest.TestCase):
             self.assertNotIn("http://", text)
             self.assertNotIn("cdn.", text)
             self.assertNotIn("fonts.googleapis", text)
+
+    def test_watch_not_yet_met_renders_stored_values_or_honest_absence(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("escapeHtml(notYetMet)", js)
+        self.assertIn("Not yet met: not in store.", js)
 
     def test_dashboard_does_not_render_a_missing_merchant_as_unknown(self):
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")

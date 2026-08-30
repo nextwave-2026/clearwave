@@ -50,10 +50,7 @@ def overview(
         "estimated_gmv_at_risk": financial.get("gmv_at_risk"),
         "change": change or None,
         "financial_impact": financial or None,
-        # A watch carries no incident severity by design, so it is excluded
-        # from this grouping rather than showing up as a merchant's "highest
-        # severity" with nothing behind it.
-        "merchant_health": merchant_health([incident for incident in incidents if not is_watch(incident)]),
+        "merchant_health": merchant_health(incidents),
         "incidents": [queue_item(incident, results.get(str(incident.get("incident_id")))) for incident in active],
         # A quieter rail, deliberately separate from "incidents": a watch is
         # not yet an incident and must never be mixed into the active queue.
@@ -232,6 +229,10 @@ def merchant_health(incidents: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Per-merchant view of stored incident severity. No health score is invented."""
     grouped: dict[tuple[Any, ...], list[Mapping[str, Any]]] = {}
     for incident in incidents:
+        # A watch carries no incident severity by design, so every caller
+        # excludes it rather than showing a highest severity with no incident.
+        if is_watch(incident):
+            continue
         grouped.setdefault(_health_group_key(incident), []).append(incident)
     health = []
     rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
