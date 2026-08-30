@@ -48,7 +48,7 @@ defines the four-way work division.
 
 The product is runnable. The copy-pasteable operator sequence - pre-warmed live stack, offline stage path, and live Kafka caveats, including commands that fail and must not be used - is in [`docs/demo-sequence.md`](docs/demo-sequence.md).
 
-Live product path, from the repository root, started **at least 60 minutes** before anyone watches it (detection compares against a 60-minute trailing window):
+Live product path, from the repository root. Detection needs **60 minutes** of traffic (trailing-hour baseline). Merchant-relative severity needs **6 hours** or those fields stay null:
 
 ```sh
 make stack-up

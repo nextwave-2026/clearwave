@@ -14,7 +14,7 @@ stack-up:
 	  worker-merchant-a worker-merchant-b worker-merchant-c \
 	  detector investigation surfaces
 	@printf '%s\n' "Open $(STACK_SURFACES_URL)/"
-	@printf '%s\n' "Leave this running. Merchant-relative detection compares against a 60-minute trailing window (BASELINE_TRAILING_BUCKETS=60); a stack started in the last hour is still cold."
+	@printf '%s\n' "Leave this running. Detection baseline is 60 minutes (BASELINE_TRAILING_BUCKETS=60). Merchant-relative severity needs 6 hours (MERCHANT_NORMAL_MIN_HOURS=6) or those fields stay null."
 
 stack-status:
 	@python3 -S scripts/stack_status.py

@@ -26,13 +26,13 @@ make stack-down        # stop the stack
 
 The dashboard is published on host port **8082** because 8080, 8090 and 18080 are commonly taken. Host-side `make surfaces-serve` is unchanged and still binds 127.0.0.1:8080.
 
-**Start it at least 60 minutes before you need it, and leave it running.** Detection compares the current window against that merchant's own trailing hour (`BASELINE_TRAILING_BUCKETS = 60` of `BUCKET_SECONDS = 60` in `detector/config.py`). A stack started sixty seconds before a demo has no baseline and will not warn on anything subtle.
+**Leave it running. Two warm-up clocks, not one.** Detection compares the current window against that merchant's own trailing hour (`BASELINE_TRAILING_BUCKETS = 60` of `BUCKET_SECONDS = 60` in `detector/config.py`) - a stack started sixty seconds before a demo has no baseline and will not warn on anything subtle. Merchant-relative severity needs longer: `MERCHANT_NORMAL_MIN_HOURS = 6`, and below that floor `merchant_normal_hourly_value_usd` and `severity_ceilings.merchant_relative` both read null, so the ceiling is silently inert. Start at least 60 minutes before the pitch for detection; start at least 6 hours before if you plan to pitch merchant-relative severity.
 
 ### Which path to use
 
 | Path | Standing |
 | --- | --- |
-| **Pre-warmed compose stack** (`make stack-up`, browser on port 8082) | **The live product.** Detector, investigation and dashboard run themselves against `state/clearwave.db`. Must be started at least 60 minutes before the pitch so the trailing baseline is warm. |
+| **Pre-warmed compose stack** (`make stack-up`, browser on port 8082) | **The live product.** Detector, investigation and dashboard run themselves against `state/clearwave.db`. Start 60 minutes before the pitch for the trailing detection baseline; 6 hours before if merchant-relative severity should populate. |
 | **Offline deterministic** (seed / detect / `investigation.vertical` / dashboard) | **Safe stage path if Docker is not up.** Proven. This worktree: seed+detect stored a critical `provider-p2` incident; `investigation.vertical` diagnosed it; `GET /api/overview` showed `lifecycle_state: diagnosed` with a narrative. An earlier rehearsal timed all three guaranteed scenarios at 2 minutes 48 seconds. Model calls vary (about 45-100+ seconds). Do not promise three fresh model calls inside four minutes. |
 | **Live one-shot consume** (`make e2e`, then `make surfaces-serve`) | Debugging and rehearsal, not the pitch. A scripted CLI demonstration. |
 

@@ -29,10 +29,14 @@ the three merchants, a detector that consumes and sweeps every 45 seconds, the i
 daemon, and the dashboard on http://127.0.0.1:8082/ . It returns only once `/api/overview`
 answers. `make stack-status` prints one fact per piece of that loop. `make stack-down` stops it.
 
-**Start it at least 60 minutes before you need it.** Detection compares the current window
+**Leave it running. Two warm-up clocks, not one.** Detection compares the current window
 against that merchant's own trailing hour (`BASELINE_TRAILING_BUCKETS = 60` buckets of
-`BUCKET_SECONDS = 60` in `detector/config.py`). A stack started a minute before a demo has no
-baseline and will not warn on anything subtle. Leave it running.
+`BUCKET_SECONDS = 60` in `detector/config.py`) - a stack started a minute before a demo has no
+baseline and will not warn on anything subtle. Merchant-relative severity needs six hours of
+history (`MERCHANT_NORMAL_MIN_HOURS = 6`): below that floor `merchant_normal_hourly_value_usd`
+and `severity_ceilings.merchant_relative` both read null, so the ceiling is silently inert.
+Start 60 minutes before the pitch for detection; 6 hours before if you plan to pitch
+merchant-relative severity.
 
 The one-shot commands below still work for debugging a single consume. They are not how the
 live product is meant to be shown.
