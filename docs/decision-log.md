@@ -213,7 +213,7 @@ the fix was to retune `STAGE_DEVELOPING`'s injection magnitude. **Alternatives r
 the demo more reliably dramatic. **Why:** in the team's own recorded words, "raising floors would
 weaken the real product to make the demo look good, and we do not do that." **What it cost us:** more
 rehearsal time spent measuring exactly what magnitude, on a warm store, actually crosses the
-predicate - `DECISIONS.md` 2026-08-30T06:33Z records the measured thresholds directly rather than
+predicate - `STATUS.md` 2026-08-30T06:33Z records the measured thresholds directly rather than
 guessing. **Where it lives:** `DECISIONS.md` 2026-08-30T05:38Z.
 
 ## We changed our mind
@@ -285,7 +285,9 @@ flowchart LR
 
 **Decision:** `CHANNELS_BY_SEVERITY` is the single source of this binding; both the dispatcher
 (`escalate`) and the dashboard's Escalation tab read the same function, so the two can't disagree.
-Because a live row can now cross the `high`/`critical` boundary more than once (ADR 0026),
+Because a live row can now cross the `high`/`critical` boundary more than once (ADR 0026, claimed by
+`andres` and open in PR #88 - not merged at the time of writing, so it is listed without a link in
+[`docs/adr/README.md`](adr/README.md)),
 `escalate()` accepts a `channels` argument that narrows dispatch to whatever is newly bound on a
 promotion, intersected with the table rather than trusted - a promotion fires the phone once, not
 Slack again.
@@ -312,7 +314,7 @@ W4's fence (`STATUS.md` 08:12Z/09:14Z).
 can hold a full C4 diagnosis before it crosses the floors that make it an incident - the whole
 preventive value of the feature, and also the surest way to turn Clearwave into noisy alerting: a
 live-stack review counted five watches on ordinary healthy traffic before anyone touched the
-injection control (`DECISIONS.md` 03:59Z). Before this record the silence was accidental - nothing
+injection control (`STATUS.md` 2026-08-30T05:31Z). Before this record the silence was accidental - nothing
 checked lifecycle state, and a watch simply never produced a C4 result to escalate. ADR 0025 removed
 that accident by making watches claimable, which meant the guarantee had to become a rule instead of
 a side effect.
