@@ -981,23 +981,50 @@ def _contains_formed_traffic(
     )
 
 
+def cohorts_compatible(
+    left: dict[str, Any] | None,
+    right: dict[str, Any] | None,
+) -> bool:
+    """True when two cohorts never disagree on a shared dimension.
+
+    `{provider: adyen}` and `{payment_method: card}` are compatible: they are
+    two single-axis views of the same traffic. `{provider: adyen}` and
+    `{provider: stripe}` are not - those are two different episodes.
+    """
+    first = dict(left or {})
+    second = dict(right or {})
+    for key, value in first.items():
+        if key in second and second[key] != value:
+            return False
+    return True
+
+
 def cohorts_same_episode(
     left: dict[str, Any] | None,
     right: dict[str, Any] | None,
 ) -> bool:
-    """True when one cohort is the other, or a sharpening of it.
+    """True when two cohorts name one continuous degradation.
 
-    Localisation deepens as a drop grows. A watch on `{provider: adyen}` and a
-    later incident on `{country: CO, merchant_id: merchant-b, provider: adyen}`
-    are one episode, so they keep one record. Disjoint slices are not.
+    Localisation deepens as a drop grows, and a near-miss is often first seen
+    on one axis (provider) while a later sweep names another (payment method)
+    or a joint slice. A watch on `{provider: adyen}` and a later incident on
+    `{country: CO, merchant_id: merchant-b, provider: adyen}` are one episode.
+    So are orthogonal single-axis views that never disagree on a dimension -
+    `{payment_method: card}` and `{provider: adyen}` under the same inject.
+    Conflicting values stay separate episodes.
     """
     first = dict(left or {})
     second = dict(right or {})
     if first == second:
         return True
+    # The platform cohort `{}` is the broadest parent of every slice, so a
+    # platform-wide detection is the same episode as a live watch that already
+    # named the traffic. Without this, one inject mints a second row on `{}`.
+    if _is_sharpening(first, second) or _is_sharpening(second, first):
+        return True
     if not first or not second:
         return False
-    return _is_sharpening(first, second) or _is_sharpening(second, first)
+    return cohorts_compatible(first, second)
 
 
 def _is_sharpening(general: dict[str, Any], specific: dict[str, Any]) -> bool:
@@ -1083,11 +1110,125 @@ def build_watches(
     near_misses = [entry for entry in candidates if "conversion_near_miss" in entry[-1]]
     near_miss_cohort = None
     if near_misses:
-        chosen_near_miss = min(
-            near_misses, key=lambda e: (e[1]["z"], metrics.cohort_key(e[1]["cohort"]))
+        # One degradation shows up on every axis it touches. Pick the strongest
+        # single-axis near-miss, then fold in every other near-miss axis that
+        # does not conflict and still near-misses as a joint slice. That is how
+        # a mild provider inject becomes one `{merchant_id, provider}` watch
+        # instead of separate card / country / provider rows.
+        ordered = sorted(
+            near_misses,
+            key=lambda e: (e[1]["z"], metrics.cohort_key(e[1]["cohort"])),
         )
-        keep.append(chosen_near_miss)
-        near_miss_cohort = chosen_near_miss[0]
+        # Start from the strongest single-axis near-miss that already passed.
+        chosen_near_miss = ordered[0]
+        joint_cohort = dict(ordered[0][0] or {})
+        for entry in ordered[1:]:
+            other = dict(entry[0] or {})
+            if not other or not cohorts_compatible(joint_cohort, other):
+                continue
+            candidate = {**joint_cohort, **other}
+            conversion = evaluate(connection, candidate, start, end)
+            series = metrics.timeseries(connection, candidate, start, end)
+            trajectory = trajectory_of(series)
+            floors = watch_floors(conversion, trajectory)
+            if not all(floors.values()):
+                continue
+            # Prefer the joint when it is at least as concentrated as the seed.
+            seed_z = ordered[0][1]["z"]
+            if conversion["z"] is None or seed_z is None:
+                continue
+            if conversion["z"] > seed_z + 0.25:
+                continue
+            reading = leading_indicators(connection, candidate, start, end)
+            degraded = [] if conversion["qualifies"] else _degraded_names(reading)
+            reasons = ["conversion_near_miss"]
+            if degraded:
+                reasons.append("leading_indicators")
+            joint_cohort = candidate
+            chosen_near_miss = (
+                candidate,
+                conversion,
+                reading,
+                floors,
+                trajectory,
+                degraded,
+                reasons,
+            )
+        # Deepen the near-miss the way localise deepens an incident: a child
+        # axis earns a place only when it concentrates the drop against its
+        # siblings. This is what turns `{provider: adyen}` into the
+        # merchant-relative `{merchant_id: merchant-b, provider: adyen}` the
+        # demo points at, without inventing dimensions that do not separate.
+        deep_cohort = dict(chosen_near_miss[0] or {})
+        deep_entry = chosen_near_miss
+        for _ in range(config.LOCALISE_MAX_DEPTH):
+            best = None
+            for dimension in schema.DIMENSIONS:
+                if dimension in deep_cohort:
+                    continue
+                siblings = []
+                for value in store_dimension_values(connection, dimension):
+                    child = dict(deep_cohort)
+                    child[dimension] = value
+                    conversion = evaluate(connection, child, start, end)
+                    if conversion["absolute_drop"] is None:
+                        continue
+                    if conversion["observed"]["attempted_payments"] < config.N_PAYMENTS_MIN:
+                        continue
+                    series = metrics.timeseries(connection, child, start, end)
+                    trajectory = trajectory_of(series)
+                    floors = watch_floors(conversion, trajectory)
+                    siblings.append((child, conversion, trajectory, floors))
+                if len(siblings) < 2:
+                    continue
+                siblings.sort(
+                    key=lambda item: (
+                        -(item[1]["absolute_drop"] or 0.0),
+                        metrics.cohort_key(item[0]),
+                    )
+                )
+                winner_child, winner_conv, winner_traj, winner_floors = siblings[0]
+                runner = siblings[1][1]
+                separation = (winner_conv["absolute_drop"] or 0.0) - (
+                    runner["absolute_drop"] or 0.0
+                )
+                if separation < config.LOCALISE_MIN_SEPARATION:
+                    continue
+                if not all(winner_floors.values()):
+                    # A child can concentrate the drop before every watch floor
+                    # holds on the child itself; keep the parent in that case.
+                    continue
+                parent_z = deep_entry[1]["z"]
+                if winner_conv["z"] is None or parent_z is None:
+                    continue
+                if winner_conv["z"] > parent_z + 0.25:
+                    continue
+                if best is None or separation > best["separation"]:
+                    reading = leading_indicators(connection, winner_child, start, end)
+                    degraded = (
+                        [] if winner_conv["qualifies"] else _degraded_names(reading)
+                    )
+                    reasons = ["conversion_near_miss"]
+                    if degraded:
+                        reasons.append("leading_indicators")
+                    best = {
+                        "separation": separation,
+                        "entry": (
+                            winner_child,
+                            winner_conv,
+                            reading,
+                            winner_floors,
+                            winner_traj,
+                            degraded,
+                            reasons,
+                        ),
+                    }
+            if best is None:
+                break
+            deep_entry = best["entry"]
+            deep_cohort = dict(deep_entry[0] or {})
+        keep.append(deep_entry)
+        near_miss_cohort = dict(deep_entry[0] or {})
 
     # The same dilution happens to a leading indicator, and worse: a slow
     # provider makes its merchant, its country, its card scheme and every bank
@@ -1097,17 +1238,15 @@ def build_watches(
     # through. Different indicators may still name different cohorts, because
     # a slow provider and a routed-around one are two findings, not one.
     # A conversion near-miss already names that traffic: do not also warn on
-    # an equal or broader slice of it (the provider watch, or the platform).
-    # Missing a dimension is not containment - `{country: CO}` is not a
-    # sharpening of `{provider: adyen}`, and suppressing it would hide an
-    # independent latency watch.
+    # a compatible slice of it (another axis of the same inject). Only a
+    # conflicting cohort - a different provider, a different bank - stays.
     for indicator, best in _INDICATOR_EXTREME.items():
         holders = [entry for entry in candidates if indicator in entry[-2]]
         if near_miss_cohort is not None:
             holders = [
                 entry
                 for entry in holders
-                if not _is_sharpening(entry[0] or {}, near_miss_cohort)
+                if not cohorts_same_episode(entry[0] or {}, near_miss_cohort)
             ]
         if not holders:
             continue
@@ -1120,7 +1259,9 @@ def build_watches(
         )
         if strongest not in keep:
             keep.append(strongest)
-    candidates = [entry for entry in candidates if entry in keep]
+    # keep holds newly built joint/deepened entries that are not identity-equal
+    # to the single-axis candidates list, so filter-by-membership would drop them.
+    candidates = list(keep)
 
     watches: list[dict[str, Any]] = []
     for cohort, conversion, reading, floors, trajectory, degraded, reasons in candidates:
