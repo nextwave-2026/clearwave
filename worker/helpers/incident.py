@@ -88,6 +88,11 @@ class Incident:
             raise ValueError("an outage incident must be scoped to provider only - a bank or method outage isn't something the merchant can route around")
         if self.confound_bank is not None and not {"provider", "issuing_bank"} <= set(self.scope):
             raise ValueError("confound_bank requires both provider and issuing_bank in scope")
+        if not 0.0 <= self.decline_probability <= 1.0:
+            raise ValueError(
+                "decline_probability must be between 0.0 and 1.0 inclusive, "
+                f"got {self.decline_probability!r}"
+            )
 
     def matches(self, attempt: dict) -> bool:
         return all(attempt.get(dimension) == value for dimension, value in self.scope.items())

@@ -11,7 +11,8 @@ Owner: W2 (`andres`). The contract for what a record becomes is
 
 | Path | Command | Needs |
 |---|---|---|
-| **Live** | `.venv/bin/python -m detector consume --detect` | Kafka, Schema Registry, a running W1 worker |
+| **Live (continuous)** | `make stack-up` | Docker. Leaves Kafka, workers, detector, investigation and dashboard running. |
+| **Live (one-shot)** | `.venv/bin/python -m detector consume --detect` | Kafka, Schema Registry, a running W1 worker |
 | **Offline** | `.venv/bin/python -m detector seed && .venv/bin/python -m detector detect` | the project virtualenv |
 
 The offline path is the demo fallback and does not import a Kafka client at any point. If the
@@ -23,12 +24,37 @@ doors onto the same normalisation, the same store and the same detection sweep.
 
 The copy-pasteable demo sequence, including the offline fallback that actually produces a diagnosed incident on the dashboard, is [`docs/demo-sequence.md`](demo-sequence.md). This page is the live consumer. Several commands that used to be written here fail; do not use them.
 
+The product path is a stack that is already up. `make stack-up` starts Kafka, Schema Registry,
+the three merchants, a detector daemon that consumes continuously and sweeps every 45 seconds
+(empty polls are not terminal; SIGINT and SIGTERM drain), the investigation daemon, and the
+dashboard on http://127.0.0.1:8082/ . It returns only once `/api/overview` answers.
+`make stack-status` prints one fact per piece of that loop. `make stack-down` stops it.
+
+**Leave it running. The store is pre-warmed.** `make stack-up` runs `scripts/prepare_history.py`
+before compose, which replaces `state/clearwave.db` with eight event-time hours of healthy
+traffic in the names the live workers actually emit (merchant-b / adyen among them). That is
+what clears the trailing detection baseline (`BASELINE_TRAILING_BUCKETS = 60` buckets of
+`BUCKET_SECONDS = 60` in `detector/config.py`) and the merchant-relative floor
+(`MERCHANT_NORMAL_MIN_HOURS = 6`, `MERCHANT_NORMAL_MIN_PAYMENTS = 200`). Below that floor
+`merchant_normal_hourly_value_usd` and `severity_ceilings.merchant_relative` both read null.
+`make stack-status` prints those two floors separately. Generating the history takes seconds;
+judges must not wait for traffic to accumulate. The anomaly is not in the seed: it still has
+to happen live after the judge presses the button, and the detector still has to find it.
+Re-running `stack-up` starts clean, because leftover rehearsal incidents promote a later band.
+
+The one-shot commands below still work for debugging a single consume. They are not how the
+live product is meant to be shown.
+
 ```sh
 # 0. Dependencies. Do not use system pip; it fails with PEP 668 on Homebrew Python.
 make install
 
-# 1. Broker, Schema Registry and raul's three merchants. Use the docker compose
-#    subcommand; standalone docker-compose is not required. Wait for health.
+# 1. The continuous stack. Prefer this over bringing pieces up by hand.
+make stack-up
+
+# 1b. Broker, Schema Registry and raul's three merchants only, if you are about
+#     to run a one-shot consume yourself. Use the docker compose subcommand;
+#     standalone docker-compose is not required. Wait for health.
 docker compose up -d kafka schema-registry \
   worker-merchant-a worker-merchant-b worker-merchant-c
 
@@ -36,13 +62,13 @@ docker compose up -d kafka schema-registry \
 export CLEARWAVE_DB=state/clearwave.db
 .venv/bin/python -m detector ingest /path/to/backfill.jsonl --stream
 
-# 3. Consume for a minute, then detect. This is live traffic into the store.
-#    It is not a guaranteed C3 record: healthy 60s traffic returns incident null.
-#    Inject first (below) if you want an incident to detect.
+# 3. One-shot consume for a minute, then detect. The compose `detector` service
+#    is `python -m detector daemon`, not this command in a loop. Healthy 60s
+#    traffic returns incident null. Inject first (below) if you want an incident.
 .venv/bin/python -m detector consume --seconds 60 --detect
 ```
 
-`make e2e` is steps 1 and 3 in one command, and `make e2e BACKFILL=/path/to/backfill.jsonl`
+`make e2e` is steps 1b and 3 in one command, and `make e2e BACKFILL=/path/to/backfill.jsonl`
 includes step 2. `make backfill BACKFILL=...` is step 2 alone; `make live` is step 3 alone -
 it starts neither Kafka nor a worker and does not guarantee an incident. `make consume` reads
 until the topics go quiet and stops. All of these run on `.venv`, which is what `make install`
@@ -57,13 +83,44 @@ a dead worker), and `--mode anomaly` does not exist.
 PYTHONUNBUFFERED=1 .venv/bin/python -m worker.worker merchant-a --interval-seconds 0.2
 ```
 
+## Running detection as a service
+
+The compose `detector` service is one process: `python -m detector daemon`. It is the same
+consume loop as the one-shot command, with three differences and no fourth:
+
+- **Empty polls are not terminal.** `detector consume` ends after three consecutive quiet
+  polls, which is right for a bounded run and wrong for a service. The daemon passes
+  `idle_polls=0`, so only a signal ends it.
+- **SIGINT and SIGTERM drain.** Both set a stop flag rather than raising, the loop leaves at
+  the top of an iteration, and the batch already polled is written and only *then*
+  acknowledged. `docker compose stop` therefore loses nothing, and a container that is killed
+  replays its last uncommitted batch on restart - safe because every event table is keyed on
+  `event_id`.
+- **Sweeps keep happening when the topics are quiet.** `--detect-every` is a wall-clock
+  interval, not a traffic interval. An empty poll still asks the sweeper, so a developing
+  watch is not invisible just because nothing arrived in that second.
+
+A broker failure the client cannot recover from exits the process, and `restart: unless-stopped`
+brings it back. There is deliberately no retry policy inside the loop.
+
+The image copies `detector/` and nothing else. The service is given `./state:/data` for the
+shared store, and an empty tmpfs over `/data/ground_truth` so that mount cannot hand it C6.
+
+`make detect-daemon` runs the identical loop on the host:
+
+```sh
+make detect-daemon                                   # Ctrl-C to stop, it drains
+make detect-daemon DB=state/clearwave.db DETECT_EVERY=15
+```
+
 ## Injecting an incident
 
 The workers run *healthy* traffic until something injects an incident into them. Two ways, and
 neither restarts anything:
 
-- **The dashboard.** `make surfaces-serve`, open http://127.0.0.1:8080, and use the judge toggle in
-  the masthead. On publishes a provider-scoped decline; off publishes the stop command. The target
+- **The dashboard.** After `make stack-up`, open http://127.0.0.1:8082 and use the judge toggle in
+  the masthead. Host-side `make surfaces-serve` still binds 127.0.0.1:8080; that default is unchanged.
+  On publishes a provider-scoped decline; off publishes the stop command. The target
   it fires is named in `surfaces/inject.py` and returned in the API response.
 - **The command line.** `.venv/bin/python -m worker.inject merchant-b --provider adyen --effect
   decline`, and `.venv/bin/python -m worker.inject merchant-b --stop` to clear it.

@@ -13,7 +13,7 @@ import sys
 import tempfile
 import tracemalloc
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -470,6 +470,490 @@ class StreamingIngestTests(unittest.TestCase):
     def test_a_batch_size_below_one_is_refused_rather_than_silently_fixed(self):
         with self.assertRaises(ValueError):
             store.ingest_stream(self.connection, iter([]), batch_size=0)
+
+
+class RecurrencePromotesSeverityTests(unittest.TestCase):
+    """A fault that keeps coming back is a worse fault than one that happened once.
+
+    Yuno's product owners asked it directly: two low-priority alerts on the
+    same cohort in a short period should not stay two low-priority alerts. The
+    count is measured over the incident table by the detection plane itself;
+    `incident_history` keeps publishing its own row count separately.
+    """
+
+    BASE = dict(
+        loss_per_hour=5_000.0, affected_payments=500, platform_payments=10_000,
+        buckets_sustained=6, trajectory=0,
+    )
+
+    def _severity(self, priors):
+        return detect.severity_of(**self.BASE, prior_matching_incidents=priors)["severity"]
+
+    def test_no_recurrence_leaves_todays_answer_untouched(self):
+        self.assertEqual(
+            detect.severity_of(**self.BASE), detect.severity_of(**self.BASE, prior_matching_incidents=0)
+        )
+
+    def test_each_rung_of_the_ladder_promotes_one_band_further(self):
+        order = detect.SEVERITY_ORDER
+        unpromoted = order.index(self._severity(0))
+        self.assertEqual(order.index(self._severity(1)), unpromoted)
+        for priors, bands in ((2, 1), (4, 2), (8, 3)):
+            self.assertEqual(
+                order.index(self._severity(priors)),
+                min(len(order) - 1, unpromoted + bands),
+                f"{priors} prior matching incidents must promote {bands} band(s)",
+            )
+
+    def test_promotion_stops_at_critical_rather_than_running_off_the_ladder(self):
+        self.assertEqual(self._severity(8), "critical")
+        self.assertEqual(self._severity(500), "critical")
+
+    def test_promotion_is_reported_so_the_number_can_be_explained(self):
+        promoted = detect.severity_of(**self.BASE, prior_matching_incidents=4)
+        self.assertEqual(promoted["prior_matching_incidents"], 4)
+        self.assertEqual(promoted["recurrence_promotion_bands"], 2)
+
+    def test_a_prior_episode_that_ended_before_the_gap_counts(self):
+        connection, incident, cohort_key, onset = self._store()
+        self.assertEqual(detect.prior_matching_incident_count(connection, cohort_key, onset), 0)
+        for offset in (3_600, 7_200):
+            self._save(connection, incident, onset - offset, onset - offset + 600)
+        self.assertEqual(detect.prior_matching_incident_count(connection, cohort_key, onset), 2)
+        # Outside the lookback the same two episodes stop counting.
+        self.assertEqual(
+            detect.prior_matching_incident_count(
+                connection, cohort_key, onset, lookback_seconds=1_800
+            ),
+            0,
+        )
+
+    def test_one_continuous_injection_counts_as_one_episode_however_many_rows(self):
+        """Onset drifts as the sweep window rolls, so one fault writes several
+        rows. Rows are not episodes: the phone must not ring because one
+        rehearsal left three of them behind."""
+        connection, incident, cohort_key, onset = self._store()
+        # One 18-minute fault, sweeping every few minutes, still running as this
+        # incident onsets: every row's last_seen runs right up to now.
+        for drift in (0, 240, 480):
+            self._save(connection, incident, onset - 1_080 + drift, onset)
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) AS n FROM incident").fetchone()["n"], 3
+        )
+        self.assertEqual(detect.prior_matching_incident_count(connection, cohort_key, onset), 0)
+
+    def test_two_genuinely_separate_faults_still_count_as_two(self):
+        """The fix must not make recurrence unreachable - that would be worse
+        than the bug it fixes."""
+        connection, incident, cohort_key, onset = self._store()
+        for start in (onset - 4 * 3_600, onset - 2 * 3_600):
+            self._save(connection, incident, start, start + 900)
+        self.assertEqual(detect.prior_matching_incident_count(connection, cohort_key, onset), 2)
+        self.assertEqual(
+            detect.severity_of(**self.BASE, prior_matching_incidents=2)["recurrence_promotion_bands"],
+            1,
+        )
+
+    def test_a_row_that_ended_inside_the_gap_is_the_same_episode(self):
+        connection, incident, cohort_key, onset = self._store()
+        inside = onset - config.RECURRENCE_EPISODE_GAP_SECONDS + 60
+        outside = onset - config.RECURRENCE_EPISODE_GAP_SECONDS - 60
+        self._save(connection, incident, onset - 3_600, inside, suffix="inside")
+        self.assertEqual(detect.prior_matching_incident_count(connection, cohort_key, onset), 0)
+        self._save(connection, incident, onset - 3_600, outside, suffix="outside")
+        self.assertEqual(detect.prior_matching_incident_count(connection, cohort_key, onset), 1)
+
+    def test_a_watch_never_promotes_a_later_band(self):
+        """A near-miss we deliberately chose not to page on cannot raise a
+        later severity."""
+        connection, incident, cohort_key, onset = self._store()
+        for offset in (3_600, 7_200):
+            self._save(
+                connection, incident, onset - offset, onset - offset + 600, state="watching"
+            )
+        self.assertEqual(detect.prior_matching_incident_count(connection, cohort_key, onset), 0)
+
+    def test_every_downstream_lifecycle_state_is_a_genuine_prior_recurrence(self):
+        connection, incident, cohort_key, onset = self._store()
+        states = ("detected", "claimed", "investigating", "diagnosed", "mitigated", "resolved")
+        for index, state in enumerate(states):
+            start = onset - (index + 1) * 1_800 - 1_800
+            self._save(connection, incident, start, start + 300, state=state)
+        self.assertEqual(
+            detect.prior_matching_incident_count(connection, cohort_key, onset), len(states)
+        )
+
+    # -- helpers ----------------------------------------------------------
+    def _store(self):
+        connection, _, (lo, hi) = loaded(synthetic.with_provider_incident())
+        incident = detect.build_incident(connection, lo + 65 * 60, hi + 60)
+        return connection, incident, metrics.cohort_key(incident["affected_cohort"]), _epoch(
+            incident["onset"]
+        )
+
+    @staticmethod
+    def _save(connection, incident, onset, last_seen, state="detected", suffix=""):
+        earlier = dict(incident)
+        earlier["incident_id"] = f"inc-earlier-{onset}-{last_seen}-{state}{suffix}"
+        earlier["onset"] = schema.iso_utc(onset)
+        earlier["persistence"] = dict(earlier.get("persistence") or {}) | {
+            "last_observed_at": schema.iso_utc(last_seen)
+        }
+        store.save_incident(connection, earlier, lifecycle_state=state)
+
+
+class MerchantRelativeSeverityTests(unittest.TestCase):
+    """A merchant is judged against its own normal, not against every merchant.
+
+    The absolute-dollar ladder asks one question of an airline and a fast-food
+    chain alike: how many dollars an hour. A chain losing most of its own
+    traffic can sit under $2,000 an hour and be capped at `medium`, so it never
+    rings a phone. This is the case that supersedes ADR 0016's ladder alone.
+    """
+
+    LADDER_CAPPED = dict(
+        loss_per_hour=1_500.0, affected_payments=400, platform_payments=10_000,
+        buckets_sustained=20, trajectory=1,
+    )
+
+    def test_an_unknown_merchant_normal_leaves_todays_answer_byte_identical(self):
+        with_default = detect.severity_of(**self.LADDER_CAPPED)
+        explicitly_unknown = detect.severity_of(**self.LADDER_CAPPED, loss_share_of_normal=None)
+        self.assertEqual(with_default, explicitly_unknown)
+        self.assertEqual(with_default["loss_rate_ceiling"], "medium")
+        self.assertEqual(with_default["severity"], "medium")
+
+    def test_a_proportionally_catastrophic_loss_is_no_longer_capped_by_dollars(self):
+        capped = detect.severity_of(**self.LADDER_CAPPED)
+        promoted = detect.severity_of(**self.LADDER_CAPPED, loss_share_of_normal=0.60)
+        self.assertEqual(capped["severity"], "medium")
+        self.assertEqual(promoted["severity"], "high")
+        self.assertEqual(promoted["loss_rate_ceiling"], "medium")
+        self.assertIsNone(promoted["loss_share_ceiling"])
+
+    def test_the_ceiling_is_the_higher_of_the_two_never_the_lower(self):
+        # Enormous absolute dollars on a merchant so large the share is trivial:
+        # the dollar ladder stops capping, so the share ladder must not re-cap.
+        huge = detect.severity_of(
+            loss_per_hour=40_000.0, affected_payments=8_000, platform_payments=10_000,
+            buckets_sustained=20, trajectory=1, loss_share_of_normal=0.005,
+        )
+        self.assertIsNone(huge["effective_ceiling"])
+        self.assertEqual(huge["severity"], "critical")
+
+    def test_a_trivial_share_of_a_trivial_loss_still_cannot_climb(self):
+        cheap = detect.severity_of(
+            loss_per_hour=120.0, affected_payments=8, platform_payments=10_000,
+            buckets_sustained=20, trajectory=1, loss_share_of_normal=0.001,
+        )
+        self.assertEqual(cheap["severity"], "low")
+
+    def test_a_merchants_normal_needs_real_history_before_it_is_used(self):
+        # The default fixture is 80 minutes long, which is nowhere near enough
+        # to call anything a normal hour - so nothing is offered and severity
+        # falls back to dollars, exactly as it does today.
+        connection, _, _ = loaded(synthetic.with_provider_incident())
+        self.assertEqual(detect.merchant_normal_hourly_value(connection), {})
+        self.assertEqual(detect.merchant_normal_hourly_value(store.connect(":memory:")), {})
+
+    def test_end_to_end_the_small_merchant_is_promoted_off_the_dollar_ladder(self):
+        connection, _, (lo, hi) = loaded(synthetic.merchant_scale())
+        end, start = hi + 60, hi + 60 - config.DETECT_WINDOW_BUCKETS * 60
+
+        normals = detect.merchant_normal_hourly_value(connection)
+        self.assertIn("merchant-small", normals)
+
+        before = detect.build_incident(connection, start, end, merchant_normals={})
+        after = detect.build_incident(connection, start, end, merchant_normals=normals)
+
+        self.assertEqual(before["affected_cohort"]["merchant_id"], "merchant-small")
+        self.assertEqual(before["severity"], "medium")
+        self.assertEqual(before["detection"]["severity_ceilings"]["loss_rate"], "medium")
+
+        self.assertEqual(after["severity"], "high")
+        self.assertIsNone(after["detection"]["severity_ceilings"]["effective"])
+        self.assertLess(after["financial_impact"]["loss_per_hour"]["amount"], 2_000.0)
+        self.assertGreaterEqual(after["detection"]["loss_share_of_merchant_normal"], 0.35)
+
+
+class WatchTests(unittest.TestCase):
+    """A developing deviation is watched, not discarded and not paged.
+
+    Detection today emits silence or a crossed-floor incident, so the first
+    thing anyone hears about a degradation is the cliff. A watch is the
+    near-miss, carried as `lifecycle_state: watching` on the same C3 record the
+    cohort keeps if it becomes an incident.
+    """
+
+    def _sweep(self, events, persist=True):
+        connection, _, _ = loaded(events)
+        return connection, cli._sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=persist)
+
+    def test_a_developing_deviation_is_watched_before_it_is_an_incident(self):
+        _, sweep = self._sweep(synthetic.two_stage_deviation_mild_only())
+        self.assertIsNone(sweep["incident"], "the floors have not been crossed yet")
+        self.assertEqual(len(sweep["watches"]), 1)
+        watch = sweep["watches"][0]
+        self.assertEqual(watch["affected_cohort"], {"provider": "provider-p2"})
+        self.assertEqual(watch["lifecycle_state"], "watching")
+        self.assertIn("conversion_near_miss", watch["detection"]["watch"]["reasons"])
+        # It is watched precisely because the statistical floor has not passed.
+        self.assertFalse(watch["detection"]["detection_floors"]["z_min"])
+        self.assertEqual(watch["detection"]["trajectory"], 1)
+
+    def test_the_predicate_is_tuned_where_it_was_asked_to_be(self):
+        near_miss = dict(
+            cohort={}, cohort_key="*", observed={}, baseline={}, expected=0.9, actual=0.85,
+            absolute_drop=0.05, qualifies=False,
+            floors={"has_measurement": True, "volume_min": True},
+        )
+        self.assertTrue(all(detect.watch_floors({**near_miss, "z": -2.3}, 1).values()))
+        self.assertFalse(all(detect.watch_floors({**near_miss, "z": -1.0}, 1).values()))
+        # And a deviation that is recovering is not worth warning about.
+        self.assertFalse(all(detect.watch_floors({**near_miss, "z": -2.3}, -1).values()))
+
+    def test_healthy_traffic_is_neither_detected_nor_watched(self):
+        _, sweep = self._sweep(synthetic.healthy())
+        self.assertIsNone(sweep["incident"])
+        self.assertEqual(sweep["watches"], [])
+
+    def test_a_watch_can_never_page_because_its_severity_is_forced_low(self):
+        _, sweep = self._sweep(synthetic.two_stage_deviation_mild_only())
+        watch = sweep["watches"][0]
+        self.assertEqual(watch["severity"], "low")
+        # C5 escalates high and critical only, so `low` is what makes a warning
+        # structurally unable to reach Slack or a phone.
+        self.assertNotIn(watch["severity"], ("high", "critical"))
+
+    def test_projected_loss_is_labelled_projected_and_never_ranks_severity(self):
+        _, sweep = self._sweep(synthetic.two_stage_deviation_mild_only())
+        impact = sweep["watches"][0]["financial_impact"]
+        projected = impact["projected_loss_per_hour"]
+        self.assertGreater(projected["amount"], 0.0)
+        self.assertIn("not money", projected["basis"])
+        self.assertIn("never ranks severity", projected["basis"])
+        self.assertIsNot(projected, impact["loss_per_hour"])
+        # It is computed off the trailing baseline's typical hourly value, not
+        # off the few realised minutes, so a cohort routed around entirely -
+        # zero realised loss because zero traffic - still projects its cost.
+        connection, outage = self._sweep(synthetic.provider_outage())
+        watch = outage["watches"][0]
+        self.assertEqual(watch["financial_impact"]["loss_per_hour"]["amount"], 0.0)
+        self.assertGreater(watch["financial_impact"]["projected_loss_per_hour"]["amount"], 0.0)
+
+    def test_a_watch_upgrades_the_same_row_rather_than_opening_a_second_one(self):
+        connection, first = self._sweep(synthetic.two_stage_deviation_mild_only())
+        watch_id = first["watches"][0]["incident_id"]
+        store.ingest(connection, synthetic.two_stage_deviation())
+        second = cli._sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
+
+        self.assertEqual(second["incident"]["incident_id"], watch_id)
+        self.assertEqual(second["incident"]["lifecycle_state"], "detected")
+        rows = store.list_incidents(connection)
+        self.assertEqual(len(rows), 1, "one cohort keeps one record")
+        self.assertEqual(rows[0]["lifecycle_state"], "detected")
+
+        third = cli._sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
+        self.assertEqual(third["incident"]["incident_id"], watch_id)
+        still = [
+            row for row in store.list_incidents(connection)
+            if row["lifecycle_state"] != "resolved"
+        ]
+        self.assertEqual(len(still), 1, "a later sweep must not mint a second detected row")
+
+    def test_a_sharper_localisation_keeps_the_watch_id(self):
+        connection, first = self._sweep(synthetic.two_stage_deviation_mild_only())
+        watch = first["watches"][0]
+        sharper = {
+            "onset": "2026-08-30T05:05:00Z",
+            "affected_cohort": {**watch["affected_cohort"], "country": "CO"},
+        }
+        adopted = cli.adopt_watch_identity(connection, sharper, cli.incident_id_for)
+        self.assertEqual(adopted, watch["incident_id"])
+        self.assertEqual(sharper["onset"], watch["onset"])
+
+    def test_a_disjoint_slice_is_not_treated_as_contained_by_a_near_miss(self):
+        near_miss = {"provider": "provider-p2"}
+        # The old containment check treated a missing dimension as contained.
+        self.assertTrue(detect._contains_formed_traffic({"country": "CO"}, near_miss))
+        self.assertFalse(detect._is_sharpening({"country": "CO"}, near_miss))
+        self.assertTrue(
+            detect._is_sharpening(
+                {"provider": "provider-p2"},
+                {"provider": "provider-p2", "country": "CO"},
+            )
+        )
+        self.assertTrue(detect._is_sharpening({"provider": "provider-p2"}, near_miss))
+
+    def test_an_onset_walk_does_not_mint_a_second_id(self):
+        connection, first = self._sweep(synthetic.two_stage_deviation_mild_only())
+        watch = first["watches"][0]
+        walked = {
+            "onset": "2026-08-30T05:05:00Z",
+            "affected_cohort": dict(watch["affected_cohort"]),
+        }
+        hashed = cli.incident_id_for(walked)
+        adopted = cli.adopt_watch_identity(connection, walked, cli.incident_id_for)
+        self.assertNotEqual(hashed, watch["incident_id"])
+        self.assertEqual(adopted, watch["incident_id"])
+        self.assertEqual(walked["onset"], watch["onset"])
+
+    def test_a_watch_that_is_no_longer_true_is_resolved(self):
+        connection, first = self._sweep(synthetic.two_stage_deviation_mild_only())
+        watch_id = first["watches"][0]["incident_id"]
+        later = []
+        for event in synthetic.healthy(minutes=10, per_minute=20):
+            shifted = dict(event)
+            stamp = datetime.strptime(event["occurred_at"], "%Y-%m-%dT%H:%M:%SZ")
+            shifted["occurred_at"] = (stamp + timedelta(minutes=200)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            shifted["payment_id"] = f"{event['payment_id']}-later"
+            shifted["attempt_id"] = f"{event['attempt_id']}-later"
+            later.append(shifted)
+        store.ingest(connection, later)
+        second = cli._sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
+        self.assertIsNone(second["incident"])
+        self.assertEqual(second["watches"], [])
+        row = store.load_incident(connection, watch_id)
+        self.assertEqual(row["lifecycle_state"], "resolved")
+
+    def test_a_volume_spike_does_not_watch_on_latency(self):
+        events = synthetic.healthy()
+        cutoff = _epoch(events[-1]["occurred_at"]) - 4 * 60
+        extra = []
+        index = 100000
+        for event in events:
+            if _epoch(event["occurred_at"]) < cutoff:
+                continue
+            event["latency_ms"] = 7000
+            # Extra copies are approved so a chance dip is not amplified into
+            # an incident. The only thing that moves is volume and latency.
+            for _ in range(20):
+                index += 1
+                copy = dict(event)
+                copy["payment_id"] = f"pay-spike-{index}"
+                copy["attempt_id"] = f"att-spike-{index}"
+                copy["status"] = "approved"
+                copy.pop("normalized_decline_reason", None)
+                extra.append(copy)
+        _, sweep = self._sweep(events + extra)
+        self.assertIsNone(sweep["incident"])
+        self.assertEqual(sweep["watches"], [])
+
+    def test_leading_indicators_do_not_watch_when_conversion_is_clearly_up(self):
+        events = synthetic.healthy()
+        cutoff = _epoch(events[-1]["occurred_at"]) - 4 * 60
+        for event in events:
+            if _epoch(event["occurred_at"]) < cutoff:
+                continue
+            event["latency_ms"] = 700
+            event["status"] = "approved"
+            event.pop("normalized_decline_reason", None)
+        _, sweep = self._sweep(events)
+        self.assertIsNone(sweep["incident"])
+        self.assertEqual(sweep["watches"], [])
+
+    def test_a_row_that_has_left_watching_is_never_rewritten(self):
+        connection, sweep = self._sweep(synthetic.two_stage_deviation_mild_only())
+        watch_id = sweep["watches"][0]["incident_id"]
+        connection.execute(
+            "UPDATE incident SET lifecycle_state = 'investigating' WHERE incident_id = ?",
+            (watch_id,),
+        )
+        connection.commit()
+        cli._sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
+        row = connection.execute(
+            "SELECT lifecycle_state FROM incident WHERE incident_id = ?", (watch_id,)
+        ).fetchone()
+        self.assertEqual(row["lifecycle_state"], "investigating")
+
+    def test_investigation_claims_a_watch(self):
+        # Replaces test_investigation_never_claims_a_watch. Investigating only
+        # after `detected` destroyed the preventive value, so a watch is now
+        # claimable. The atomic UPDATE still takes the row exactly once.
+        from investigation.store import claim_incident
+
+        connection, sweep = self._sweep(synthetic.two_stage_deviation_mild_only())
+        watch_id = sweep["watches"][0]["incident_id"]
+        self.assertTrue(claim_incident(connection, watch_id))
+        self.assertFalse(claim_incident(connection, watch_id))
+        row = connection.execute(
+            "SELECT lifecycle_state FROM incident WHERE incident_id = ?",
+            (watch_id,),
+        ).fetchone()
+        self.assertEqual(row["lifecycle_state"], "investigating")
+
+    def test_a_slow_provider_is_watched_while_conversion_is_still_healthy(self):
+        # W1's effect=latency: attempts approve and decline at baseline rates
+        # while latency spikes, so conversion never moves and the detector is
+        # structurally blind to it.
+        _, sweep = self._sweep(synthetic.latency_degradation())
+        self.assertIsNone(sweep["incident"])
+        self.assertEqual(len(sweep["watches"]), 1)
+        watch = sweep["watches"][0]
+        self.assertEqual(watch["affected_cohort"], {"provider": "provider-p2"})
+        self.assertEqual(watch["detection"]["watch"]["reasons"], ["leading_indicators"])
+        self.assertEqual(
+            watch["detection"]["watch"]["degraded_leading_indicators"], ["mean_latency_ms"]
+        )
+        latency = watch["detection"]["watch"]["leading_indicators"]["mean_latency_ms"]
+        self.assertGreaterEqual(latency["ratio"], config.FORMING_LATENCY_P95_RATIO)
+
+    def test_a_provider_routed_around_entirely_is_watched_rather_than_silent(self):
+        # W1's effect=outage: volume goes to zero instead of showing declines,
+        # and a cohort with no traffic can never clear N_PAYMENTS_MIN.
+        _, sweep = self._sweep(synthetic.provider_outage())
+        self.assertIsNone(sweep["incident"])
+        self.assertEqual(
+            [w["affected_cohort"] for w in sweep["watches"]], [{"provider": "provider-p2"}]
+        )
+        volume = sweep["watches"][0]["detection"]["watch"]["leading_indicators"]["volume_rate"]
+        self.assertEqual(volume["observed"], 0.0)
+        self.assertLess(volume["ratio"], config.FORMING_VOLUME_COLLAPSE_RATIO)
+
+    def test_a_cohort_that_has_already_formed_is_not_also_watched(self):
+        _, sweep = self._sweep(synthetic.with_provider_incident())
+        self.assertEqual(sweep["incident"]["affected_cohort"], {"provider": "provider-p2"})
+        self.assertEqual(sweep["watches"], [])
+
+    def test_nothing_is_predicted(self):
+        _, sweep = self._sweep(synthetic.two_stage_deviation_mild_only())
+        statement = sweep["watches"][0]["detection"]["watch"]["statement"].lower()
+        for forbidden in ("will be", "predict", "in nine minutes", "expected to reach"):
+            self.assertNotIn(forbidden, statement)
+        self.assertIn("no future number is claimed", statement)
+        self.assertIn("against its last hour", statement)
+
+    def test_an_equally_slow_platform_localises_to_nothing_and_says_so(self):
+        # Every cohort equally degraded is not a cohort finding. The contrast
+        # rule is the one `localise` already applies, pointed at latency.
+        events = synthetic.healthy()
+        cutoff = _epoch(events[-1]["occurred_at"]) - 4 * 60
+        for event in events:
+            if _epoch(event["occurred_at"]) >= cutoff:
+                event["latency_ms"] = 7_000
+        _, sweep = self._sweep(events, persist=False)
+        self.assertEqual([w["affected_cohort"] for w in sweep["watches"]], [{}])
+
+    def test_a_periodic_sweeper_is_absent_when_the_interval_is_off(self):
+        connection, _, _ = loaded(synthetic.healthy())
+        self.assertIsNone(cli._periodic_sweeper(connection, 0.0, []))
+
+    def test_a_periodic_sweeper_sweeps_on_its_own_interval(self):
+        connection, _, _ = loaded(synthetic.two_stage_deviation_mild_only())
+        now = [0.0]
+        sink: list = []
+        hook = cli._periodic_sweeper(connection, 30.0, sink, clock=lambda: now[0])
+        hook(None)
+        self.assertEqual(sink, [], "not yet due")
+        now[0] = 31.0
+        hook(None)
+        self.assertEqual(len(sink), 1)
+        self.assertEqual(len(sink[0]["watches"]), 1)
+        now[0] = 40.0
+        hook(None)
+        self.assertEqual(len(sink), 1, "the interval has not elapsed again")
 
 
 if __name__ == "__main__":

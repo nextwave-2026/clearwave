@@ -10,14 +10,19 @@ worker polls that topic each tick and starts or stops its incident live,
 with no restart. The command shape is imported rather than hand-rolled so
 the two sides cannot drift.
 
-What the toggle fires is `INJECTED_INCIDENT` below - deliberately one named
+What the control fires is `INJECTED_INCIDENT` below - deliberately one named
 constant rather than a scenario catalogue in the UI, and deliberately not a
 scenario identifier: it is a cohort scope plus an effect, exactly what W1's
 control topic carries. The dashboard is told which cohort was targeted
 because the judge is watching a provider degrade; detection is told nothing,
 because it reads the traffic, not this module.
 
-When the broker is unreachable the toggle reports that instead of claiming a
+The judge control has two live stages over that one target, then a clear:
+`developing` publishes a subtle drop, `collapse` the near-total break, and
+`clear` stops it. Those three words are the vocabulary of the API, this
+adapter, and the UI.
+
+When the broker is unreachable the control reports that instead of claiming a
 scenario fired. That honesty is the one thing the previous dead adapter got
 right and it is preserved here.
 """
@@ -42,52 +47,133 @@ INJECTED_INCIDENT = {
     "decline_reason": "provider_timeout",
 }
 
+# Measured on the live demo volume (warm 8-hour merchant-b/adyen store,
+# ~180 payments in the 5-minute window) on 2026-08-30:
+#   0.10 at 2 min: no watch (conv 0.849); at 4.5 min: watch z=-1.50 then a
+#     child slice crossed Z_MIN.
+#   0.20 at 2 min: incident z=-3.80, no watch.
+#   0.35 (the old "mild") at 2 min on a cold store: watch z=-1.62; at 4 min:
+#     incident z=-6.59 and a phone call.
+# 0.12 sits between 0.10 and 0.20: a conversion near-miss rather than a cliff.
+# Detection floors were not moved; this is the inject magnitude.
+STAGE_DEVELOPING = 0.12
+# Today's near-total break, reachable directly as well as after developing.
+STAGE_COLLAPSE = 0.95
+
+STAGES = ("developing", "collapse", "clear")
+
 Publisher = Callable[[dict[str, Any]], None]
 
 
-def injected_incident_command(active: bool) -> dict[str, Any]:
-    """The exact command the toggle publishes in each direction."""
-    if not active:
+def resolve_stage(active: bool | None = None, stage: str | None = None) -> str:
+    """Map a request onto one of developing, collapse, or clear.
+
+    An explicit stage wins. A bare on/off boolean, including a missing body,
+    still means the full break, which is what every existing caller sends.
+    """
+    if isinstance(stage, str) and stage in STAGES:
+        return stage
+    if active is None:
+        return "clear"
+    return "collapse" if active else "clear"
+
+
+def probability_for(stage: str) -> float | None:
+    if stage == "developing":
+        return STAGE_DEVELOPING
+    if stage == "collapse":
+        return STAGE_COLLAPSE
+    return None
+
+
+def injected_incident_command(
+    active: bool = True,
+    *,
+    stage: str | None = None,
+) -> dict[str, Any]:
+    """The exact command the control publishes for a stage."""
+    resolved = resolve_stage(active=active, stage=stage)
+    if resolved == "clear":
         return stop_command(INJECTED_INCIDENT["merchant_id"])
     return start_command(
         INJECTED_INCIDENT["merchant_id"],
         provider=INJECTED_INCIDENT["provider"],
         effect=INJECTED_INCIDENT["effect"],
         decline_reason=INJECTED_INCIDENT["decline_reason"],
+        decline_probability=probability_for(resolved),
     )
 
 
-def describe(active: bool | None = None) -> dict[str, Any]:
+def describe(
+    active: bool | None = None,
+    stage: str | None = None,
+) -> dict[str, Any]:
     """What the control is, without firing anything. Safe with no broker."""
+    resolved = resolve_stage(active=active, stage=stage)
     return {
         "wired": True,
-        "active": bool(active),
+        "active": resolved != "clear",
+        "stage": resolved,
         "topic": CONTROL_TOPIC,
         "target": dict(INJECTED_INCIDENT),
+        "message": idle_message() if resolved == "clear" else acknowledgement(resolved),
     }
+
+
+def idle_message() -> str:
+    return (
+        "Ready. These controls change merchant-b's traffic. "
+        "The board will keep showing whatever the store already holds."
+    )
+
+
+def acknowledgement(stage: str) -> str:
+    """Immediate account of the judge's action, never of the system's perception."""
+    merchant = INJECTED_INCIDENT["merchant_id"]
+    provider = INJECTED_INCIDENT["provider"]
+    if stage == "developing":
+        return (
+            f"You started a developing deviation in {merchant}'s traffic "
+            f"on provider {provider}. The board is reading the same store "
+            f"as any other minute of the day."
+        )
+    if stage == "collapse":
+        return (
+            f"You started a collapse in {merchant}'s traffic "
+            f"on provider {provider}. The board is reading the same store "
+            f"as any other minute of the day."
+        )
+    return (
+        f"You cleared the introduced deviation on {merchant}. "
+        f"Traffic returns to its baseline shape."
+    )
 
 
 def fire_hidden_incident(
     active: bool = True,
     publisher: Publisher | None = None,
+    *,
+    stage: str | None = None,
 ) -> dict[str, Any]:
-    """Toggle W1's hidden incident on or off, or report why it did not move.
+    """Publish one stage, or report why it did not move.
 
-    `active=True` publishes the start command, `active=False` the stop command.
-    `publisher` is the seam the offline tests drive: the default publishes to a
-    real broker, so no test needs one.
+    `active=True` is the legacy full break (`collapse`); `active=False` is
+    `clear`. `stage` is the two-stage vocabulary and wins when it is one of
+    developing, collapse, or clear. `publisher` is the seam the offline tests
+    drive: the default publishes to a real broker, so no test needs one.
     """
+    resolved = resolve_stage(active=active, stage=stage)
     send = publisher or _publish
-    command = injected_incident_command(active)
+    command = injected_incident_command(stage=resolved)
     try:
         send(command)
     except Exception as exc:  # noqa: BLE001 - librdkafka raises many types
         # Never report a scenario that did not fire. The judge is entitled to
-        # know the difference between "an incident is running" and "we could
+        # know the difference between "a deviation is running" and "we could
         # not reach the broker".
         return {
-            **describe(active=False),
-            "requested": "start" if active else "stop",
+            **describe(stage="clear"),
+            "requested": resolved,
             "delivered": False,
             "fired": False,
             "error": f"{type(exc).__name__}: {exc}",
@@ -97,22 +183,12 @@ def fire_hidden_incident(
             ),
         }
 
-    if active:
-        message = (
-            f"Injected a {INJECTED_INCIDENT['effect']} on provider "
-            f"{INJECTED_INCIDENT['provider']} for {INJECTED_INCIDENT['merchant_id']}. "
-            f"Detection is not told which scenario this is."
-        )
-    else:
-        message = (
-            f"Cleared the injected incident on {INJECTED_INCIDENT['merchant_id']}. "
-            f"Traffic returns to its baseline shape."
-        )
+    live = resolved != "clear"
     return {
-        **describe(active=active),
-        "requested": "start" if active else "stop",
+        **describe(stage=resolved),
+        "requested": resolved,
         "delivered": True,
-        "fired": bool(active),
+        "fired": live,
         "command": command,
-        "message": message,
+        "message": acknowledgement(resolved),
     }

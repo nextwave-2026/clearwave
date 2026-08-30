@@ -8,8 +8,22 @@ from pathlib import Path
 
 from investigation.gateway import EvidenceGateway
 from investigation.prefilter import compute_signature, prefilter
-from investigation.store import append_trail_entry, claim_incident, connect, insert_incident, persist_result, read_result
+from investigation.degrade import degrade_result
+from investigation.runner import InvestigationRunner
+from investigation.store import (
+    CLAIM_LEASE_SECONDS,
+    append_trail_entry,
+    claim_incident,
+    connect,
+    evidence_fingerprint,
+    insert_incident,
+    model_call_summary,
+    persist_result,
+    read_result,
+    reclaim_expired_claims,
+)
 from investigation.trail import EvidenceTrail
+from surfaces.store import ESCALATABLE_STATES, connect as surfaces_connect, ensure_escalation, load_investigation
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,7 +68,7 @@ class GatewayTests(unittest.TestCase):
         self.assertIn("fixture_failure", rendered)
 
     def test_opening_set_does_not_consume_further_call_budget(self):
-        gateway = EvidenceGateway(query_budget=0)
+        gateway = EvidenceGateway(query_budget=0, runner=lambda tool, parameters, timeout: {"ok": True})
         bundle = gateway.run_opening({"cohort_metrics": REQUEST})
         self.assertNotIn("error", bundle["cohort_metrics"])
         self.assertEqual(gateway.remaining_budget, 0)
@@ -62,7 +76,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], "budget_exceeded")
 
     def test_budget_refuses_gracefully_after_limit(self):
-        gateway = EvidenceGateway(query_budget=1)
+        gateway = EvidenceGateway(query_budget=1, runner=lambda tool, parameters, timeout: {"ok": True})
         first = gateway.call("cohort_metrics", REQUEST)
         second = gateway.call("cohort_metrics", {"cohort": {"merchant_id": "merchant-b"}, "window": WINDOW})
         self.assertNotIn("error", first)
@@ -138,6 +152,343 @@ class StoreTests(unittest.TestCase):
             connection.execute("SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-1'").fetchone()[0],
             "diagnosed",
         )
+
+    def test_claiming_a_watch_succeeds_once(self):
+        connection = connect(":memory:")
+        self.addCleanup(connection.close)
+        insert_incident(
+            connection,
+            {"incident_id": "inc-watch", "affected_cohort": {}, "severity": "low"},
+            lifecycle_state="watching",
+        )
+        self.assertTrue(claim_incident(connection, "inc-watch"))
+        self.assertFalse(claim_incident(connection, "inc-watch"))
+        state = connection.execute(
+            "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
+        ).fetchone()[0]
+        self.assertEqual(state, "investigating")
+
+    def test_persisting_a_watch_result_restores_watching(self):
+        connection = connect(":memory:")
+        self.addCleanup(connection.close)
+        insert_incident(
+            connection,
+            {"incident_id": "inc-watch", "affected_cohort": {}, "severity": "low"},
+            lifecycle_state="watching",
+        )
+        self.assertTrue(claim_incident(connection, "inc-watch"))
+        persist_result(
+            connection,
+            "inc-watch",
+            {"incident_id": "inc-watch"},
+            "insufficient_evidence",
+            resume_state="watching",
+            evidence_fingerprint="fp-1",
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
+            ).fetchone()[0],
+            "watching",
+        )
+        self.assertEqual(model_call_summary(connection)["total"], 1)
+
+    def test_persisting_without_resume_leaves_a_watch_unpaged(self):
+        connection = connect(":memory:")
+        self.addCleanup(connection.close)
+        insert_incident(
+            connection,
+            {"incident_id": "inc-watch", "affected_cohort": {}, "severity": "low"},
+            lifecycle_state="watching",
+        )
+        persist_result(connection, "inc-watch", {"incident_id": "inc-watch"}, "diagnosed")
+        self.assertEqual(
+            connection.execute(
+                "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
+            ).fetchone()[0],
+            "watching",
+        )
+
+
+class PreventiveRunnerTests(unittest.TestCase):
+    def _watch(self, incident_id="inc-watch", actual=0.84):
+        return {
+            "incident_id": incident_id,
+            "affected_cohort": {"provider": "adyen"},
+            "change": {
+                "metric": "payment_approval_conversion",
+                "expected": 0.92,
+                "actual": actual,
+                "absolute_delta": round(actual - 0.92, 4),
+            },
+            "onset": "2026-08-30T10:00:00Z",
+            "persistence": {
+                "is_persistent": False,
+                "observed_for_seconds": 120,
+                "last_observed_at": "2026-08-30T10:02:00Z",
+            },
+            "blast_radius": {"attempted_payments": 80, "affected_providers": 1},
+            "financial_impact": {
+                "projected_loss_per_hour": {"amount": 400.0, "currency": "USD"},
+                "loss_per_hour": {"amount": 12.0, "currency": "USD"},
+            },
+            "severity": "low",
+            "lifecycle_state": "watching",
+            "detection": {
+                "watch": {
+                    "reasons": ["conversion_near_miss"],
+                    "degraded_leading_indicators": [],
+                    "leading_indicators": {"mean_latency_ms": {"ratio": 1.1}},
+                }
+            },
+        }
+
+    def test_runner_investigates_a_watch_and_leaves_it_watching(self):
+        connection = connect(":memory:")
+        self.addCleanup(connection.close)
+        watch = self._watch()
+        insert_incident(connection, watch, lifecycle_state="watching")
+
+        class Agent:
+            def investigate(self, incident):
+                return degrade_result(incident, reason="watch agent")
+
+        runner = InvestigationRunner(connection, Agent())
+        self.addCleanup(runner.close)
+        runs = runner.poll_once(wait=True)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0].claimed_from, "watching")
+        self.assertEqual(
+            connection.execute(
+                "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
+            ).fetchone()[0],
+            "watching",
+        )
+        stored = read_result(connection, "inc-watch")
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["result"]["diagnostic_confidence"], "low")
+        self.assertEqual(runner.model_calls, 1)
+        self.assertEqual(model_call_summary(connection)["total"], 1)
+
+    def test_unchanged_watch_is_not_reinvestigated(self):
+        connection = connect(":memory:")
+        self.addCleanup(connection.close)
+        watch = self._watch()
+        insert_incident(connection, watch, lifecycle_state="watching")
+        calls = []
+
+        class Agent:
+            def investigate(self, incident):
+                calls.append(incident["incident_id"])
+                return degrade_result(incident, reason="once")
+
+        runner = InvestigationRunner(connection, Agent())
+        self.addCleanup(runner.close)
+        self.assertEqual(len(runner.poll_once(wait=True)), 1)
+        self.assertEqual(len(runner.poll_once(wait=True)), 0)
+        self.assertEqual(calls, ["inc-watch"])
+        self.assertEqual(runner.model_calls, 1)
+
+    def test_meaningful_change_reinvestigates_the_same_record(self):
+        connection = connect(":memory:")
+        self.addCleanup(connection.close)
+        watch = self._watch(actual=0.84)
+        insert_incident(connection, watch, lifecycle_state="watching")
+        calls = []
+
+        class Agent:
+            def investigate(self, incident):
+                calls.append(incident["change"]["actual"])
+                return degrade_result(incident, reason="refresh")
+
+        runner = InvestigationRunner(connection, Agent())
+        self.addCleanup(runner.close)
+        runner.poll_once(wait=True)
+        worse = self._watch(actual=0.70)
+        connection.execute(
+            "UPDATE incident SET record = ? WHERE incident_id = ?",
+            (json.dumps(worse, sort_keys=True), "inc-watch"),
+        )
+        connection.commit()
+        runs = runner.poll_once(wait=True)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(calls, [0.84, 0.70])
+        self.assertEqual(runner.model_calls, 2)
+        self.assertEqual(
+            connection.execute(
+                "SELECT COUNT(*) FROM investigation_result WHERE incident_id = 'inc-watch'"
+            ).fetchone()[0],
+            2,
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
+            ).fetchone()[0],
+            "watching",
+        )
+
+    def test_crossing_the_floors_enriches_the_same_record(self):
+        connection = connect(":memory:")
+        self.addCleanup(connection.close)
+        watch = self._watch()
+        insert_incident(connection, watch, lifecycle_state="watching")
+
+        class Agent:
+            def investigate(self, incident):
+                return degrade_result(incident, reason=str(incident.get("lifecycle_state")))
+
+        runner = InvestigationRunner(connection, Agent())
+        self.addCleanup(runner.close)
+        runner.poll_once(wait=True)
+        detected = dict(watch)
+        detected["lifecycle_state"] = "detected"
+        detected["severity"] = "high"
+        connection.execute(
+            "UPDATE incident SET record = ?, lifecycle_state = 'detected', severity = 'high' "
+            "WHERE incident_id = ?",
+            (json.dumps(detected, sort_keys=True), "inc-watch"),
+        )
+        connection.commit()
+        runs = runner.poll_once(wait=True)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0].claimed_from, "detected")
+        self.assertEqual(
+            connection.execute(
+                "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
+            ).fetchone()[0],
+            "diagnosed",
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT COUNT(*) FROM investigation_result WHERE incident_id = 'inc-watch'"
+            ).fetchone()[0],
+            2,
+        )
+        self.assertEqual(model_call_summary(connection)["by_incident"][0]["incident_id"], "inc-watch")
+        self.assertEqual(model_call_summary(connection)["total"], 2)
+
+    def test_a_watch_with_a_result_still_does_not_page(self):
+        connection = surfaces_connect(":memory:")
+        self.addCleanup(connection.close)
+        watch = self._watch()
+        insert_incident(connection, watch, lifecycle_state="watching")
+
+        class Agent:
+            def investigate(self, incident):
+                return degrade_result(incident, reason="watch agent")
+
+        runner = InvestigationRunner(connection, Agent())
+        self.addCleanup(runner.close)
+        runner.poll_once(wait=True)
+        row = connection.execute(
+            "SELECT record, lifecycle_state, severity FROM incident WHERE incident_id = 'inc-watch'"
+        ).fetchone()
+        record = json.loads(row["record"])
+        record["lifecycle_state"] = row["lifecycle_state"]
+        self.assertEqual(row["lifecycle_state"], "watching")
+        self.assertNotIn("watching", ESCALATABLE_STATES)
+        events = ensure_escalation(connection, record, load_investigation(connection, "inc-watch"))
+        self.assertEqual(events, [])
+
+    def test_runner_prepares_a_detector_opened_store(self):
+        from detector import store as detector_store
+
+        connection = detector_store.connect(":memory:")
+        self.addCleanup(connection.close)
+        watch = self._watch()
+        detector_store.save_incident(connection, watch, lifecycle_state="watching")
+
+        class Agent:
+            def investigate(self, incident):
+                return degrade_result(incident, reason="detector store")
+
+        runner = InvestigationRunner(connection, Agent())
+        self.addCleanup(runner.close)
+        runs = runner.poll_once(wait=True)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(
+            connection.execute(
+                "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
+            ).fetchone()[0],
+            "watching",
+        )
+
+    def test_abandoned_investigating_claim_is_reclaimed(self):
+        connection = connect(":memory:")
+        self.addCleanup(connection.close)
+        watch = self._watch()
+        insert_incident(connection, watch, lifecycle_state="watching")
+        self.assertTrue(claim_incident(connection, "inc-watch"))
+        self.assertEqual(
+            connection.execute(
+                "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
+            ).fetchone()[0],
+            "investigating",
+        )
+        connection.execute(
+            "UPDATE investigation_claim SET claimed_at = '2000-01-01T00:00:00.000Z' "
+            "WHERE incident_id = 'inc-watch'"
+        )
+        connection.commit()
+
+        class Agent:
+            def investigate(self, incident):
+                return degrade_result(incident, reason="recovered claim")
+
+        runner = InvestigationRunner(connection, Agent())
+        self.addCleanup(runner.close)
+        runs = runner.poll_once(wait=True)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(
+            connection.execute(
+                "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
+            ).fetchone()[0],
+            "watching",
+        )
+        self.assertIsNotNone(read_result(connection, "inc-watch"))
+
+    def test_fresh_claim_is_not_reclaimed_before_the_lease_expires(self):
+        connection = connect(":memory:")
+        self.addCleanup(connection.close)
+        watch = self._watch()
+        insert_incident(connection, watch, lifecycle_state="watching")
+        self.assertTrue(claim_incident(connection, "inc-watch"))
+        self.assertEqual(reclaim_expired_claims(connection), [])
+        self.assertEqual(
+            connection.execute(
+                "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
+            ).fetchone()[0],
+            "investigating",
+        )
+        self.assertGreaterEqual(CLAIM_LEASE_SECONDS, 300)
+
+    def test_investigating_without_a_lease_is_reclaimed_immediately(self):
+        connection = connect(":memory:")
+        self.addCleanup(connection.close)
+        watch = self._watch()
+        insert_incident(connection, watch, lifecycle_state="watching")
+        connection.execute(
+            "UPDATE incident SET lifecycle_state = 'investigating' WHERE incident_id = 'inc-watch'"
+        )
+        connection.commit()
+        self.assertEqual(reclaim_expired_claims(connection), ["inc-watch"])
+        self.assertEqual(
+            connection.execute(
+                "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
+            ).fetchone()[0],
+            "watching",
+        )
+
+    def test_fingerprint_ignores_persistence_timers(self):
+        first = self._watch()
+        second = self._watch()
+        second["persistence"] = {
+            "is_persistent": False,
+            "observed_for_seconds": 9999,
+            "last_observed_at": "2026-08-30T12:00:00Z",
+        }
+        second["onset"] = "2026-08-30T09:00:00Z"
+        self.assertEqual(evidence_fingerprint(first), evidence_fingerprint(second))
 
 
 class PrefilterTests(unittest.TestCase):

@@ -16,12 +16,14 @@ Severity is read from C3 and never recomputed, re-ranked, or blended with diagno
 |---|---|
 | `low` | dashboard |
 | `medium` | dashboard |
-| `high` | dashboard, slack, phone |
+| `high` | dashboard, slack |
 | `critical` | dashboard, slack, phone |
 
 Concrete severity thresholds that map raw metrics to these labels are owned by C3 (W2); this
-binding only reads the label C3 already assigned. The binding itself is implemented in
-`surfaces/escalation.py:CHANNELS_BY_SEVERITY` and exercised by `surfaces/escalation.py:escalate`.
+binding only reads the label C3 already assigned. The phone channel binds to `critical` alone:
+`high` is a real business alert and must reach Slack, but it must not place a call. The binding
+itself is implemented in `surfaces/escalation.py:CHANNELS_BY_SEVERITY` and exercised by
+`surfaces/escalation.py:escalate`.
 
 ## Escalation payload shape
 

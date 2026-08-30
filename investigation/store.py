@@ -1,8 +1,8 @@
 """SQLite persistence for investigation results and evidence trails.
 
 L4 shares the detector's relational SQLite file. Connections use WAL and a
-busy timeout, and claiming an incident is one guarded UPDATE so concurrent
-runners cannot both take a detected incident.
+busy timeout, and claiming a row is one guarded UPDATE so concurrent runners
+cannot both take the same watch or detected incident.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterable, Mapping
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -66,7 +66,47 @@ CREATE TABLE IF NOT EXISTS evidence_trail (
     PRIMARY KEY (incident_id, result_version, sequence)
 );
 CREATE INDEX IF NOT EXISTS evidence_trail_query ON evidence_trail (query_id);
+
+CREATE TABLE IF NOT EXISTS investigation_bound (
+    incident_id           TEXT PRIMARY KEY,
+    evidence_fingerprint  TEXT NOT NULL,
+    model_calls           INTEGER NOT NULL DEFAULT 0,
+    last_claimed_from     TEXT NOT NULL,
+    last_investigated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS investigation_claim (
+    incident_id   TEXT PRIMARY KEY,
+    claimed_at    TEXT NOT NULL,
+    claimed_from  TEXT NOT NULL
+);
 """
+
+CLAIMABLE_STATES = ("detected", "watching")
+_CLAIMABLE_SQL = "lifecycle_state IN ('detected', 'watching')"
+# One investigation may run up to agent.DEFAULT_TIMEOUT_SECONDS (300). The lease
+# is that bound plus a short grace so a live call is not stolen, and a crashed
+# claim is not stuck forever.
+CLAIM_LEASE_SECONDS = 330
+_BOUND_SCHEMA = """
+CREATE TABLE IF NOT EXISTS investigation_bound (
+    incident_id           TEXT PRIMARY KEY,
+    evidence_fingerprint  TEXT NOT NULL,
+    model_calls           INTEGER NOT NULL DEFAULT 0,
+    last_claimed_from     TEXT NOT NULL,
+    last_investigated_at  TEXT NOT NULL
+);
+"""
+
+
+def ensure_bound_table(connection: sqlite3.Connection) -> None:
+    """Create the cost-bound table on stores the detector opened first."""
+    connection.executescript(_BOUND_SCHEMA)
+
+
+def prepare(connection: sqlite3.Connection) -> None:
+    """Ensure L4 tables exist on a connection the detector may have opened first."""
+    connection.executescript(SCHEMA)
 
 
 def connect(path: Path | str = DEFAULT_DB) -> sqlite3.Connection:
@@ -79,27 +119,100 @@ def connect(path: Path | str = DEFAULT_DB) -> sqlite3.Connection:
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA synchronous=NORMAL")
     connection.execute("PRAGMA busy_timeout=5000")
-    connection.executescript(SCHEMA)
+    prepare(connection)
     return connection
 
 
 def claim_incident(connection: sqlite3.Connection, incident_id: str) -> bool:
-    """Atomically move one detected incident to ``investigating``.
+    """Atomically move one watch or detected incident to ``investigating``.
 
     The lifecycle predicate is part of the UPDATE. SQLite serialises writers,
-    so exactly one concurrent caller can observe a changed row count.
+    so exactly one concurrent caller can observe a changed row count. A watch
+    and a detected incident share this guard so two runners cannot split one
+    cohort into two investigations. The claim lease is written in the same
+    transaction so a crash before persist can be reclaimed.
     """
+    prepare(connection)
     with connection:
+        row = connection.execute(
+            "SELECT lifecycle_state FROM incident WHERE incident_id = ?",
+            (incident_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        previous = str(row["lifecycle_state"])
+        if previous not in CLAIMABLE_STATES:
+            return False
         cursor = connection.execute(
             "UPDATE incident SET lifecycle_state = 'investigating' "
-            "WHERE incident_id = ? AND lifecycle_state = 'detected'",
-            (incident_id,),
+            "WHERE incident_id = ? AND lifecycle_state = ?",
+            (incident_id, previous),
         )
-    return cursor.rowcount == 1
+        if cursor.rowcount != 1:
+            return False
+        connection.execute(
+            """INSERT OR REPLACE INTO investigation_claim
+               (incident_id, claimed_at, claimed_from) VALUES (?, ?, ?)""",
+            (incident_id, _utc_now(), previous),
+        )
+    return True
 
 
 claim_detected_incident = claim_incident
 claim_detected = claim_incident
+
+
+def reclaim_expired_claims(
+    connection: sqlite3.Connection,
+    *,
+    now: str | None = None,
+    lease_seconds: int = CLAIM_LEASE_SECONDS,
+) -> list[str]:
+    """Return abandoned ``investigating`` rows to the state they were claimed from.
+
+    A crash after the claim UPDATE and before persist leaves the demo pointing
+    at a record that ``_pending_rows`` would otherwise never see again. An
+    expired lease, or an investigating row with no lease at all, is restored
+    so the next poll can claim it. A live claim inside the lease is left alone.
+    """
+    prepare(connection)
+    cutoff = _iso_minus(now or _utc_now(), lease_seconds)
+    reclaimed: list[str] = []
+    with connection:
+        expired = connection.execute(
+            """SELECT c.incident_id, c.claimed_from
+               FROM investigation_claim AS c
+               JOIN incident AS i ON i.incident_id = c.incident_id
+               WHERE i.lifecycle_state = 'investigating'
+                 AND c.claimed_at <= ?""",
+            (cutoff,),
+        ).fetchall()
+        orphans = connection.execute(
+            """SELECT i.incident_id, i.record
+               FROM incident AS i
+               LEFT JOIN investigation_claim AS c ON c.incident_id = i.incident_id
+               WHERE i.lifecycle_state = 'investigating'
+                 AND c.incident_id IS NULL"""
+        ).fetchall()
+        pending = [(str(row["incident_id"]), _restore_state(row["claimed_from"])) for row in expired]
+        for row in orphans:
+            record = json.loads(row["record"]) if row["record"] else {}
+            previous = record.get("lifecycle_state") if isinstance(record, Mapping) else None
+            pending.append((str(row["incident_id"]), _restore_state(previous)))
+        for incident_id, restore in pending:
+            cursor = connection.execute(
+                "UPDATE incident SET lifecycle_state = ? "
+                "WHERE incident_id = ? AND lifecycle_state = 'investigating'",
+                (restore, incident_id),
+            )
+            if cursor.rowcount != 1:
+                continue
+            connection.execute(
+                "DELETE FROM investigation_claim WHERE incident_id = ?",
+                (incident_id,),
+            )
+            reclaimed.append(incident_id)
+    return reclaimed
 
 
 def append_trail_entry(
@@ -145,18 +258,22 @@ def persist_result(
     started_at: str | None = None,
     completed_at: str | None = None,
     duration_ms: float | None = None,
+    resume_state: str | None = None,
+    evidence_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     """Persist a versioned C4 result and its complete trail.
 
     When no version is supplied, the next integer version is allocated in the
-    same transaction as the result insert. Persisting a result also completes
-    the incident lifecycle for a runner that claimed it.
+    same transaction as the result insert. A detected incident completes to
+    ``diagnosed``. A watch returns to ``watching`` so it stays off the paging
+    allowlist and the detector can still upgrade the same row when floors pass.
     """
     if outcome not in OUTCOMES:
         raise ValueError(f"outcome must be one of {OUTCOMES}")
     if not isinstance(result, Mapping):
         raise TypeError("result must be a mapping")
 
+    prepare(connection)
     with connection:
         result_version = (
             _next_version(connection, incident_id)
@@ -201,11 +318,37 @@ def persist_result(
                     int(bool(entry.get("executed", True))),
                 ),
             )
+        if resume_state == "watching":
+            connection.execute(
+                "UPDATE incident SET lifecycle_state = 'watching' "
+                "WHERE incident_id = ? AND lifecycle_state IN ('investigating', 'watching')",
+                (incident_id,),
+            )
+        else:
+            connection.execute(
+                "UPDATE incident SET lifecycle_state = 'diagnosed' "
+                "WHERE incident_id = ? AND lifecycle_state IN ('detected', 'investigating')",
+                (incident_id,),
+            )
         connection.execute(
-            "UPDATE incident SET lifecycle_state = 'diagnosed' "
-            "WHERE incident_id = ? AND lifecycle_state IN ('detected', 'investigating')",
+            "DELETE FROM investigation_claim WHERE incident_id = ?",
             (incident_id,),
         )
+        if evidence_fingerprint is not None:
+            ensure_bound_table(connection)
+            claimed_from = resume_state if resume_state in CLAIMABLE_STATES else "detected"
+            connection.execute(
+                """INSERT INTO investigation_bound
+                   (incident_id, evidence_fingerprint, model_calls,
+                    last_claimed_from, last_investigated_at)
+                   VALUES (?, ?, 1, ?, ?)
+                   ON CONFLICT(incident_id) DO UPDATE SET
+                     evidence_fingerprint = excluded.evidence_fingerprint,
+                     model_calls = investigation_bound.model_calls + 1,
+                     last_claimed_from = excluded.last_claimed_from,
+                     last_investigated_at = excluded.last_investigated_at""",
+                (incident_id, evidence_fingerprint, claimed_from, now),
+            )
 
     return read_result(connection, incident_id, result_version) or {}
 
@@ -361,6 +504,25 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def _iso_minus(value: str, seconds: int) -> str:
+    text = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        moment = datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    earlier = moment - timedelta(seconds=max(0, int(seconds)))
+    return earlier.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _restore_state(value: Any) -> str:
+    state = str(value or "")
+    if state in CLAIMABLE_STATES:
+        return state
+    return "detected"
+
+
 def _epoch(value: Any) -> int:
     if not isinstance(value, str) or not value:
         return 0
@@ -369,3 +531,82 @@ def _epoch(value: Any) -> int:
         return int(datetime.fromisoformat(text).timestamp())
     except ValueError:
         return 0
+
+
+def evidence_fingerprint(record: Mapping[str, Any]) -> str:
+    """Digest of the evidence that should trigger a fresh investigation.
+
+    Lifecycle, cohort, measured change, severity and watch reasons are in.
+    Persistence duration, last-seen and onset walking are out: those move on
+    every sweep even when nothing about the deviation has changed.
+    """
+    change = record.get("change") if isinstance(record.get("change"), Mapping) else {}
+    detection = record.get("detection") if isinstance(record.get("detection"), Mapping) else {}
+    watch = detection.get("watch") if isinstance(detection.get("watch"), Mapping) else {}
+    indicators = watch.get("leading_indicators") if isinstance(watch.get("leading_indicators"), Mapping) else {}
+    payload = {
+        "lifecycle_state": str(record.get("lifecycle_state") or ""),
+        "cohort": record.get("affected_cohort") or {},
+        "metric": change.get("metric"),
+        "expected": _quantize(change.get("expected"), 4),
+        "actual": _quantize(change.get("actual"), 4),
+        "absolute_delta": _quantize(change.get("absolute_delta"), 4),
+        "severity": record.get("severity"),
+        "watch_reasons": sorted(str(item) for item in (watch.get("reasons") or [])),
+        "degraded_leading_indicators": sorted(
+            str(item) for item in (watch.get("degraded_leading_indicators") or [])
+        ),
+        "leading_indicator_ratios": {
+            str(name): _indicator_ratio(values)
+            for name, values in sorted(indicators.items())
+        },
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def read_bound_fingerprint(connection: sqlite3.Connection, incident_id: str) -> str | None:
+    """Fingerprint of the last investigation of this record, if any."""
+    ensure_bound_table(connection)
+    row = connection.execute(
+        "SELECT evidence_fingerprint FROM investigation_bound WHERE incident_id = ?",
+        (incident_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return str(row["evidence_fingerprint"])
+
+
+def model_call_summary(connection: sqlite3.Connection) -> dict[str, Any]:
+    """How many model investigations this store has actually spent."""
+    ensure_bound_table(connection)
+    rows = connection.execute(
+        "SELECT incident_id, model_calls, last_claimed_from, last_investigated_at "
+        "FROM investigation_bound ORDER BY incident_id"
+    ).fetchall()
+    by_incident = [
+        {
+            "incident_id": str(row["incident_id"]),
+            "model_calls": int(row["model_calls"]),
+            "last_claimed_from": str(row["last_claimed_from"]),
+            "last_investigated_at": str(row["last_investigated_at"]),
+        }
+        for row in rows
+    ]
+    return {
+        "total": sum(item["model_calls"] for item in by_incident),
+        "by_incident": by_incident,
+    }
+
+
+def _quantize(value: Any, digits: int) -> Any:
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, float)):
+        return round(float(value), digits)
+    return value
+
+
+def _indicator_ratio(values: Any) -> Any:
+    if isinstance(values, Mapping):
+        return _quantize(values.get("ratio"), 2)
+    return _quantize(values, 2)

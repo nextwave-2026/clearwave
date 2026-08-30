@@ -126,6 +126,13 @@ header.mast {
   min-width: min(280px, 100%);
 }
 
+.judge-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .judge button {
   font: inherit;
   cursor: pointer;
@@ -158,8 +165,9 @@ header.mast {
   flex: none;
 }
 
-/* On means an incident is injected right now, so the control reads as armed in
-   the same colour the board already uses for a critical incident. */
+/* On means that stage is live. Collapse uses the critical colour already on
+   the board; developing uses the high-severity token so it reads as armed
+   without looking like a crossed-floor incident. */
 .judge button[data-on="true"] {
   background: var(--sev-critical);
 }
@@ -170,6 +178,19 @@ header.mast {
   border-color: #fff;
   background: #fff;
 }
+
+.judge button[data-stage="developing"][data-on="true"] {
+  background: var(--sev-high);
+}
+
+.judge button[data-stage="developing"][data-on="true"]:hover { background: #F0843A; }
+
+.judge button[data-stage="clear"][data-on="true"] {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+.judge button[data-stage="clear"][data-on="true"]:hover { background: var(--surface-2); }
 
 #judge-status {
   margin: 0;
@@ -614,93 +635,247 @@ table th:last-child, table td:last-child { padding-right: 0; }
 .overview { padding-top: 34px; }
 .overview .screen-head { margin-bottom: 16px; }
 
-.kpis {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(238px, 1fr));
-  gap: 12px;
-}
+/* The revenue-led header.
 
-.kpi {
-  position: relative;
-  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+   Money is the subject of this view, so it is carried by size, weight and
+   position rather than by colour: the two figures a TAM acts on lead at
+   display scale, and service status and the incident count sit under them at
+   context weight. No new colour vocabulary is introduced - `--sev-critical`
+   marks the exposed money and nothing else, and everything supporting it is
+   drawn in the existing ink ramp. */
+
+.topline {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 26px 40px;
+  align-items: start;
+  padding: 26px 26px 24px;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
-  padding: 17px 18px 16px;
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
   box-shadow: var(--shadow-lift);
 }
 
-.kpi::before {
-  content: "";
-  position: absolute;
-  inset: -1px -1px auto;
-  height: 3px;
-  border-radius: var(--r-lg) var(--r-lg) 0 0;
+.money {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 22px;
+  margin: 0;
 }
 
-.kpi-red::before { background: linear-gradient(90deg, var(--sev-critical), rgba(255, 77, 94, 0)); }
-.kpi-amber::before { background: linear-gradient(90deg, var(--sev-high), rgba(232, 114, 46, 0)); }
-.kpi-grey::before { background: linear-gradient(90deg, #3A3D47, rgba(58, 61, 71, 0)); }
-.kpi dt {
+.mfig dt {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.09em;
   color: var(--ink-3);
-  margin-bottom: 9px;
-  padding-right: 26px;
+  margin-bottom: 7px;
 }
-.kpi dd {
-  margin: 0;
-  font-size: clamp(20px, 1.75vw, 28px);
-  font-weight: 600;
-  letter-spacing: -0.035em;
-  line-height: 1.02;
-}
-.kpi p { margin: 9px 0 0; font-size: 11px; color: var(--ink-3); line-height: 1.45; }
-.kpi-red dd { color: var(--sev-critical); }
-.kpi-amber dd { color: var(--sev-high); }
-.kpi-grey dd { color: var(--ink-2); }
 
-.lamp {
-  position: absolute;
-  top: 16px;
-  right: 16px;
+.mfig dd {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  line-height: 1.0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.mfig p.fig { margin: 8px 0 0; font-size: 11px; color: var(--ink-3); line-height: 1.45; }
+
+.money .mfig-risk dd { font-size: 46px; color: var(--sev-critical); }
+.money .mfig-rate dd { font-size: 30px; color: var(--ink); }
+.money .mfig-calm dd { font-size: 20px; color: var(--ink-2); }
+
+/* The conversion gap. Two stored ratios, each bar drawn at the length of the
+   figure printed beside it. Nothing between them is measured. */
+.gap {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 3px;
-  border-radius: 100px;
-  background: var(--ground);
+  height: 100%;
+  border-left: 1px solid var(--line);
+  padding-left: 32px;
+}
+
+.gap h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.gap-lede { margin: 6px 0 18px; font-size: 11px; color: var(--ink-3); line-height: 1.5; }
+
+.gap-row {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.gap-l {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-3);
+}
+
+.gap-track {
+  height: 10px;
+  border-radius: 2px;
+  background: var(--surface-3);
   border: 1px solid var(--line-soft);
+  overflow: hidden;
 }
 
-.lamp i {
-  width: 7px;
-  height: 7px;
+.gap-fill { display: block; height: 100%; border-radius: 1px; }
+.gap-now { background: var(--sev-critical); }
+.gap-exp { background: var(--ink-3); }
+
+.gap-v {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.gap-cap { margin: 14px 0 0; font-size: 10.5px; color: var(--ink-3); line-height: 1.5; max-width: 66ch; }
+.gap .gap-cap { margin-top: auto; padding-top: 14px; }
+
+/* Supporting context. True, useful, and no longer the headline. */
+.ctxbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 34px;
+  margin-top: 16px;
+  padding: 13px 26px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.ctx { display: flex; align-items: center; gap: 10px; min-width: 0; }
+
+.ctx-l {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-3);
+}
+
+.ctx-v {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.ctx-v.mono { font-weight: 400; font-size: 11.5px; color: var(--ink-2); }
+
+/* Nothing wrong reads as healthy, not as a page that failed to load. */
+.calm {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 30px 26px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+}
+
+.calm-mark {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-top: 7px;
   border-radius: 50%;
-  background: #20222A;
-  display: block;
+  background: var(--good);
+  box-shadow: 0 0 0 4px rgba(63, 191, 135, 0.14);
 }
 
-.lamp i.on:nth-child(1) { background: var(--sev-critical); box-shadow: 0 0 7px rgba(255, 77, 94, 0.7); }
-.lamp i.on:nth-child(2) { background: var(--sev-high); box-shadow: 0 0 7px rgba(232, 114, 46, 0.7); }
-.lamp i.on:nth-child(3) { background: var(--good); box-shadow: 0 0 7px rgba(63, 191, 135, 0.7); }
-.lamp i.on.grey { background: var(--ink-3); box-shadow: none; }
+.calm h3 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
+.calm p { margin: 7px 0 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.55; max-width: 62ch; }
 
-.merchants { display: grid; gap: 12px; margin-top: 18px; }
+/* Per-merchant impact. The business question is which merchant is bleeding
+   and how badly, so it sits directly under the money it explains. */
+.impact { margin-top: 30px; }
 
-.merchant-card {
+.impact-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.impact-lede { margin: 6px 0 16px; font-size: 11.5px; color: var(--ink-3); line-height: 1.55; max-width: 78ch; }
+
+.mcard {
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--line-soft);
   border-radius: var(--r-md);
   background: var(--surface-2);
-  padding: 16px 18px;
+  padding: 16px 18px 14px;
 }
 
-.merchant-card h3 {
-  margin: 0 0 8px;
-  font-size: 14px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.mcard-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+
+.mcard-head h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
 }
+
+.mcard.is-past { background: var(--surface); border-style: dashed; }
+.mcard.is-past .mfig-risk dd { color: var(--ink-2); }
+
+.mkind, .mstate {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: 100px;
+  padding: 2px 7px;
+}
+
+.mstate { color: var(--ink-2); }
+.mcard.is-past .mstate { color: var(--ink-3); }
+
+.mcard-figs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(152px, 1fr));
+  gap: 16px 20px;
+  margin: 15px 0 0;
+}
+
+.mcard-figs .mfig-rate dd { font-size: 19px; color: var(--ink); }
+.mcard-figs .mfig-risk dd { font-size: 19px; color: var(--sev-critical); }
+
+.mcard-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+  margin: 16px 0 0;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.mcard-foot .mono { font-size: 10px; overflow-wrap: anywhere; }
+
+.merchants { display: grid; gap: 12px; }
 
 .chan {
   display: grid;
@@ -939,6 +1114,21 @@ h3.sec {
 
 .merchants { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 
+@media (max-width: 960px) {
+  .topline { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .gap { border-left: 0; border-top: 1px solid var(--line); padding-left: 0; padding-top: 22px; }
+}
+
+@media (max-width: 640px) {
+  .topline { padding: 20px 16px; }
+  .money .mfig-risk dd { font-size: 34px; }
+  .money .mfig-rate dd { font-size: 24px; }
+  .ctxbar { padding: 12px 16px; gap: 10px 22px; }
+  .gap-row { grid-template-columns: 54px minmax(0, 1fr) auto; gap: 9px; }
+  .calm { padding: 22px 16px; }
+}
+
+
 @media (max-width: 720px) {
   .slackish .msg { padding: 12px 11px; }
   .br-i { flex: 1 1 44%; }
@@ -955,3 +1145,365 @@ figure.chart.binding { max-width: 760px; }
    viewport edge while every other row was inset 28px. Both now set block padding
    only, so the gutter survives. */
 .mast-right, .judge > * { min-width: 0; }
+
+/* Ask the data.
+
+   The board's one interactive question. It supports the money above it and
+   never competes with it: no display weight, no severity colour, the same
+   surfaces and ink ramp as every other panel. What it does spend its emphasis
+   on is the citation trail, because that is the whole claim - an answer whose
+   queries are visible is a different object from an answer that just appears. */
+
+.ask {
+  margin-top: 34px;
+  padding-top: 26px;
+  border-top: 1px solid var(--line);
+}
+
+.ask-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.ask-lede { margin: 6px 0 0; font-size: 11.5px; color: var(--ink-3); line-height: 1.55; max-width: 84ch; }
+
+.ask-form { display: flex; gap: 10px; margin: 16px 0 0; align-items: stretch; }
+
+.ask-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 11px 14px;
+}
+
+.ask-input::placeholder { color: var(--ink-3); }
+.ask-input:hover { border-color: var(--ink-3); }
+.ask-input:focus { outline: none; border-color: var(--yuno-blue-lift); box-shadow: 0 0 0 3px rgba(107, 123, 255, 0.18); }
+
+.ask-go {
+  flex: none;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--yuno-blue);
+  border: 0;
+  border-radius: var(--r-md);
+  padding: 0 22px;
+  cursor: pointer;
+  transition: background 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ask-go:hover { background: var(--yuno-blue-lift); }
+.ask-go[disabled] { opacity: 0.5; cursor: progress; }
+
+.ask-egs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 11px; }
+
+.ask-eg {
+  font: inherit;
+  font-size: 11px;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 100px;
+  padding: 6px 13px;
+  cursor: pointer;
+  transition: color 0.16s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ask-eg:hover { color: var(--ink); border-color: var(--ink-3); }
+
+.ask-result:empty { display: none; }
+
+.ask-card {
+  margin-top: 18px;
+  padding: 20px 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+}
+
+/* An answer is the loud one; a limit and an unconfigured engine are calm.
+   None of the three is drawn in a severity colour - the answer is not an
+   incident and the limit is not a fault. */
+.ask-card.is-answer { border-color: var(--line); }
+.ask-card.is-limit { background: var(--surface); }
+.ask-card.is-off { background: var(--surface); border-style: dashed; }
+.ask-card.is-pending, .ask-card.is-busy { background: var(--surface); }
+
+.ask-asked {
+  margin: 0 0 14px;
+  font-size: 11px;
+  color: var(--ink-3);
+  font-family: "Geist Mono", ui-monospace, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.ask-answer {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  max-width: 72ch;
+}
+
+.ask-card h4 { margin: 0 0 6px; font-size: 14.5px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
+.ask-card .ask-lede { margin: 0; max-width: 72ch; }
+.ask-detail { margin: 12px 0 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.6; max-width: 72ch; }
+
+.ask-status { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--ink); }
+.ask-card.is-pending p, .ask-card.is-busy p { margin: 8px 0 0; font-size: 11.5px; color: var(--ink-3); line-height: 1.55; max-width: 72ch; }
+
+.ask-spin {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  border-top-color: var(--yuno-blue-lift);
+  animation: ask-turn 0.7s linear infinite;
+}
+
+@keyframes ask-turn { to { transform: rotate(360deg); } }
+
+.ask-figs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 16px 24px;
+  margin: 20px 0 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.ask-fig dt {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-3);
+  margin-bottom: 6px;
+}
+
+.ask-fig dd {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.ask-fig dd small { display: block; margin-top: 5px; font-size: 10px; font-weight: 400; letter-spacing: 0; color: var(--ink-3); }
+.ask-uncited { color: var(--ink-2); }
+.ask-nocite { color: var(--sev-medium); }
+
+.ask-trail { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line-soft); }
+.ask-trail h5, .ask-missing h5 {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-3);
+}
+
+.ask-missing { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
+.ask-missing ul { margin: 10px 0 0; padding: 0 0 0 18px; }
+.ask-missing li { margin: 0 0 6px; font-size: 12.5px; color: var(--ink); line-height: 1.55; max-width: 72ch; }
+.ask-missing li:last-child { margin-bottom: 0; }
+
+.ask-asof { margin: 14px 0 0; font-size: 10px; color: var(--ink-3); }
+.ask-trailcap { margin: 8px 0 12px; font-size: 10.5px; color: var(--ink-3); line-height: 1.5; max-width: 72ch; }
+
+.ask-cites { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; background: var(--line-soft); border: 1px solid var(--line-soft); border-radius: var(--r-sm); overflow: hidden; }
+
+.ask-cite {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1.1fr) minmax(0, 1.4fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  background: var(--surface);
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+.ask-seq { color: var(--ink-3); font-size: 10.5px; }
+.ask-tool { color: var(--ink); font-weight: 500; overflow-wrap: anywhere; }
+.ask-qid { color: var(--ink-3); font-size: 10.5px; overflow-wrap: anywhere; }
+.ask-outcome { color: var(--ink-3); font-size: 10.5px; text-align: right; }
+
+@media (max-width: 640px) {
+  .ask-form { flex-wrap: wrap; }
+  .ask-go { width: 100%; padding: 11px 22px; }
+  .ask-card { padding: 18px 16px; }
+  .ask-answer { font-size: 15px; }
+  .ask-cite { grid-template-columns: 24px minmax(0, 1fr) auto; row-gap: 4px; }
+  .ask-qid { grid-column: 2 / -1; }
+  .ask-outcome { grid-column: 2 / -1; text-align: left; }
+}
+
+/* The warning rail.
+
+   A watch is a deviation detection deliberately chose not to report: it has
+   not crossed the floors, its severity is forced to `low`, and nothing pages
+   on it. So it is drawn at the muted end of the palette - `--ink-2`,
+   `--ink-3`, `--sev-low` - and never in a severity colour. It also carries
+   none of the incident vocabulary that signals urgency here: no `--shadow-lift`,
+   no gradient fill, no display-weight money, no `.frame` chrome. The board
+   noticing something, not announcing it. */
+
+.rail {
+  margin-top: 34px;
+  margin-bottom: 32px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.rail-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+
+.rail-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.rail-count { font-size: 11.5px; color: var(--ink-3); }
+.rail-lede { margin: 7px 0 16px; max-width: 74ch; font-size: 12.5px; color: var(--ink-3); }
+.rail-none { margin: 0; max-width: 74ch; font-size: 12.5px; color: var(--ink-3); }
+
+/* With nothing to show the rail is a heading and a sentence, deliberately
+   quiet rather than a half-drawn panel. */
+.rail.is-quiet .rail-head h3 { color: var(--ink-3); }
+
+.rail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.rail-item {
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) minmax(190px, 0.95fr) minmax(240px, 1.25fr);
+  gap: 18px 28px;
+  padding: 17px 18px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.rail-item:last-child { border-bottom: 0; }
+
+@media (max-width: 900px) {
+  .rail-item { grid-template-columns: 1fr; gap: 15px; }
+}
+
+.rail-who { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; }
+.rail-who b { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+.rail-who .sub { margin-top: 0; }
+
+/* The badge. A hollow ring rather than the filled, rotated square `.sev` uses,
+   so a watch cannot be mistaken for a severity at a glance. */
+.watching {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 10px 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 100px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.watching i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--sev-low);
+  flex: none;
+  animation: watch-breathe 3.6s ease-in-out infinite;
+}
+
+@keyframes watch-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .watching i { animation: none; }
+}
+
+.rail-proj dt, .rail-why dt {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 8px;
+}
+
+/* Quieter than `.money` on the incident queue by weight and colour: this is a
+   projection, and it must not out-shout a realised figure beside it. */
+.rail-proj dd {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink-2);
+}
+
+.rail-proj small { display: block; margin-top: 6px; font-size: 11px; color: var(--ink-3); }
+
+.floors { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; }
+
+.floor {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: 100px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.floor i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+
+/* A floor already met is settled and recedes. The one still open is why this
+   is not an incident, so it is the brightest thing in the row - and still not
+   a severity colour. */
+.floor.held { border: 1px solid var(--line-soft); color: var(--ink-3); }
+.floor.held i { background: var(--ink-3); }
+.floor.open { border: 1px dashed var(--line); background: var(--surface-2); color: var(--ink); }
+.floor.open i { border: 1.5px solid var(--ink-2); }
+
+.rail-traj { margin: 10px 0 0; font-size: 11.5px; color: var(--ink-3); }
+.rail-foot { margin: 13px 0 0; max-width: 78ch; font-size: 11.5px; color: var(--ink-3); }
+
+.vh {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.rail-cap { margin: -2px 0 8px; font-size: 11px; color: var(--ink-3); }

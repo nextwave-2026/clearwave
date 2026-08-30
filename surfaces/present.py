@@ -7,6 +7,14 @@ from typing import Any
 
 INACTIVE_STATES = {"resolved", "mitigated"}
 
+# A watch is not an incident. It is a developing deviation the detector
+# deliberately chose not to report, carried on the same C3 row the cohort will
+# keep if it becomes one (docs/contracts/incident.md). Counting it as active
+# would put a warning we chose not to page on into the "Right now" business
+# figures and into the incident queue styled like a crossed floor, which is the
+# one thing this rail exists to avoid.
+WATCHING_STATE = "watching"
+
 _SCOPE_ORDER = (
     "provider",
     "payment_method",
@@ -44,6 +52,7 @@ def overview(
         "financial_impact": financial or None,
         "merchant_health": merchant_health(incidents),
         "incidents": [queue_item(incident, results.get(str(incident.get("incident_id")))) for incident in active],
+        "watches": watch_items(incidents),
     }
 
 
@@ -56,7 +65,9 @@ def queue(
         "incidents": [
             queue_item(incident, results.get(str(incident.get("incident_id"))))
             for incident in incidents
-        ]
+            if not _is_watch(incident)
+        ],
+        "watches": watch_items(incidents),
     }
 
 
@@ -80,6 +91,44 @@ def queue_item(
         "change": incident.get("change"),
         "financial_impact": incident.get("financial_impact"),
         "narrative_available": narrative_available,
+    }
+
+
+def watch_items(incidents: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Every stored watch, in the order the store already ranked them."""
+    return [watch_item(incident) for incident in incidents if _is_watch(incident)]
+
+
+def watch_item(incident: Mapping[str, Any]) -> dict[str, Any]:
+    """One watch, copied field for field off the stored C3 record.
+
+    Nothing here is derived. `projected_loss_per_hour` is the detector's own
+    projected figure, kept under its stored name so the page cannot present it
+    as realised money, and the two floor vectors are passed through whole so
+    the page can say why this cohort is not yet an incident rather than
+    deciding that for itself.
+    """
+    detection = _mapping(incident.get("detection"))
+    watch = _mapping(detection.get("watch"))
+    financial = _mapping(incident.get("financial_impact"))
+    cohort = _mapping(incident.get("affected_cohort"))
+    return {
+        "incident_id": incident.get("incident_id"),
+        "lifecycle_state": incident.get("lifecycle_state"),
+        "severity": incident.get("severity"),
+        "onset": incident.get("onset"),
+        "affected_cohort": incident.get("affected_cohort"),
+        "scope_label": cohort_scope_label(cohort),
+        "change": incident.get("change"),
+        "projected_loss_per_hour": financial.get("projected_loss_per_hour"),
+        "reasons": list(watch.get("reasons") or []),
+        "watch_floors": watch.get("watch_floors"),
+        "not_yet_met": list(watch.get("not_yet_met") or []),
+        "detection_floors": detection.get("detection_floors"),
+        "trajectory": watch.get("trajectory"),
+        "statement": watch.get("statement"),
+        "leading_indicators": watch.get("leading_indicators"),
+        "degraded_leading_indicators": list(watch.get("degraded_leading_indicators") or []),
     }
 
 
@@ -177,16 +226,33 @@ def cohort_scope_label(cohort: Mapping[str, Any] | None) -> str:
 
 
 def merchant_health(incidents: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Per-merchant view of stored incident severity. No health score is invented."""
+    """Per-merchant view of stored incident severity and money.
+
+    No health score is invented and nothing is added up across a group: the
+    money published here is copied off that group's own highest-priority
+    live record - or, where the group holds none, its highest-priority closed
+    one, flagged `source_is_active: False` so the board reads it as history
+    rather than as a loss still running. It travels with the id of the record
+    it came from so the board can cite it. A group whose cohort names no
+    merchant keeps `merchant_id` null, which is how the board knows not to
+    call it a merchant.
+    """
     grouped: dict[tuple[Any, ...], list[Mapping[str, Any]]] = {}
     for incident in incidents:
+        if _is_watch(incident):
+            continue
         grouped.setdefault(_health_group_key(incident), []).append(incident)
     health = []
     rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     for key in sorted(grouped):
+        # Active records rank ahead of closed ones, so a group with anything
+        # live never publishes the money of an incident that is already over.
+        # Where every record is closed the row is history, and `source_is_active`
+        # is what lets the board say so instead of asserting a live loss rate.
         records = sorted(
             grouped[key],
             key=lambda item: (
+                0 if _is_active(item) else 1,
                 rank.get(str(item.get("severity", "")).lower(), 99),
                 str(item.get("incident_id", "")),
             ),
@@ -200,13 +266,26 @@ def merchant_health(incidents: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
                 "highest_severity": top.get("severity"),
                 "active_incident_count": sum(1 for item in records if _is_active(item)),
                 "incident_ids": [item.get("incident_id") for item in records],
+                "source_incident_id": top.get("incident_id"),
+                "source_is_active": _is_active(top),
+                "financial_impact": top.get("financial_impact"),
+                "change": top.get("change"),
             }
         )
     return health
 
 
 def _is_active(incident: Mapping[str, Any]) -> bool:
-    return str(incident.get("lifecycle_state", "")).lower() not in INACTIVE_STATES
+    state = _state(incident)
+    return state != WATCHING_STATE and state not in INACTIVE_STATES
+
+
+def _is_watch(incident: Mapping[str, Any]) -> bool:
+    return _state(incident) == WATCHING_STATE
+
+
+def _state(incident: Mapping[str, Any]) -> str:
+    return str(incident.get("lifecycle_state", "")).strip().lower()
 
 
 def _narrative_available(investigation: Mapping[str, Any] | None) -> bool:
@@ -270,6 +349,8 @@ def escalations(
     """Stored escalation outcomes per incident, plus the calls still pending."""
     groups = []
     for incident in incidents:
+        if _is_watch(incident):
+            continue
         incident_id = str(incident.get("incident_id", ""))
         events = list(recorded.get(incident_id) or [])
         payload = _mapping(events[0].get("payload")) if events else {}

@@ -75,6 +75,8 @@ class InvestigationRun(Mapping[str, Any]):
     started_at: str | None = None
     completed_at: str | None = None
     duration_ms: float | None = None
+    claimed_from: str = "detected"
+    evidence_fingerprint: str = ""
 
     @property
     def outcome(self) -> str:
@@ -98,7 +100,17 @@ class InvestigationRun(Mapping[str, Any]):
 
 
 class InvestigationAgent:
-    """Run one C3 incident through bounded evidence gathering and C4 validation."""
+    """Run one C3 incident through bounded evidence gathering and C4 validation.
+
+    The three attributes below are the seams a differently-shaped bounded run
+    reuses: the loop, the gateway wiring, and the deadline handling stay
+    identical while the instructions, the tool catalogue, and the final
+    structured shape change. ``investigation.ask`` is the first such reuse.
+    """
+
+    system_prompt: str = SYSTEM_PROMPT
+    tool_definitions: list[dict[str, Any]] = TOOL_DEFINITIONS
+    final_instruction: str = "Return only the C4 investigation result JSON object now."
 
     def __init__(
         self,
@@ -278,7 +290,7 @@ class InvestigationAgent:
         validation_errors: Sequence[str] | None,
     ) -> Any:
         final_input = list(conversation)
-        instruction = "Return only the C4 investigation result JSON object now."
+        instruction = self.final_instruction
         if validation_errors:
             instruction += " Correct these validation errors from the previous object:\n- "
             instruction += "\n- ".join(validation_errors)
@@ -370,24 +382,17 @@ class InvestigationAgent:
             raise InvestigationTimeout("wall-clock budget exhausted")
         kwargs: MutableMapping[str, Any] = {
             "model": self.model,
-            "instructions": SYSTEM_PROMPT,
+            "instructions": self.system_prompt,
             "input": conversation,
             "max_output_tokens": self.max_output_tokens,
         }
         if self.reasoning_effort and self._reasoning_supported is not False:
             kwargs["reasoning"] = {"effort": self.reasoning_effort}
         if with_tools:
-            kwargs["tools"] = TOOL_DEFINITIONS
+            kwargs["tools"] = self.tool_definitions
             kwargs["parallel_tool_calls"] = False
         if structured:
-            kwargs["text"] = {
-                "format": {
-                    "type": "json_schema",
-                    "name": "investigation_result",
-                    "strict": True,
-                    "schema": _strict_schema(InvestigationResult.model_json_schema()),
-                }
-            }
+            kwargs["text"] = {"format": self.structured_format()}
         responses = getattr(client, "responses", None)
         create = getattr(responses, "create", None)
         if not callable(create):
@@ -406,6 +411,15 @@ class InvestigationAgent:
                 lambda: create(**kwargs),
                 self._remaining(started_clock),
             )
+
+    def structured_format(self) -> dict[str, Any]:
+        """The strict JSON schema the final model call must answer in."""
+        return {
+            "type": "json_schema",
+            "name": "investigation_result",
+            "strict": True,
+            "schema": _strict_schema(InvestigationResult.model_json_schema()),
+        }
 
     def _bounded(self, callback: Any, timeout: float) -> Any:
         if timeout <= 0:
@@ -571,8 +585,13 @@ def _value(value: Any, key: str, default: Any = None) -> Any:
 
 
 def _citation_errors(result: InvestigationResult, gateway: EvidenceGateway) -> list[str]:
+    return citation_errors(result.model_dump(mode="python"), gateway)
+
+
+def citation_errors(payload: Any, gateway: EvidenceGateway) -> list[str]:
+    """Verify every ``{query_id, tool}`` pair in a payload against the trail."""
     errors: list[str] = []
-    for citation in _citations(result.model_dump(mode="python")):
+    for citation in _citations(payload):
         query_id = str(citation.get("query_id", ""))
         tool = str(citation.get("tool", ""))
         if not query_id:
@@ -655,6 +674,7 @@ __all__ = [
     "InvestigationRun",
     "InvestigationTimeout",
     "SYSTEM_PROMPT",
+    "citation_errors",
     "run_investigation",
     "TOOL_DEFINITIONS",
 ]

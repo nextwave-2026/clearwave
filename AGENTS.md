@@ -115,19 +115,28 @@ investigates an incident a store already holds - a live consume included - witho
 entry point still runs seed then detect then investigate.
 
 `python3 -m investigation` (or `make investigate-daemon`) is the continuous watcher over that same store:
-it polls, claims, and diagnoses without an operator command. Stop it with SIGINT or SIGTERM; both drain
-in-flight work. The compose service is `investigation`, bind-mounting `./state` as `CLEARWAVE_DB=/data/clearwave.db`.
+it polls, claims watches and detected incidents, and persists C4 without an operator command. A watch
+investigation returns the row to `watching` and never pages; a later floor-crossing enriches the same
+record. Refresh is on a change in the evidence fingerprint, not on a timer. Stop it with SIGINT or SIGTERM;
+both drain in-flight work. The compose service is `investigation`, bind-mounting `./state` as `CLEARWAVE_DB=/data/clearwave.db`.
 Detector, dashboard and daemon must all point at that file. Do not give this service the ground-truth volume
 or `CLEARWAVE_GROUND_TRUTH_DB`. Claiming is atomic: a daemon and `make investigate` cannot both take the
-same incident.
+same record.
 
 W2 also consumes W1's three live Kafka topics into that same store (`python3 -m detector consume --detect`).
 The live and file-based paths share one normalisation and one store; the file-based path imports no Kafka
-client and is the broker-free demo fallback. Consumer operator detail: `docs/live-ingestion.md`, and
-`make e2e` runs the whole live chain. The copy-pasteable demo runbook - offline stage path, live Kafka
-caveats, and commands that fail - is `docs/demo-sequence.md`. Use `.venv/bin/python`. Do not use
-`--mode anomaly` or system pip, and do not treat `make live` as a one-step demo: it is the consume
-step alone and starts neither Kafka nor a worker.
+client and is the broker-free demo fallback. Compose runs that consumer as service `detector`
+(`python -m detector daemon`: empty polls are not terminal, SIGINT/SIGTERM drain the in-flight batch,
+sweeps every 45s even when quiet) and the dashboard as service `surfaces` on host port 8082, both on
+`CLEARWAVE_DB=/data/clearwave.db` matching the investigation daemon. Do not wrap `detector consume` in a
+bash loop; the daemon is the one service path. `make stack-up` brings the whole
+loop up and prints the URL; `make stack-status` reports each piece; `make stack-down` tears it down.
+`make stack-up` first writes healthy live-vocabulary history into `state/clearwave.db` (`scripts/prepare_history.py`, eight event-time hours behind now, merchant-b/adyen included) so the trailing detection baseline (`BASELINE_TRAILING_BUCKETS` = 60) and the merchant-relative floor (`MERCHANT_NORMAL_MIN_HOURS` = 6) are already warm. `make stack-status` reports those two floors separately. The anomaly is still live: do not pre-create incidents or watches. Re-running `stack-up` replaces the store (clean start is the default, because leftover rehearsal rows promote a later band).
+Consumer operator detail: `docs/live-ingestion.md`. The copy-pasteable demo runbook is `docs/demo-sequence.md`.
+Use `.venv/bin/python` on the host. Do not use `--mode anomaly` or system pip, and do not treat `make live`
+as a one-step demo: it is the consume step alone and starts neither Kafka nor a worker. Host
+`make surfaces-serve` still binds 127.0.0.1; the container binds 0.0.0.0 so the published port works.
+`make verify-demo` drives the whole demo chain against an isolated stack (ports 18082/19092/18081, compose project `clearwave-verify-demo`) and prints an honest PASS/FAIL per beat with measured evidence. It does not touch a live demo on 8082/9092. Exit is non-zero while any beat is red. Do not tune the checks to make it green.
 
 The dashboard's judge toggle is the one thing in `surfaces/` that writes: it calls `worker.inject` to
 publish a start or stop command to W1's control topic, changing a *running* worker with no restart. Never

@@ -34,10 +34,11 @@ honestly when evidence is insufficient, and recommends an action without executi
 cooperating planes: deterministic detection and agentic investigation. It diagnoses, not remediates;
 severity is independent of diagnostic confidence; and honest uncertainty is required behaviour.
 
-What is still open: the stack, transport, persistence, and the items listed in
-[`docs/ownership.md`](docs/ownership.md). The detection and diagnosis approach is settled by the
-PRD. Do not add a package manifest, lockfile, Dockerfile, or application scaffold until a human
-decides the stack and records it in `DECISIONS.md`.
+The demo stack is now concrete: Python services, Kafka and Schema Registry for live ingestion,
+SQLite as the shared evidence store, a bounded OpenAI investigation loop, and a plain web
+dashboard with Slack and phone escalation adapters. The contracts and remaining non-demo gaps are
+tracked in [`docs/ownership.md`](docs/ownership.md), [`INTERFACES.md`](INTERFACES.md), and
+[`DECISIONS.md`](DECISIONS.md).
 
 ### Product baseline
 
@@ -46,9 +47,17 @@ defines the four-way work division.
 
 ## Demonstration
 
-The product is runnable. The copy-pasteable operator sequence - offline stage path and live Kafka path, including commands that fail and must not be used - is in [`docs/demo-sequence.md`](docs/demo-sequence.md).
+The product is runnable. The copy-pasteable operator sequence - pre-warmed live stack, offline stage path, and live Kafka caveats, including commands that fail and must not be used - is in [`docs/demo-sequence.md`](docs/demo-sequence.md).
 
-Safe stage path, from the repository root after `make install`. Two terminals, same `$DB`. Port `18080` avoids a busy `8080`; the product default is `8080`.
+Live product path, from the repository root. `make stack-up` writes eight hours of healthy merchant-b/adyen history into the store (seconds, not hours of waiting) and then starts the compose loop. Detection baseline and merchant-relative severity are warm when it returns. The anomaly still happens live after the judge presses the button.
+
+```sh
+make stack-up
+```
+
+Open the URL it prints (`http://127.0.0.1:8082/`). `make stack-status` reports each piece of the loop, including whether the store is warm enough for the trailing-hour baseline and for the six-hour merchant-relative floor, separately. `make stack-down` stops it. Do not run `make e2e` then `make surfaces-serve` as the pitch; that is a scripted CLI demonstration.
+
+Safe stage path if Docker is not up, from the repository root after `make install`. Two terminals, same `$DB`. Port `18080` avoids a busy `8080`; the product default is `8080`.
 
 Terminal A:
 
@@ -73,7 +82,8 @@ Use `.venv/bin/python`, not system `python3`. Do not run `--mode anomaly`, syste
 
 ## Architecture
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the settled product architecture; technology choices remain open.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the settled product architecture and current demo
+runtime.
 
 ## Pre-existing components
 
@@ -95,8 +105,9 @@ generated record lives in `LICENCES.md`; run `make licences` before submission.
 
 ## Licence inventory
 
-No third-party dependencies have been added yet. The generated record lives in
-[`LICENCES.md`](LICENCES.md). Run `make licences` before submission; it works offline.
+The generated third-party dependency record lives in [`LICENCES.md`](LICENCES.md). Run the
+licence generator only when dependency manifests change; it uses local package metadata and can
+rewrite the inventory differently on machines with different environments.
 
 ## Team
 

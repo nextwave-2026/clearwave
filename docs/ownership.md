@@ -45,9 +45,9 @@ PRD section 32 requires one canonical definition for the event contract, the inc
 
 | Contract | Owner | Consumers | What it carries |
 |---|---|---|---|
-| **C1 Raw per-merchant event shapes** | W1 | W2 | Each merchant simulator's own native event shape, deliberately heterogeneous by design. W1 registers each shape in the schema registry and publishes it to raw Kafka topics. |
-| **C1b Canonical ingestion schema** | W2 | W2, W3, W4 | One normalized model for every downstream component, expressed as JSON Schema in the schema registry and carried on the canonical event stream. W2 persists it in the relational SQLite store. |
-| **C2 Cohort and metric query** | W2 | W3, W4 | The single read surface over measured behaviour: conversion at payment and attempt level, decline distribution, retry rates, cohort comparison, baseline expectation, and the operational metrics, sliced by any combination of the C1 dimensions. |
+| **C1 Raw event shapes** | W1 | W2 | Three JSON-Schema-registered Kafka topics shared by all merchants: `payments.attempts`, `payments.closed`, and `ops.telemetry`. Merchants differ in generated behaviour and traffic mix, not in a forced per-merchant wire schema. |
+| **C1b Canonical ingestion schema** | W2 | W2, W3, W4 | One normalized model for downstream payment-attempt analysis, with closed decline vocabulary and event-time semantics. W2 persists normalized records and auxiliary topic data in the relational SQLite store. |
+| **C2 Evidence-query tools** | W2 | W3, W4 | Eleven standalone tools over measured behaviour: conversion, decline distribution, retries, cohort comparison, baseline expectation, operational metrics, incident history, external status, financial impact, and metric series. |
 | **C3 Incident record** | W2 | W3, W4 | The detector's output: affected cohort, what changed and by how much, onset, persistence, blast radius, financial impact, severity/priority, and lifecycle state. It carries no diagnostic confidence and no root cause; those belong to C4. |
 | **C4 Investigation result** | W3 | W4 | Its input is a C3 record. Its output is the PRD section 13 shape: confirmed facts, leading hypothesis, supporting evidence, competing explanations, why the ambiguity exists, missing evidence, diagnostic confidence, and the recommended next action. Each evidence item cites the C2 query that produced it. |
 | **C5 Notification and escalation payload** | W4 | none inside the system | What is sent to a channel, and the severity-to-channel binding. |
@@ -91,16 +91,22 @@ W1 has no upstream dependency and is on the critical path for everyone else, whi
 
 Integration across all four workstreams is owned by `derek`, in addition to W3. The scenario catalogue and evaluator now sit with integration because they are integration and validation concerns. This covers the end-to-end path, the stubbed vertical slice, keeping the four contracts coherent with each other, and continuous end-to-end validation as components land. It is cross-cutting and transfers no ownership of any workstream internals: each workstream still owns its own tree and its own contracts. A disagreement about a contract is still raised and settled the way this document already specifies - `INTERFACES.md` for the shape, `DECISIONS.md` for the call. Integration ownership adds no new authority over that.
 
-## Open decisions
+## Current implementation choices and remaining gaps
 
-Each item below is explicitly unresolved. Answers are recorded in `DECISIONS.md`.
+The demo path now has a concrete runtime: Python code in this repository, Kafka and Schema Registry
+for live ingestion, SQLite as the shared evidence store, Docker Compose for the live stack, a
+bounded OpenAI Responses API investigation loop, and a plain web dashboard with Slack and Twilio
+phone adapters. These choices are recorded in `DECISIONS.md`, `INTERFACES.md`, and the contract
+documents under `docs/contracts/`.
 
-- **Language, framework and stack.** Still open by the existing `DECISIONS.md` entry; PRD section 21's preferences are not a decision. Blocks the concrete directory names in this document, which are deliberately left abstract until then.
-- **Whether the four workstreams live in one repository tree or separate services.** Follows the stack decision.
-- **The concrete severity thresholds that bind to dashboard, Slack and phone channels.** PRD section 19 gives the shape and says thresholds are tuned later.
-- **The telephony mechanism for the phone-call escalation.** PRD section 19 requires a free or effectively free route.
-- **Which external status or corroboration sources are actually used, if any.**
-- **How diagnostic confidence is represented:** qualitative levels or a calibrated number. PRD section 13 prefers qualitative and rules out fabricated percentages, but does not fix the scale.
-- **The concrete merchant identities and whether the count is three or four, within the PRD section 20 shape.**
+Still unresolved or explicitly deferred:
 
-These boundaries are a coordination instrument, not an org chart: a workstream may be worked by more than one person, and a person may hold more than one, but a contract has exactly one owner regardless.
+- Replayable long-history data for a real seasonal hour-of-week baseline. `make stack-up` prepares
+  eight healthy event-time hours for the demo baseline; it is not a seasonal model.
+- Concrete external corroboration sources beyond the current adapter contract.
+- The deferred `payment_integrity` evidence surface and any high-value-transaction C2/C3 addition.
+- Any non-demo production deployment packaging, scaling work, or remediation capability.
+
+These boundaries are a coordination instrument, not an org chart: a workstream may be worked by more
+than one person, and a person may hold more than one, but a contract has exactly one owner
+regardless.

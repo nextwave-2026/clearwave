@@ -24,7 +24,7 @@ from investigation.daemon import (
     serve,
 )
 from investigation.degrade import degrade_result
-from investigation.store import connect, insert_incident
+from investigation.store import connect, insert_incident, model_call_summary
 from investigation.vertical import UnavailableClient
 from surfaces.escalation import SLACK_ENV, TWILIO_ENV_VARS
 from surfaces.store import connect as surfaces_connect
@@ -195,6 +195,58 @@ class DaemonServeTests(unittest.TestCase):
         self.assertEqual(_lifecycle(self.db, "inc-daemon-1"), "diagnosed")
         self.assertEqual(_result_count(self.db, "inc-daemon-1"), 1)
 
+    def test_investigates_a_watch_without_paging(self) -> None:
+        watch = dict(INCIDENT)
+        watch["incident_id"] = "inc-watch-1"
+        watch["severity"] = "low"
+        watch["lifecycle_state"] = "watching"
+        connection = connect(self.db)
+        insert_incident(connection, watch, lifecycle_state="watching")
+        connection.close()
+        agent = CountingAgent()
+        code = serve(
+            self.db,
+            poll_interval_seconds=0.05,
+            max_polls=3,
+            agent=agent,
+            install_signal_handlers=False,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(agent.calls, ["inc-watch-1"])
+        self.assertEqual(_lifecycle(self.db, "inc-watch-1"), "watching")
+        self.assertEqual(_result_count(self.db, "inc-watch-1"), 1)
+
+        connection = surfaces_connect(self.db)
+        try:
+            stored = load_investigation(connection, "inc-watch-1")
+            self.assertIsNotNone(stored)
+            events = ensure_escalation(connection, watch, stored)
+            cost = model_call_summary(connection)
+        finally:
+            connection.close()
+        self.assertEqual(events, [])
+        self.assertEqual(cost["total"], 1)
+
+    def test_does_not_reinvestigate_an_unchanged_watch(self) -> None:
+        watch = dict(INCIDENT)
+        watch["incident_id"] = "inc-watch-1"
+        watch["severity"] = "low"
+        watch["lifecycle_state"] = "watching"
+        connection = connect(self.db)
+        insert_incident(connection, watch, lifecycle_state="watching")
+        connection.close()
+        agent = CountingAgent()
+        code = serve(
+            self.db,
+            poll_interval_seconds=0.05,
+            max_polls=6,
+            agent=agent,
+            install_signal_handlers=False,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(agent.calls, ["inc-watch-1"])
+        self.assertEqual(_lifecycle(self.db, "inc-watch-1"), "watching")
+
     def test_idle_store_does_not_call_the_agent(self) -> None:
         connect(self.db).close()
         agent = CountingAgent()
@@ -275,20 +327,25 @@ class DaemonServeTests(unittest.TestCase):
         finally:
             connection.close()
 
-        self.assertEqual({event["channel"] for event in events}, {"dashboard", "slack", "phone"})
-        self.assertEqual(len(events), 3)
-        self.assertEqual(len(again), 3)
+        # INCIDENT is `high`, which reaches the dashboard and Slack and never places a
+        # call - only `critical` does. This test is about firing every bound channel
+        # exactly once, not about the ladder itself; the binding is pinned in
+        # tests/test_surfaces.py and in docs/contracts/notification-escalation.md.
+        self.assertEqual({event["channel"] for event in events}, {"dashboard", "slack"})
+        self.assertEqual(len(events), 2)
+        self.assertEqual(len(again), 2)
         self.assertEqual(
             [(event["channel"], event["status"]) for event in events],
             [(event["channel"], event["status"]) for event in again],
         )
         payloads = [event["payload"] for event in events]
         for payload in payloads:
-            hypothesis = payload.get("leading_hypothesis") or {}
-            action = payload.get("recommended_next_action") or {}
-            self.assertTrue(hypothesis.get("statement"))
-            self.assertTrue(payload.get("diagnostic_confidence"))
-            self.assertTrue(action.get("action"))
+            # leading_hypothesis / diagnostic_confidence / recommended_next_action are None
+            # (not placeholder text) when outcome=agent_unavailable; see
+            # docs/contracts/notification-escalation.md
+            self.assertIsNone(payload.get("leading_hypothesis"))
+            self.assertIsNone(payload.get("diagnostic_confidence"))
+            self.assertIsNone(payload.get("recommended_next_action"))
             self.assertTrue(payload.get("citations"))
         slack = next(event for event in events if event["channel"] == "slack")
         self.assertEqual(slack["status"], "not_configured")
@@ -440,7 +497,7 @@ class CliTests(unittest.TestCase):
                 main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         self.assertEqual(DEFAULT_POLL_INTERVAL_SECONDS, 2.0)
-        self.assertEqual(str(DEFAULT_DB), "state/clearwave.db")
+        self.assertEqual(DEFAULT_DB.as_posix(), "state/clearwave.db")
 
     def test_rejects_a_non_positive_interval(self) -> None:
         with mock.patch("sys.stdout"):
@@ -536,6 +593,8 @@ class SignalShutdownTests(unittest.TestCase):
                 proc.wait(timeout=2)
 
     def test_sigterm_drains_and_persists(self) -> None:
+        if os.name == "nt":
+            self.skipTest("Windows subprocesses cannot deliver a catchable SIGTERM")
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "clearwave.db"
             proc = self._start(_armed_daemon_script(db, 0.5))
@@ -547,6 +606,8 @@ class SignalShutdownTests(unittest.TestCase):
             self.assertNotEqual(_lifecycle(db, "inc-daemon-1"), "investigating")
 
     def test_sigint_drains_and_persists(self) -> None:
+        if os.name == "nt":
+            self.skipTest("Windows subprocesses cannot deliver SIGINT with send_signal")
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "clearwave.db"
             proc = self._start(_armed_daemon_script(db, 0.5))
@@ -556,6 +617,8 @@ class SignalShutdownTests(unittest.TestCase):
             self.assertEqual(_result_count(db, "inc-daemon-1"), 1)
 
     def test_sigterm_on_idle_store_leaves_nothing_behind(self) -> None:
+        if os.name == "nt":
+            self.skipTest("Windows subprocesses cannot deliver a catchable SIGTERM")
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "clearwave.db"
             proc = self._start(_armed_idle_script(db))

@@ -61,6 +61,87 @@ def _compose_services(text: str) -> dict[str, str]:
     return services
 
 
+def _yaml_list_entries(block: str, key: str) -> list[str | dict[str, str]]:
+    """Parse a compose list of scalars or single-level maps under `key`."""
+    entries: list[str | dict[str, str]] = []
+    key_indent: int | None = None
+    item_indent: int | None = None
+    current: dict[str, str] | None = None
+
+    def finish() -> None:
+        nonlocal current
+        if current is not None:
+            entries.append(current)
+            current = None
+
+    for line in block.splitlines():
+        raw = line.rstrip()
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        stripped = raw.strip()
+        if key_indent is None:
+            if stripped == f"{key}:" or stripped.startswith(f"{key}:"):
+                key_indent = indent
+            continue
+        if indent <= key_indent:
+            finish()
+            break
+        if stripped.startswith("- "):
+            finish()
+            item_indent = indent
+            rest = stripped[2:]
+            if rest.endswith(":") or ": " in rest:
+                field, _, value = rest.partition(":")
+                current = {field.strip(): value.strip()}
+            else:
+                entries.append(rest)
+            continue
+        if current is not None and item_indent is not None and indent > item_indent:
+            field, _, value = stripped.partition(":")
+            current[field.strip()] = value.strip()
+            continue
+        finish()
+        break
+    finish()
+    return entries
+
+
+def _bind_mounts(block: str) -> list[tuple[str, str]]:
+    mounts: list[tuple[str, str]] = []
+    for entry in _yaml_list_entries(block, "volumes"):
+        if isinstance(entry, str):
+            parts = entry.split(":")
+            if len(parts) < 2:
+                continue
+            source, target = parts[0], parts[1]
+            if source.startswith(".") or source.startswith("/"):
+                mounts.append((source, target))
+        elif entry.get("type", "bind") == "bind":
+            source = entry.get("source") or entry.get("src")
+            target = entry.get("target") or entry.get("destination")
+            if source and target:
+                mounts.append((source, target))
+    return mounts
+
+
+def _mask_targets(block: str) -> set[str]:
+    masks: set[str] = set()
+    for entry in _yaml_list_entries(block, "tmpfs"):
+        if isinstance(entry, str):
+            masks.add(entry.rstrip("/"))
+        else:
+            target = entry.get("target") or entry.get("destination")
+            if target:
+                masks.add(target.rstrip("/"))
+    for entry in _yaml_list_entries(block, "volumes"):
+        if isinstance(entry, dict) and entry.get("type") == "tmpfs":
+            target = entry.get("target") or entry.get("destination")
+            if target:
+                masks.add(target.rstrip("/"))
+    return masks
+
+
 def _imported_modules(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     names: set[str] = set()
@@ -196,28 +277,51 @@ class IsolationTests(unittest.TestCase):
         self.assertIn("./state/ground_truth/merchant-b:/hidden-truth", compose)
         self.assertIn("./state/ground_truth/merchant-c:/hidden-truth", compose)
         self.assertIn("CLEARWAVE_GROUND_TRUTH_DB: /hidden-truth/ground_truth.db", compose)
-        self.assertNotIn("detector:", compose)
         services = _compose_services(compose)
-        self.assertIn("investigation", services)
-        self.assertNotIn("ground_truth", services["investigation"])
-        self.assertNotIn("CLEARWAVE_GROUND_TRUTH_DB", services["investigation"])
-        self.assertIn("CLEARWAVE_DB: /data/clearwave.db", services["investigation"])
-        self.assertIn("./state:/data", services["investigation"])
-        other_volume_hits = [
-            line
-            for line in compose.splitlines()
-            if "ground_truth" in line and "worker-merchant" not in line
-        ]
-        # env and volume lines live under worker services; no other service
-        # name should appear between a service header and those lines.
-        self.assertTrue(any("merchant-a" in compose for _ in [0]))
-        for line in other_volume_hits:
-            self.assertTrue(
-                "state/ground_truth/merchant-" in line
-                or "CLEARWAVE_GROUND_TRUTH_DB" in line
-                or line.strip().startswith("#"),
-                msg=f"unexpected ground_truth line outside worker mounts: {line}",
+        seen_state_bind = False
+        seen_repo_bind = False
+        for name, block in services.items():
+            if name.startswith("worker-"):
+                continue
+            self.assertNotIn(
+                "CLEARWAVE_GROUND_TRUTH_DB",
+                block,
+                msg=f"{name} must not receive the ground-truth environment variable",
             )
+            masks = _mask_targets(block)
+            for source, target in _bind_mounts(block):
+                source_path = source.rstrip("/")
+                target_path = target.rstrip("/")
+                if source_path in {"./state", "state"}:
+                    seen_state_bind = True
+                    required = f"{target_path}/ground_truth"
+                    self.assertIn(
+                        required,
+                        masks,
+                        msg=(
+                            f"{name} bind-mounts {source} at {target} without "
+                            f"masking {required}"
+                        ),
+                    )
+                if source_path in {".", "./"}:
+                    seen_repo_bind = True
+                    required = f"{target_path}/state/ground_truth"
+                    self.assertIn(
+                        required,
+                        masks,
+                        msg=(
+                            f"{name} bind-mounts repo root at {target} without "
+                            f"masking {required}"
+                        ),
+                    )
+        self.assertTrue(
+            seen_state_bind,
+            "parser found no ./state bind; the compose walker is broken",
+        )
+        self.assertTrue(
+            seen_repo_bind,
+            "parser found no repo-root bind; the compose walker is broken",
+        )
 
     def test_investigation_image_has_no_hidden_truth_path(self) -> None:
         dockerfile = (ROOT / "investigation" / "Dockerfile").read_text(encoding="utf-8")

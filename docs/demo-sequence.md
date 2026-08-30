@@ -1,288 +1,314 @@
-# Demo sequence
+# ClearWave judge demonstration runbook
 
-Orientation for a live Control Tower demo. This file is not a second product baseline.
+This is the rehearsal script for the seven-minute Control Tower pitch: about three minutes of explanation, followed by about four minutes in which the judges operate the product themselves.
 
-- Product direction: [`docs/prd.md`](prd.md)
-- Workstreams and seams: [`docs/ownership.md`](ownership.md)
-- Settled calls: [`DECISIONS.md`](../DECISIONS.md)
-- Current contract shapes: [`INTERFACES.md`](../INTERFACES.md)
-- Frozen contracts: [`docs/contracts/`](contracts/)
+**The judge uses a browser only.** The captain does not hand over a terminal, ask a judge to run a command, or take the keyboard back. The stack, its data, and its credentials are prepared before the pitch. Commands in this document are captain-only setup or recovery.
 
-If this file and the PRD disagree, the PRD governs. Correct the disagreement in `DECISIONS.md`, not here.
+All merchants, banks, payments, incidents and outages shown are simulated data produced by this project's simulator. Nothing shown represents or implies a real incident, outage or service problem at any named company. Real company names are used only to make the demonstration recognisable and realistic.
 
-## Operator runbook - copy-paste this under pressure
+## The one-sentence claim
 
-Wrong commands fail on stage. This section is the path that was actually run. Use the **offline** sequence unless live Kafka is already up and healthy before the pitch starts.
+ClearWave compares a merchant's cohorts with that merchant's recent behaviour and sibling cohorts, warns while a deviation is still developing, investigates without paging, and escalates the same record only when deterministic detection says it is an incident. It does not use a seasonal baseline and does not know recurring time patterns.
 
-### Which path to use
+## Captain pre-flight
 
-| Path | Standing |
-| --- | --- |
-| **Offline deterministic** (seed / detect / `investigation.vertical` / dashboard) | **Safe stage path.** Proven. This worktree: seed+detect stored a critical `provider-p2` incident; `investigation.vertical` diagnosed it; `GET /api/overview` showed `lifecycle_state: diagnosed` with a narrative. An earlier rehearsal timed all three guaranteed scenarios at 2 minutes 48 seconds. Model calls vary (about 45-100+ seconds). Do not promise three fresh model calls inside four minutes. |
-| **Live containerised Kafka** | The worker -> Kafka -> detector hop works. The operator experience on this tree does **not** produce a judge-fired incident. Do not open a four-minute demo with this path. Commands below are from a live Docker run plus CLI checks here; this worktree did **not** re-run Docker. |
+Do this off screen, preferably at least **60 minutes before the pitch**, and leave the stack running. The history preparation itself takes seconds: it writes eight event-time hours of healthy traffic so the live detector does not start cold. The extra lead time gives the live stack time to settle and gives the captain time to recover without putting that work in front of the judges.
 
-### 0. Once per machine
+From the repository root:
 
 ```sh
-make install
+make stack-up
+make stack-status
 ```
 
-Use `.venv/bin/python` for every command below.
+`make stack-up` is the clean start. It replaces `state/clearwave.db`, prepares healthy history, then starts Kafka, Schema Registry, all three workers, the detector daemon, the investigation daemon and the dashboard. Open the printed URL: **http://127.0.0.1:8082/**.
 
-Do **not** run `python3 -m pip install -r detector/requirements.txt` on the system interpreter. It fails with PEP 668 (`externally-managed-environment`) on Homebrew Python 3.14.
+The exact pre-flight check is:
 
-Do **not** run bare `python3 -m investigation.vertical`. It fails with `ModuleNotFoundError: No module named 'openai'` before it parses flags. The docstring in `investigation/vertical.py` still advertises that command; it is wrong on this machine.
+- `make stack-status` reports `broker: healthy` and `schema-registry: healthy`.
+- Its `workers:` line reports merchant-a, merchant-b and merchant-c running; `detector:` and `investigation:` also report running.
+- Its `dashboard:` line reports the dashboard answering at `http://127.0.0.1:8082/api/overview`.
+- The detection baseline is warm: the measured clean start is **481 buckets / about 5,777 attempts** for `merchant-b` / `adyen`, against a requirement of 60 buckets.
+- The merchant-relative floor is warm separately: **about 8.01 hours / about 11,549 payments**, against 6 hours / 200 payments.
+- The browser opens on **Revenue impact**, showing **No revenue at risk**, `active_incident_count: 0`, and no `Watching` rows.
 
-`OPENAI_API_KEY` must be set for a model diagnosis. Copy `.env.example` to `.env` and fill the key. Do not print it. Without the key the incident still stores and the dashboard still renders; the narrative is `agent_unavailable`.
+For the final quiet check, leave the healthy stack untouched for the verifier's **120-second** quiet observation. The expected result is zero incident rows, zero watches and zero active incidents. The captain can do that before the judges arrive; do not spend the judges' four minutes proving the quiet window.
 
-### 1. Stage path: cold checkout to a diagnosed incident on screen
+Confirm the model key and Slack webhook are available without printing either secret. Slack delivery is part of the verified collapse beat. Do not add phone credentials to the primary path: a phone call is not a required beat of this rehearsal.
 
-Two terminals. Repository root. Same `$DB`.
+If any pre-flight condition fails, do not start the live sequence. Use the recovery plan below or the offline fallback, both off screen.
 
-This is the exact sequence run in this worktree. Port `18080` was used because `8080` / `8090` may already be taken on a shared machine. The product default is `8080` (`CLEARWAVE_SURFACES_PORT`). If you change `PORT`, use that value in the browser URL.
+## Judge-operated sequence
 
-Terminal A - dashboard:
+The three masthead controls are the only controls the judge needs:
+
+- **Developing deviation** publishes a decline probability of **0.12**.
+- **Collapse** publishes a decline probability of **0.95**.
+- **Clear** stops the introduced deviation.
+
+Both stages target the one named demo input, `{merchant_id: merchant-b, provider: adyen}`, with the worker's `provider_timeout` decline shape. This is a control input, not a scenario identifier. The detector receives only the resulting payment traffic.
+
+### 0. Start on healthy traffic
+
+**What the judge clicks**
+
+Nothing yet. Hand over with the browser already on **Revenue impact**. Invite the judge to look at the healthy board, then point to the masthead controls without pressing one.
+
+**What should appear**
+
+The board says **No revenue at risk**. It shows no active incidents and no watch rail. The provenance strip identifies SQLite and `CLEARWAVE_DB`; the traffic is live simulator traffic, not a pre-created incident.
+
+**What the captain says**
+
+> "This is a clean, warm store. The board has no incident and no watch. You will change the traffic with these controls; the detector and investigator will do the rest."
+
+**What it proves**
+
+Healthy traffic stays quiet. The baseline exists before the action, and the judge is operating the input rather than selecting a hidden diagnosis.
+
+**If it does not happen**
+
+- If the dashboard does not load, say: "The product surface is not answering, so I will not call an empty screen healthy." Refresh once. If it still fails, abandon the live path and use the prepared offline evidence tour.
+- If an incident or watch is already present, do not explain it away as live detection. Read the browser's source and state, then restart the stack off screen with `make stack-up`. If there is not time, use the offline fallback.
+- Do not delete rows or edit the database in front of the judges. That would invalidate the clean-start claim.
+
+### 1. Start the developing deviation
+
+**What the judge clicks**
+
+The judge clicks **Developing deviation** in the masthead.
+
+**What should appear**
+
+The status text immediately says that the judge started a developing deviation in merchant-b's traffic on provider adyen. The board continues polling the same store. Within the verifier's **240-second** stage-one allowance, a single **Watching** row should appear for the affected cohort, with:
+
+- a stored projected loss per hour labelled **if this continues**;
+- the cohort shown as merchant-b / adyen;
+- the watch reasons and detection-floor chips;
+- a worsening trajectory; and
+- no incident in the queue and no active-incident count increase.
+
+A measured example was **USD 2,711.21/hour** against a typical hourly attempted value of **USD 45,950.68**. That is an example from a measured run, not a number to promise on stage; live figures are copied from the current record.
+
+**What the captain says while waiting**
+
+> "You have changed the input. The detector is measuring event-time buckets against merchant-b's recent behaviour and its siblings. It is not deciding that this is an outage yet, and the model is not deciding that either."
+
+When the rail appears:
+
+> "This is a watch, not an incident. It gives the operator an early, merchant-relative warning and shows which floors are still open."
+
+**What it proves**
+
+A developing deviation is visible before the incident floors are crossed. The projected loss is useful preventive advice, not realised loss. The watch is a C3 row in the same lifecycle, not a fabricated warning card and not a page.
+
+**If it does not happen**
+
+- First check the judge status text in the browser. If it says Kafka could not be reached, say: "The control did not deliver the input, so this is not evidence about detection." Do not claim that an incident fired. Move to the prepared fallback.
+- If the status confirms delivery but no watch appears after 240 seconds, allow at most one extra 45-second detector sweep if the judges are still engaged. Say: "The input was delivered, but the measured contrast has not produced the watch in this window; I will not relabel silence as success." Then abandon this step and continue with the prepared static evidence tour rather than debugging live.
+- If an incident appears immediately, call it what the board calls it. Do not call it a watch. The 0.12 stimulus or the store conditions did not produce the intended near-miss; press **Clear** only if needed, and move to recovery.
+- If an unrelated watch appears, do not attribute it to the judge's action. Restart the clean stack off screen if time allows; otherwise do not use that row as evidence for this sequence.
+
+### 2. Show prevention and the no-page boundary
+
+**What the judge clicks**
+
+After the watch appears, the judge clicks **Escalation** in the view bar, then returns to **Revenue impact**. No further trigger is pressed.
+
+**What should appear**
+
+The watch remains in the quiet **Watching** rail, outside the incident queue and outside the active-incident figures. The Escalation view says that no incident has escalated yet. No Slack message, phone call or pending call is recorded.
+
+The investigation daemon claims a watch and can write a C4 result while the lifecycle remains `watching`; it returns the row to `watching` and does not page. The browser's primary watch rail exposes the deterministic preventive advice - projected impact, trajectory and the floors - rather than a causal diagnosis.
+
+**What the captain says**
+
+> "The system is investigating this while it is still only a watch, so a TAM has something to act on before the cliff. It deliberately does not page: a near-miss is worth attention on the board, but waking Slack or a phone before the incident floors are crossed would turn an early warning into alert noise."
+
+If the wait is visible:
+
+> "The board is polling the store. The worker, detector and investigator are doing work; the screen is not inventing a conclusion while they do it."
+
+**What it proves**
+
+Prevention is a real lifecycle, not a lower severity incident. A watch can receive investigation and advice without becoming an incident, and the no-page rule is structural.
+
+**If it does not happen**
+
+- If Escalation shows a channel or pending call for the watch, do not proceed as if that is expected. Say: "That is a routing failure, not a page I will present as correct." Use the static fallback and record the finding.
+- If the watch disappears before the judge sees it, say: "The current measurement no longer supports the watch, so the detector withdrew it rather than leaving stale advice." If the rail disappears immediately after the button press, abandon the live sequence; do not claim prevention was shown.
+- If the judge asks to open the watch's full causal narrative, be direct: "The primary board shows the watch evidence and advice; the detailed C4 view is available after the record becomes an incident." Do not imply the watch rail is a model diagnosis.
+
+### 3. Escalate the same record by collapsing the deviation
+
+**What the judge clicks**
+
+The judge clicks **Collapse** in the masthead.
+
+**What should appear**
+
+The status text says the judge started the collapse in merchant-b's merchant-b / adyen traffic. The board keeps measuring. Allow up to the verifier's **480-second** stage-two window; a measured end-to-end run produced diagnosis in about **113.5 seconds** after the collapse control.
+
+When the floors are crossed:
+
+- the watch becomes the incident on the **same incident id**;
+- the affected cohort sharpens from `{merchant_id: merchant-b, provider: adyen}` to include the observed country, for example `{merchant_id: merchant-b, provider: adyen, country: CO}`;
+- the record enters the incident queue and Revenue impact shows the stored financial impact;
+- the investigation result appears in Incident detail with a leading hypothesis, alternatives, confidence and recommended next action; and
+- the Escalation view records the Slack delivery for the stored severity.
+
+Click the incident row in **Incident queue**, then show **Incident detail** and **Evidence trail**. Point to the incident id first, before discussing the sharper cohort. The queue's severity and the investigation's diagnostic confidence are separate fields.
+
+**What the captain says while waiting**
+
+> "You have supplied the second stage. Detection still decides when the data crosses its fixed floors; the model is not deciding whether it is an incident. Once it is detected, the investigator queries the evidence surface and writes a bounded explanation."
+
+When the row appears:
+
+> "This is the same record, now sharper because the measured drop is larger. It has moved from early warning to incident, and Slack is a consequence of the stored severity - not of the model's confidence."
+
+At the detail view:
+
+> "These are observations, alternatives and the next investigation step. The figures came from executed evidence queries; the narrative does not get to make up a number."
+
+**What it proves**
+
+The system escalates a real, sustained deviation rather than the judge's button press. One cohort keeps one record across watch and incident. Detection is early and merchant-relative, investigation is evidence-bound, and Slack routing follows deterministic business priority.
+
+**If it does not happen**
+
+- If the collapse status reports that Kafka is unreachable, say: "The second input did not deliver, so I will not claim a collapse." Keep the watch visible if it is still true, then move to the static fallback.
+- If no incident appears after 480 seconds, inspect the browser only: if the watch is present, say that the sustained detection floors were not crossed in the demonstration window; if it is absent, say that the deviation recovered or was withdrawn. Do not call either state a successful incident. Show the watch rail or the healthy board and move on.
+- If an incident appears but its investigation is still running, open Incident detail. The board should say that the investigation is running, while localisation, money and the record remain available. Say: "The deterministic result is here; the bounded narrative has not completed yet." Do not wait indefinitely or invent the narrative.
+- If the incident has no narrative because the model is unavailable, show the evidence trail if present and say: "The agent failed closed. The incident, money and executed evidence remain; only the narrative is unavailable." Continue to the clear step if the record is live.
+- If the stage-two id differs from the stage-one id, do not say "same record." Say: "The detector produced a new record, so the identity guarantee is not demonstrated on this run." Show the available stored record and move on.
+- If Slack is `not_configured` or `failed`, say exactly that. The dashboard is still a valid stored incident surface, but external Slack delivery was not observed. Do not imply delivery from the Escalation binding diagram.
+
+### 4. Clear and recover
+
+**What the judge clicks**
+
+The judge clicks **Clear** in the masthead.
+
+**What should appear**
+
+The status text says the judge cleared the introduced deviation. Allow up to the verifier's **120-second** clear window and the detector's next sweep. Traffic returns toward its healthy shape. The active-incident count returns to zero and the watch rail is empty. The earlier record may remain as closed history; the board must not present its old loss rate as money still running.
+
+**What the captain says while waiting**
+
+> "You cleared the input; ClearWave is not remediating anything. The worker changes because you pressed Clear. The detector observes recovery, and the board stops presenting the open exposure when the stored lifecycle says it is no longer active."
+
+When healthy:
+
+> "The loop is closed: healthy traffic, watch, investigation, incident, and recovery. The system advised a human; it did not reroute or change production on its own."
+
+**What it proves**
+
+The system can clear stale preventive state, recover the board to no active exposure, and preserve the prior record as history without claiming that historical money is still at risk.
+
+**If it does not happen**
+
+- If the clear status says Kafka was unreachable, say: "The clear command did not deliver, so the traffic was not changed by this press." Do not claim recovery. Continue with the incident detail and evidence trail, then end the demo honestly.
+- If the worker status is successful but the board still shows an active row after 120 seconds, say: "The input was cleared, but the detection sweep has not closed this record in the available window." Do not hide the row or call it healthy. Move to the recovery fallback.
+- If the watch rail remains but the incident is gone, keep waiting only until the 120-second allowance. A stale watch is not a healthy result; say so and stop debugging in front of judges.
+- If Revenue impact says no active exposure but a closed merchant card says **Was costing / hour** or **Was at risk**, that is expected history. Point out the past tense. If it says **Loss rate** or **Revenue at risk** for a closed source, do not present the screen as recovered; use the static fallback.
+
+## Captain-only recovery fallback
+
+The primary path is live and browser-operated. Recovery commands are never given to judges.
+
+1. **Dashboard down or stack not warm:** refresh once. If it still fails, check `make stack-status` off screen. Restart with `make stack-up` only if there is enough time to let the clean start complete. Do not run a second ad hoc detector or point the dashboard at a different SQLite file.
+2. **Broker or worker down:** do not press a control and narrate a result. The status response distinguishes `delivered: false` from a delivered command. Say the input did not fire and use the offline evidence tour.
+3. **Model unavailable:** the deterministic incident is still valid. Show the incident's cohort, change, money and evidence trail, and say the narrative is unavailable. Never substitute a hand-written cause.
+4. **Slack unavailable:** show the stored dashboard incident and the Escalation binding. Say Slack was not configured or delivery failed. A binding is not proof of delivery.
+5. **No time to recover:** use a prepared offline store and dashboard only as a static evidence tour. Label it as offline and precomputed. It demonstrates measurement, investigation and citations, but it does **not** demonstrate a live judge-triggered watch or live recovery.
+
+The broker-free fallback is for the captain's preparation, not the judge's primary interaction:
 
 ```sh
-DB=/tmp/clearwave-demo.db
-PORT=18080
-rm -f "$DB" "$DB-wal" "$DB-shm"
-CLEARWAVE_SURFACES_QUIET=1 .venv/bin/python -m surfaces.server \
-  --host 127.0.0.1 --port "$PORT" --db "$DB"
+.venv/bin/python -m detector seed && .venv/bin/python -m detector detect
+.venv/bin/python -m investigation.vertical --investigate-only --db state/clearwave.db
 ```
 
-Wait until the process is listening. Open `http://127.0.0.1:18080/`. An empty store shows zero incidents.
+Use the same `CLEARWAVE_DB=state/clearwave.db` for every process. Do not run the fallback over the live store or mix it with the live stack. Do not use `--mode anomaly`; it is not a supported flag.
 
-Terminal B - seed, detect, investigate:
+## Technical defence notes
 
-```sh
-DB=/tmp/clearwave-demo.db
-.venv/bin/python -m investigation.vertical --db "$DB"
-```
+### What is deterministic, and what is not?
 
-Wait for `Lifecycle after investigate: diagnosed`. The dashboard polls the same file. Select the incident. Stop Terminal A with Ctrl-C.
+**Deterministic code decides:**
 
-What this produced here:
+- ingestion and normalisation into one canonical event shape;
+- event-time bucketing behind the lateness watermark;
+- the trailing baseline and parent/sibling comparisons;
+- the cohort-localisation path and its stop rule;
+- the watch and incident floors;
+- the financial calculations written to C3;
+- severity from business-impact inputs; and
+- escalation routing and paging from the stored severity and lifecycle.
 
-- Incident cohort `{provider: provider-p2}`, conversion 0.849744 -> 0.52, severity `critical`, GMV at risk USD 1648.72, loss per hour USD 19784.62
-- Investigation `outcome=ambiguous`, `diagnostic_confidence=medium`, `narrative_available=true`
-- Dashboard `GET /api/overview`: `active_incident_count: 1`, `lifecycle_state: diagnosed`
-- `POST /api/trigger` and `POST /api/judge/trigger` answer `wired: true`, but with no broker running they report `delivered: false` and say so - this path injects nothing and does not pretend to
+The fixed incident floors are a two-proportion z-score at or below **-3**, an absolute conversion drop of at least **0.02**, at least **30 attempted payments**, and **3 sustained buckets**. The watch is deliberately earlier: z-score at or below **-1.5**, an absolute drop of at least **0.01**, enough volume, and a worsening trajectory, while the incident floors are still open. The clauses are conjunctive; one weak signal is not enough.
 
-This path is the broker-free default `detector seed` scenario (`provider_incident`). It is not Kafka, and it is not the judge clicking Fire hidden incident.
+The live control itself is deterministic too: it targets merchant-b / adyen and publishes the selected stage. That fixed target is the demo input, not a leak of hidden truth. The detector never receives a scenario name, cause, intended magnitude or ground-truth record.
 
-### Investigating a store that is already detected against
+**The non-deterministic boundary is investigation.** The model can choose among the allowlisted evidence tools and write the C4 narrative or a typed answer. Its run is bounded. Tool responses, query ids, citations and all figures are still from the deterministic evidence gateway and the shared store.
 
-This is the join from detection to investigation, and it is a product command now. Use it whenever
-the store was written by something other than `investigation.vertical` itself - a live Kafka
-consume, the judge toggle, a store you preloaded before the pitch.
+### What does the model decide, and what does it not decide?
 
-```sh
-DB=/tmp/clearwave-live.db
-.venv/bin/python -m investigation.vertical --db "$DB" --investigate-only
-# or, to name the incident rather than take the newest detected one:
-.venv/bin/python -m investigation.vertical --db "$DB" --incident-id inc-2026-08-30-715ab9c3
-```
+The model writes the investigation narrative: confirmed facts, a leading hypothesis, competing explanations, uncertainty, missing evidence and a recommended next action. It can answer a typed business question through the same evidence gateway.
 
-`make investigate DB=/tmp/clearwave-live.db` is the same thing, and takes an optional
-`INCIDENT=inc-...`.
+It does **not** decide whether traffic is anomalous, what cohort is reported, what severity is assigned, whether Slack or a phone should fire, or what any number is. Those are code paths before and after the model.
 
-What it does and does not do:
+Every figure in a model answer must be tied to a query id from a query that actually executed. The gateway validates that citation. An asserted number without an executed citation is a failed answer, not a number the UI should quietly trust.
 
-- It **never seeds, never detects, and never resets the store.** It claims one incident that is
-  already `lifecycle_state: detected`, runs the real investigation runner against it, persists C4,
-  and moves that incident to `diagnosed`.
-- With no `--incident-id` it takes the **newest detected** incident (`onset` descending). With one,
-  it takes exactly that incident, or refuses by name and lists what is detected.
-- A store with nothing detected is an error that says so and points at `detector detect`. It does
-  not quietly seed one for you.
-- A store path that does not exist is an error. Investigate-only never creates a store.
-- `--keep` has nothing to do with this. `--keep` still seeds and detects; it only skips deleting the
-  file first. `--investigate-only` is the flag that skips seed and detect.
+### Why is a watch preventive?
 
-The default `python3 -m investigation.vertical` behaviour is unchanged: seed, detect, investigate,
-against a store it recreates. The proven stage path in section 1 above is exactly as it was.
+A watch is raised before the four incident floors are crossed. It is investigated while its lifecycle is still `watching`, and it can carry projected impact, leading indicators, trajectory and the floors that remain open. It intentionally does not page.
 
-To have a diagnosis appear without typing that command, run the watcher against the same file:
-`.venv/bin/python -m investigation --db "$DB"` or `make investigate-daemon DB=...`. Compose service
-`investigation` bind-mounts `./state` as `/data/clearwave.db` and runs as uid 1000 so the host can keep
-writing that file; create `state/` before `docker compose up`. Host detector and dashboard must use
-`state/clearwave.db` (not `/tmp/clearwave-live.db`) or the daemon never sees the incident. Stop with
-Ctrl-C or SIGTERM. Do not run the watcher and `make investigate` against the same store on purpose;
-claiming is safe (one winner) but the loser has nothing to do.
+Not paging is a feature: the operator gets lead time on the board without turning every near-miss into an interruptive Slack or phone alert. C5 refuses a watch by lifecycle allowlist before it reads severity, claims a channel or fires a side effect. The watch severity is also forced to `low` as defence in depth. When the floors later pass, detection upgrades the same row rather than opening a second record.
 
-### The other two guaranteed scenarios
+### How do evidence and uncertainty work?
 
-`detector seed --scenario` only accepts `healthy`, `provider_incident`, `confounded`. It does not accept the catalogue names `provider-degradation`, `provider-issuer-confounded`, or `high-impact-small-percentage`. Those names exist on `python -m worker.worker --scenario` (live Kafka, and they require that scenario's own merchant: merchant-c, merchant-c, merchant-a).
+The investigator receives measured C2 responses, not hidden simulator state. A weak or structurally inseparable result stays weak. The result can say that evidence does not establish a cause, list competing explanations, identify why they cannot be separated, and name the observation that would discriminate them.
 
-The other two offline generators live in `tests.synthetic` and need hand-written ingest. That is a rehearsal workaround, not a supported operator command. If you need those two on screen, preload the stores before the pitch.
+That is intentional failure behaviour. A confident sentence is not a successful diagnosis if the evidence does not support it. Diagnostic confidence describes causal evidence; it is independent of business severity.
 
-### Live Kafka path - what genuinely works, and what does not
+### How is business impact represented?
 
-The Kafka hop is real and the judge trigger now fires through it. A 60-second consume on *healthy* traffic still stores no incident, which is correct: you have to inject something first, and then give detection enough sustained buckets to see it.
+`gmv_at_risk` and `loss_per_hour` are deterministic figures from the measured incident window. The separate `projected_loss_per_hour` on a watch is:
 
-Observed on a live Docker run: `docker compose up -d kafka schema-registry` brought the broker up; workers published; `.venv/bin/python -m detector consume --seconds 60 --detect` decoded Schema Registry frames and wrote the SQLite store (1319 accepted, 0 rejected, **incident null** on healthy traffic); `.venv/bin/python -m worker.inject merchant-a --provider dlocal --effect decline` dropped merchant-a/dlocal approval from 0.876 to 0.115. A stored C3 with money after that inject was **not** observed in that run, because 60 seconds is not enough sustained contrast.
+> the measured conversion shortfall applied to that cohort's typical hourly attempted value from the trailing window.
 
-A later run with the three compose workers and a longer consume did produce one, through the dashboard toggle: clicked on, `clearwave-worker-merchant-b` logged `incident control: now targeting {'provider': 'adyen'}`, merchant-b/adyen conversion fell from ~90% to 0-18%, `consume --seconds 180 --detect` took 4,254 records with 0 rejected, and detection stored `inc-2026-08-30-715ab9c3` on `{merchant-b, adyen, CO}` at USD 3.89 GMV at risk. Toggled off, conversion recovered and the next sweep returned `incident: null`. **Three minutes of consume, not one**, is what makes the difference.
+It means what an hour at the currently measured rate would cost **if it continues**. It is **not money already lost**. It is not a platform total, and it never ranks severity. Severity uses the stored business-impact inputs and its fixed ceilings; it does not read the watch's projected figure as a paging instruction.
 
-**Consume a healthy baseline BEFORE you inject, not after.** This is the failure that looks like a
-broken detector and is not one. The baseline is a trailing window on the same cohort
-(`detector/config.py:BASELINE_TRAILING_BUCKETS`), so if the injection was already running when the
-consume started, the whole history detection can see is degraded and there is no contrast in it.
-Observed here: merchant-b/adyen sitting at 0.045 conversion against ~0.87 on every other cohort,
-6111 records consumed with 0 rejected, and `incident: null` - correctly, because nothing *changed*
-inside the window. Healthy consume first, then inject, then keep consuming on the same store.
+Retries are counted as attempts where appropriate but not as new customer payments for payment-level conversion or value. Currency conversion uses the frozen reporting table, so replaying the same events does not silently change the answer.
 
-A run that did produce one, end to end, for the shape to copy: six minutes of healthy traffic into a
-fresh store (`--from-latest`), then `worker.inject merchant-b --provider adyen --effect decline
---decline-reason provider_timeout`, then six more minutes on the same consume. Detection stored
-`inc-2026-08-30-9797b639` on `{country: CO, merchant-b, adyen}`, conversion 0.653226 -> 0.065217,
-GMV at risk USD 4826.64, loss per hour USD 57919.73, severity `high`. `make investigate DB=...` then
-diagnosed that stored incident, and severity `high` escalated to dashboard, Slack and phone.
+### What does ClearWave deliberately not automate?
 
-Corrected order, if the broker is already up:
+It does not remediate, reroute, change provider configuration, or act on an operator's behalf. It tells a human what is happening, how much is exposed, what the evidence supports, and what to investigate next.
 
-```sh
-docker compose up -d kafka schema-registry
-# wait until kafka and schema-registry are healthy
+That is the right boundary for payments. An incorrect automatic reroute can amplify a provider or issuer problem, violate a merchant's routing policy, or create a second outage. A human owns the production action; ClearWave supplies measured context and an auditable recommendation.
 
-# worker first - inject before this is consuming and the command is silently lost
-PYTHONUNBUFFERED=1 .venv/bin/python -m worker.worker merchant-a --interval-seconds 0.2
+### What are the honest limits?
 
-# only after that worker is publishing:
-.venv/bin/python -m worker.inject merchant-a --provider dlocal --effect decline
+The current baseline is a trailing window on the same merchant and its sibling cohorts. There is **no seasonal baseline**. ClearWave does not know that Friday nights differ from Tuesday mornings and must never claim that it does.
 
-CLEARWAVE_DB=/tmp/clearwave-live.db .venv/bin/python -m detector consume --seconds 60 --detect
-```
+Adding that capability would require replayable historical data, an hour-of-week baseline implementation, enough history per merchant and cohort, missing-data and holiday handling, and a validation plan proving that seasonal context reduces false positives without hiding real incidents. That is future work, not a property of this demo.
 
-Then point the dashboard at the same `CLEARWAVE_DB`. Expect `incident: null` after 60 seconds unless you already have minutes of event-time contrast; consume for around three minutes after injecting if you want a stored C3. The judge toggle in the masthead is the other way to inject - on publishes the start command, off publishes the stop - and it targets `merchant-b`/`adyen`, so run the compose workers if you use it.
+The demo is also simulated, compose-based infrastructure rather than a production deployment. External corroboration is optional, and a provider status page cannot prove causality. The system can say what the observed payment evidence establishes and what it does not.
 
-`--mode anomaly` does not exist (`unrecognized arguments: --mode anomaly`). Replacements that do exist: omit incident flags for healthy traffic and inject after the worker is up; or `--incident-provider dlocal --incident-effect decline`; or `--scenario provider-degradation` on **merchant-c** (not merchant-a). A `--scenario` run stops when `--scenario-duration-seconds` elapses, and both SIGINT and SIGTERM run the shutdown path so the C6 record is closed. Healthy-traffic workers (no `--scenario`) stay unbounded.
+## What stays out of the demo
 
-`make live` is not one step. Its recipe is `.venv/bin/python -m detector consume --seconds 60 --detect`. It runs on the venv, but it starts neither Kafka nor a worker and does not guarantee an incident. `make e2e` is the one that brings the stack up and consumes; it now consumes for three minutes rather than sixty seconds (`CONSUME_SECONDS`, default 180), because sixty is not enough sustained contrast. It still does not inject for you.
+These items are explicitly **not part of the primary path**:
 
-Host worker stdout is block-buffered without `PYTHONUNBUFFERED=1`. The worker image sets this; a host command must too. An empty log is not a dead worker.
+- **Any terminal or command operated by a judge.** The judge only clicks the browser controls and view tabs.
+- **The phone call.** The current binding is dashboard for low/medium, dashboard plus Slack for high, and dashboard plus Slack plus phone for critical. A phone requires correctly configured Twilio credentials and a critical stored severity; it is not needed to prove this sequence and was not the verified collapse beat.
+- **Ask the data.** It is an explicit model request, not part of the four-minute flow. Do not add a second model wait while the judge is watching the lifecycle.
+- **A full causal narrative on the watch rail.** The watch rail's visible advice is deterministic projected impact, trajectory and floors. The detailed investigation surface is shown after the record becomes an incident; do not imply that the rail itself is a model diagnosis.
+- **The three hidden scenario names or the ground-truth evaluator.** The judge sees the observable effect, never a scenario catalogue. Evaluator scoring is post-run validation, not a judge control.
+- **A seasonal, hour-of-week or Friday-night claim.** None exists in the current baseline.
+- **Exact live money or severity promises.** Quote only figures on the current stored record. A measured example is not a guarantee; severity belongs to the detector.
+- **Rerouting, remediation or automatic action.** The recommended next action is advice only. No production system is changed by ClearWave.
+- **A mixed live/offline store.** Every live consumer uses the one `CLEARWAVE_DB` file. An offline seed or a second dashboard pointed at another file is a different demonstration and must be labelled as such.
 
-Control-topic consumers use `auto.offset.reset=latest` and a new group, so a command published before the worker is up is dropped. Worker first, then inject.
-
-Compose workers run `command: ["merchant-a"]` (etc.) with no `--scenario`, so the long-running healthy-traffic containers never write C6. To produce a scorable record, run a one-off scenario worker that inherits the per-merchant volume (`docker compose run --rm worker-merchant-c merchant-c --scenario provider-degradation --scenario-duration-seconds 12`). The evaluator then reads `state/ground_truth/` from the host: `python3 evaluator/score.py diagnosis.json --store-dir state/ground_truth`.
-
-Standalone `docker-compose` is not required; the `docker compose` subcommand is. Pre-pull images on the demo machine (Schema Registry is a large layer). Prefer `docker compose up -d kafka schema-registry worker-merchant-a worker-merchant-b worker-merchant-c` over a bare `up -d`, which also pulls `devspace`.
-
-More operator detail for the consumer itself: [`docs/live-ingestion.md`](live-ingestion.md).
-
-### Do not run these
-
-| Command | What happens |
-| --- | --- |
-| `python3 -m worker.worker ... --mode anomaly` | `unrecognized arguments: --mode anomaly` |
-| `python3 -m pip install -r detector/requirements.txt` | PEP 668 `externally-managed-environment` |
-| `make live` as the demo opening | consume only; no Kafka, no worker, no guaranteed incident |
-| Host worker without `PYTHONUNBUFFERED=1` | empty log while the worker is alive |
-| Inject, then start the worker | command silently lost |
-| `python3 -m investigation.vertical` on system Python | `No module named 'openai'` |
-| Judge **Fire hidden incident** with no broker | reports `delivered: false` and injects nothing; start Kafka and the workers first |
-| `investigation.vertical --keep` on a prepared store | reseeds anyway; use `--investigate-only` |
-
-## Simulated demo data
-
-All merchants, banks, payments, incidents and outages shown are simulated data produced by this project's simulator for demonstration. Nothing shown represents or implies a real incident, outage, or service problem at any named company. Real company names are used only to make the demonstration recognisable and realistic.
-
-## What the product is
-
-A payment-operations Control Tower for Technical Account Managers. Conversion can silently degrade across providers, issuers, methods, countries, retries, application and infrastructure. The job is not only to notice that conversion dropped. It is to answer where the degradation is, how much money it is costing, what evidence supports the diagnosis, how confident we are, and what the TAM should investigate or do next. The system diagnoses and recommends. It must not automatically remediate production systems. Authoritative wording: [`docs/prd.md`](prd.md) section 1.
-
-## End-to-end flow
-
-Layer names follow [`docs/l4-investigation-prd.md`](l4-investigation-prd.md). Owners follow [`docs/ownership.md`](ownership.md).
-
-1. **L1 Simulated world** - owner W1 (`raul`). Merchant simulators emit native heterogeneous events onto raw Kafka topics. Hidden ground truth stays quarantined. See C1 in `INTERFACES.md`, [`docs/prd.md`](prd.md) sections 5 and 27, and the 2026-08-29T19:04Z Kafka and merchant-shape entries in `DECISIONS.md`.
-2. **L2 Ingestion and normalisation** - owner W2 (`andres`). W2 consumes those raw topics, normalises them into one canonical schema (C1b), and persists the canonical representation in SQLite. See C1b in `INTERFACES.md` and the 2026-08-29T19:17Z SQLite entry in `DECISIONS.md`.
-3. **L3 Deterministic detection** - owner W2 (`andres`). Detection measures conversion, localises a cohort, prices financial impact, assigns severity from business impact alone, and writes a C3 incident with `lifecycle_state: detected`. No LLM in this layer. See [`docs/contracts/incident.md`](contracts/incident.md) and C3 in `INTERFACES.md`.
-4. **L4 Investigation** - owner W3 (`derek`). L4 polls SQLite for detected incidents, claims one, queries C2 evidence tools, and persists a C4 result with cited evidence. It does not consume Kafka. See [`docs/contracts/investigation-result.md`](contracts/investigation-result.md), [`docs/contracts/evidence-tools.md`](contracts/evidence-tools.md), and the 2026-08-29T19:43Z handoff entry in `DECISIONS.md`.
-5. **L5 Surfaces and escalation** - owner W4 (`juank`). The dashboard, judge trigger, Slack notification and phone call read C3 and C4 and bind severity to channels. W4 holds no domain logic. See [`docs/prd.md`](prd.md) sections 19, 24 and 25, and the W4 hard rule in [`docs/ownership.md`](ownership.md).
-
-The offline smoke path that must keep printing all five stages is `python3 stubs/slice.py` ([`docs/integration-guide.md`](integration-guide.md)).
-
-## Live demo order
-
-Pitch time is 7 minutes, roughly 3 speaking and 4 with judges operating it ([`DECISIONS.md`](../DECISIONS.md) 2026-08-26T23:43Z). The product experience inside that window is the four-minute sequence in [`docs/prd.md`](prd.md) section 25.
-
-The guaranteed demo path has exactly three scenarios ([`DECISIONS.md`](../DECISIONS.md) 2026-08-29T19:17Z):
-
-1. provider degradation
-2. the observationally inseparable provider-versus-issuer confounder
-3. a high-impact small-percentage change on a large merchant
-
-Rehearse those three. Remaining scenarios in [`docs/prd.md`](prd.md) section 26 stay documented without a build guarantee. Do not add a fourth guaranteed scenario.
-
-A live run is supposed to fire **one** hidden incident. The judge must not be told which of the three it is ([`docs/prd.md`](prd.md) section 27; W4 owns the trigger control, W1 owns injection). The toggle now does fire one, through `worker.inject`, and no scenario identifier crosses the boundary in either direction. Two caveats before you open with it: it needs the broker and the compose workers up, and it needs roughly three minutes of consume afterwards for detection to have the sustained contrast. The offline Operator runbook above remains the safer opening because it needs no broker at all.
-
-| Step | What appears | Which guaranteed scenarios this step is for |
-| --- | --- | --- |
-| 0. Establish normal world | Multiple merchants generating realistic traffic. No incident yet. | Baseline for all three. |
-| 1. Judge fires a hidden incident | W4 trigger calls W1 injection. Nothing downstream receives a scenario identifier. | Any one of the three, chosen without being revealed. |
-| 2. Detector reacts | C3 incident: affected cohort, what changed, onset. Queue is ordered by stored severity, never by recency. | All three. Localisation must work without a hard-coded rule for the slice. |
-| 3. Business impact appears | C3 `financial_impact` and `severity` on the incident. Priority is money, not how strong the statistics look. | All three. The high-impact small-percentage large-merchant scenario is the one that specifically proves a small rate change can outrank a dramatic low-volume drop. |
-| 4. Investigation starts automatically | L4 claims the detected incident and gathers C2 evidence. | All three. |
-| 5. Diagnosis appears | C4: leading hypothesis, competing explanations, diagnostic confidence, recommended action. Severity and confidence stay independent ([`docs/prd.md`](prd.md) section 11). | All three. Provider degradation should be able to name a provider cause. The confounder should keep competing explanations and say why ambiguity exists. The high-impact case still needs a real diagnosis, not just a big number. |
-| 6. Critical escalation fires | Channel binding in [`docs/prd.md`](prd.md) section 19: LOW/MEDIUM dashboard; HIGH adds Slack; CRITICAL adds the phone call. Severity is read from C3, never recomputed. | Any of the three whose stored C3 severity is `critical`. This document does not assign a severity to a scenario; W2 does. |
-| 7. Judge inspects evidence | Evidence trail: the queries that ran, in order, with what came back. | All three. The confounder is the strongest use of this step: the trail should show why the two causes cannot be separated. |
-
-If L4 is unavailable, the incident still renders with localisation, money and the evidence trail; only the narrative is marked unavailable ([`DECISIONS.md`](../DECISIONS.md) 2026-08-29T19:17Z).
-
-## Already decided and already implemented
-
-Decided, with the authoritative record in parentheses:
-
-- Challenge 02 Control Tower is the pick (`DECISIONS.md` 2026-08-29T16:52Z).
-- Four workstreams and owners (`docs/ownership.md`; `DECISIONS.md` 2026-08-29T18:15Z).
-- Kafka for raw ingestion; SQLite for persistence; L4 polls SQLite and does not consume Kafka (`DECISIONS.md` 2026-08-29T19:04Z, 19:17Z, 19:43Z).
-- C1 through C4 shapes (`INTERFACES.md` and `docs/contracts/`).
-- Severity is W2; diagnostic confidence is W3; they never collapse (`docs/ownership.md`; [`docs/prd.md`](prd.md) section 11).
-- Three guaranteed demo scenarios, listed above (`DECISIONS.md` 2026-08-29T19:17Z).
-- W4 holds no domain logic (`docs/ownership.md`).
-
-Implemented on `origin/main` as of this writing, in the owning trees:
-
-- W1 simulated worker under `worker/`.
-- W2 detector, canonical store, live Kafka consumer, and measured C2 tools under `detector/`. `external_status` remains W3's.
-- W3 investigation core, evidence gateway, agent loop and evaluator under `investigation/` and `evaluator/`. `metric_series` is on the gateway allowlist.
-- W4 dashboard, store, Slack / phone escalation, and a judge-trigger adapter under `surfaces/`. The adapter calls `worker.inject`; the button is a toggle that starts and stops a real incident on a running worker.
-- Offline five-stage slice under `stubs/`.
-
-`INTERFACES.md` on `main` still records C5 as named but not specified.
-
-## Still open
-
-From [`docs/ownership.md`](ownership.md) Open decisions, unless a later `DECISIONS.md` entry closed it:
-
-- Team-wide language, framework and stack. Python is decided only for W2's evidence-query scripts (`DECISIONS.md` 2026-08-29T19:17Z) and, separately, for W1's worker (`DECISIONS.md` 2026-08-29T18:39Z).
-- Whether the four workstreams are one tree or separate services.
-- Concrete numeric thresholds that produce the LOW/MEDIUM/HIGH/CRITICAL labels. The channel binding in [`docs/prd.md`](prd.md) section 19 is decided; the cutovers are not.
-- Telephony mechanism, at the ownership-doc level. juank's Twilio path is the accepted W4 implementation, not a new entry in `DECISIONS.md`.
-- Which external status sources are actually used.
-- How diagnostic confidence is represented, at the ownership-doc level. [`docs/contracts/investigation-result.md`](contracts/investigation-result.md) already publishes qualitative `low` / `medium` / `high`.
-- Concrete merchant identities and whether the count is three or four ([`docs/prd.md`](prd.md) section 20).
-
-Also still open on `main`, not for W4 to resolve:
-
-- C5 is not yet the current `INTERFACES.md` shape.
-- The judge-trigger seam is closed (PR #45): W4's adapter calls W1's `worker.inject`, and the toggle starts and stops a live incident from the browser.
-- juank's request for a high-value transaction id on C2/C3 (`STATUS.md` 2026-08-29T21:07Z) belongs to andres.
-- A live `--scenario` run now stops on its declared duration and on SIGINT/SIGTERM, and the evaluator reads closed C6 records from `state/ground_truth/`.
-
-## Where W4 fits
-
-W4 is L5. It owns the dashboard, the judge-facing trigger, Slack, the phone call, the severity-to-channel binding, and demo harness ergonomics ([`docs/ownership.md`](ownership.md)).
-
-Seams W4 **consumes** and does not build:
-
-- **C3 incident record** from W2. Cohort, change, onset, persistence, blast radius, financial impact, severity, lifecycle. Read [`docs/contracts/incident.md`](contracts/incident.md). Do not compute a metric, a severity, or a financial figure. Do not invent field names: use the contract names (`affected_merchants`, `affected_countries`), not whatever the current detector binary happens to emit.
-- **C4 investigation result** from W3. Facts, hypothesis, evidence, competing explanations, confidence, recommended action. Read [`docs/contracts/investigation-result.md`](contracts/investigation-result.md). If the outcome is `agent_unavailable`, keep the incident on screen and mark the narrative unavailable.
-- **C2** only as already-cited evidence on C4, or as figures that already landed on the C3 record. W4 is not a second measurement path.
-- **Judge injection** by calling W1. W4 never reimplements injection and never forwards a scenario identifier toward detection or investigation.
-
-C5 is W4's to specify. The draft on `juank/w4-surfaces` is the accepted approach; it becomes the `INTERFACES.md` shape when that work lands.
-
-W4 produces nothing that L1-L4 read. Escalation is fire-and-forget with a recorded outcome. A channel failing must not fail an incident.
+Primary references: [`docs/prd.md`](prd.md), [`scripts/verify_demo.py`](../scripts/verify_demo.py), [`surfaces/inject.py`](../surfaces/inject.py), [`docs/contracts/incident.md`](contracts/incident.md), [`docs/contracts/investigation-result.md`](contracts/investigation-result.md), and [`docs/contracts/notification-escalation.md`](contracts/notification-escalation.md).

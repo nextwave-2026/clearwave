@@ -369,7 +369,7 @@ class WireProtocolTests(unittest.TestCase):
         environment = dict(os.environ)
         environment[store.DB_ENV_VAR] = str(self.database if database is None else database)
         return subprocess.run(
-            [str(TOOL_DIR / f"{tool}.py")],
+            [sys.executable, str(TOOL_DIR / f"{tool}.py")],
             input=payload,
             capture_output=True,
             text=True,

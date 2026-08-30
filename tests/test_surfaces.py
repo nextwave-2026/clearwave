@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -34,12 +35,18 @@ from surfaces import escalation as escalation_module
 from surfaces.escalation import _money, _truncate
 from surfaces.inject import (
     INJECTED_INCIDENT,
+    STAGE_COLLAPSE,
+    STAGE_DEVELOPING,
+    acknowledgement,
     fire_hidden_incident,
     injected_incident_command,
 )
+from surfaces import ask as ask_module
+from surfaces import present
 from surfaces.present import cohort_scope_label, merchant_health
 from surfaces.server import SurfacesApp, make_server
 from surfaces.store import (
+    ESCALATABLE_STATES,
     connect,
     ensure_escalation,
     list_incidents,
@@ -52,6 +59,12 @@ from worker.inject import start_command, stop_command
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _stop_server(httpd, thread) -> None:
+    httpd.shutdown()
+    thread.join(timeout=5)
+    httpd.server_close()
 
 
 def _incident(incident_id, severity, onset, merchant="merchant-a", **fields):
@@ -139,6 +152,47 @@ def _diagnosis(incident_id, outcome="diagnosed"):
         },
         "outcome": outcome,
     }
+
+
+def _watch(incident_id="inc-watch", merchant="merchant-w", **fields):
+    """A C3 row in `lifecycle_state: watching`, in the shape detector/detect.py
+    stores one: forced to `low`, carrying a projected figure under its own key,
+    and carrying both floor vectors so the page can say why it is not yet an
+    incident."""
+    record = _incident(incident_id, "low", "2026-08-29T09:30:00Z", merchant=merchant)
+    record["lifecycle_state"] = "watching"
+    record["financial_impact"]["projected_loss_per_hour"] = {
+        "amount": 15798.36,
+        "currency": "USD",
+        "basis": "the measured conversion shortfall applied to this cohort's typical "
+        "hourly attempted value. It is not money already lost, and it never ranks severity.",
+    }
+    record["detection"] = {
+        "detection_floors": {
+            "has_measurement": True,
+            "z_min": False,
+            "absolute_drop_min": True,
+            "volume_min": True,
+        },
+        "watch": {
+            "reasons": ["conversion_near_miss"],
+            "watch_floors": {
+                "has_measurement": True,
+                "not_already_an_incident": True,
+                "volume_min": True,
+                "statistically_real": True,
+                "materially_large": True,
+                "worsening": True,
+            },
+            "not_yet_met": [],
+            "trajectory": 1,
+            "leading_indicators": {"timeout_share": {"degraded": False}},
+            "degraded_leading_indicators": [],
+            "statement": "This cohort is unusual for itself against its last hour and is getting worse.",
+        },
+    }
+    record.update(fields)
+    return record
 
 
 class SurfacesTests(unittest.TestCase):
@@ -243,7 +297,8 @@ class SurfacesTests(unittest.TestCase):
         self.assertTrue(any(item["channel"] == "slack" and item["status"] == "not_configured" for item in outcomes))
 
     def test_failing_channel_does_not_block_or_raise(self):
-        incident = _incident("inc-high", "high", "2026-08-29T10:00:00Z")
+        # Critical, so all three channels are bound and the phone leg is exercised.
+        incident = _incident("inc-critical", "critical", "2026-08-29T10:00:00Z")
 
         def boom(url, payload):
             raise RuntimeError("webhook down")
@@ -295,8 +350,10 @@ class SurfacesTests(unittest.TestCase):
         self.assertTrue(result["delivered"])
         self.assertTrue(result["fired"])
         self.assertTrue(result["active"])
+        self.assertEqual(result["stage"], "collapse")
         self.assertEqual(published, [start_command("merchant-b", provider="adyen",
-                                                   decline_reason="provider_timeout")])
+                                                   decline_reason="provider_timeout",
+                                                   decline_probability=STAGE_COLLAPSE)])
         self.assertEqual(result["topic"], CONTROL_TOPIC)
         self.assertEqual(result["target"], INJECTED_INCIDENT)
 
@@ -306,8 +363,36 @@ class SurfacesTests(unittest.TestCase):
         self.assertTrue(result["delivered"])
         self.assertFalse(result["fired"])
         self.assertFalse(result["active"])
+        self.assertEqual(result["stage"], "clear")
         self.assertEqual(published, [{"merchant_id": "merchant-b", "action": "stop"}])
         self.assertEqual(published[0], stop_command("merchant-b"))
+
+    def test_developing_stage_publishes_the_mild_probability(self):
+        published = []
+        result = fire_hidden_incident(publisher=published.append, stage="developing")
+        self.assertTrue(result["delivered"])
+        self.assertTrue(result["active"])
+        self.assertEqual(result["stage"], "developing")
+        self.assertEqual(published[0]["decline_probability"], STAGE_DEVELOPING)
+        self.assertEqual(published, [start_command(
+            "merchant-b",
+            provider="adyen",
+            decline_reason="provider_timeout",
+            decline_probability=STAGE_DEVELOPING,
+        )])
+
+    def test_collapse_stage_publishes_the_near_total_break(self):
+        published = []
+        result = fire_hidden_incident(publisher=published.append, stage="collapse")
+        self.assertEqual(result["stage"], "collapse")
+        self.assertEqual(published[0]["decline_probability"], STAGE_COLLAPSE)
+
+    def test_clear_stage_publishes_the_stop_command(self):
+        published = []
+        result = fire_hidden_incident(publisher=published.append, stage="clear")
+        self.assertFalse(result["active"])
+        self.assertEqual(result["stage"], "clear")
+        self.assertEqual(published, [stop_command("merchant-b")])
 
     def test_the_published_command_carries_no_scenario_identifier(self):
         # C6 quarantine: what crosses to W1 is a cohort scope and an effect.
@@ -319,7 +404,7 @@ class SurfacesTests(unittest.TestCase):
             self.assertNotIn("ground_truth", rendered)
             self.assertLessEqual(
                 set(command),
-                {"merchant_id", "action", "scope", "effect", "decline_reason", "latency_ms"},
+                {"merchant_id", "action", "scope", "effect", "decline_reason", "latency_ms", "decline_probability"},
             )
 
     def test_an_unreachable_broker_never_claims_a_scenario_fired(self):
@@ -330,8 +415,17 @@ class SurfacesTests(unittest.TestCase):
         self.assertFalse(result["delivered"])
         self.assertFalse(result["fired"])
         self.assertFalse(result["active"])
+        self.assertEqual(result["stage"], "clear")
+        self.assertEqual(result["requested"], "collapse")
         self.assertIn("no broker", result["error"])
         self.assertIn("Nothing was injected", result["message"])
+
+        developing = fire_hidden_incident(publisher=unreachable, stage="developing")
+        self.assertFalse(developing["delivered"])
+        self.assertFalse(developing["fired"])
+        self.assertEqual(developing["requested"], "developing")
+        self.assertEqual(developing["stage"], "clear")
+        self.assertIn("Nothing was injected", developing["message"])
 
     def test_the_api_carries_the_on_off_intent_and_ignores_everything_else(self):
         published = []
@@ -341,23 +435,61 @@ class SurfacesTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertTrue(on["active"])
+        self.assertEqual(on["stage"], "collapse")
+        self.assertEqual(published[-1]["decline_probability"], STAGE_COLLAPSE)
         status, off = self.app.handle("POST", "/api/judge/trigger", {"active": False})
         self.assertEqual(status, 200)
         self.assertFalse(off["active"])
+        self.assertEqual(off["stage"], "clear")
         self.assertEqual([command["action"] for command in published], ["start", "stop"])
         self.assertNotIn("scenario_id", json.dumps(published))
         # A body-less POST keeps the old "fire it" meaning of this path.
         self.app.handle("POST", "/api/trigger", None)
         self.assertEqual(published[-1]["action"], "start")
+        self.assertEqual(published[-1]["decline_probability"], STAGE_COLLAPSE)
+
+    def test_legacy_boolean_body_still_publishes_the_full_break(self):
+        published = []
+        self.app_publisher(published)
+        _, on = self.app.handle("POST", "/api/trigger", {"active": True})
+        self.assertEqual(on["stage"], "collapse")
+        self.assertEqual(published[-1]["decline_probability"], STAGE_COLLAPSE)
+        self.assertEqual(published[-1], start_command(
+            "merchant-b",
+            provider="adyen",
+            decline_reason="provider_timeout",
+            decline_probability=STAGE_COLLAPSE,
+        ))
+
+    def test_the_api_publishes_each_requested_stage(self):
+        published = []
+        self.app_publisher(published)
+        _, developing = self.app.handle("POST", "/api/trigger", {"stage": "developing"})
+        self.assertEqual(developing["stage"], "developing")
+        self.assertEqual(published[-1]["decline_probability"], STAGE_DEVELOPING)
+        _, collapse = self.app.handle("POST", "/api/trigger", {"stage": "collapse"})
+        self.assertEqual(collapse["stage"], "collapse")
+        self.assertEqual(published[-1]["decline_probability"], STAGE_COLLAPSE)
+        _, cleared = self.app.handle("POST", "/api/trigger", {"stage": "clear"})
+        self.assertEqual(cleared["stage"], "clear")
+        self.assertEqual(published[-1], stop_command("merchant-b"))
 
     def test_the_toggle_state_survives_a_page_reload_and_a_failed_publish(self):
         published = []
         self.app_publisher(published)
-        self.assertFalse(self.app.handle("GET", "/api/trigger")[1]["active"])
-        self.app.handle("POST", "/api/trigger", {"active": True})
+        idle = self.app.handle("GET", "/api/trigger")[1]
+        self.assertFalse(idle["active"])
+        self.assertEqual(idle["stage"], "clear")
+        self.app.handle("POST", "/api/trigger", {"stage": "developing"})
         state = self.app.handle("GET", "/api/trigger")[1]
         self.assertTrue(state["active"])
+        self.assertEqual(state["stage"], "developing")
         self.assertEqual(state["target"], INJECTED_INCIDENT)
+
+        self.app.handle("POST", "/api/trigger", {"stage": "collapse"})
+        collapsed = self.app.handle("GET", "/api/trigger")[1]
+        self.assertEqual(collapsed["stage"], "collapse")
+        self.assertTrue(collapsed["active"])
 
         import surfaces.inject as inject_module
 
@@ -365,10 +497,13 @@ class SurfacesTests(unittest.TestCase):
             raise RuntimeError("broker went away")
 
         inject_module._publish = unreachable
-        failed = self.app.handle("POST", "/api/trigger", {"active": False})[1]
+        failed = self.app.handle("POST", "/api/trigger", {"stage": "clear"})[1]
         self.assertFalse(failed["delivered"])
-        # The stop never landed, so the control must not pretend it is off.
-        self.assertTrue(self.app.handle("GET", "/api/trigger")[1]["active"])
+        self.assertIn("Nothing was injected", failed["message"])
+        # The clear never landed, so the control must not pretend it is off.
+        held = self.app.handle("GET", "/api/trigger")[1]
+        self.assertTrue(held["active"])
+        self.assertEqual(held["stage"], "collapse")
 
     def app_publisher(self, sink):
         """Point the app's injection at a list instead of a broker."""
@@ -396,6 +531,24 @@ class SurfacesTests(unittest.TestCase):
         self.assertEqual(calls[0]["incident_id"], "inc-call")
         ack = self.app.acknowledge_call("inc-call")
         self.assertTrue(ack["acknowledged"])
+        self.assertEqual(self.app.pending_calls()["calls"], [])
+
+    def test_high_severity_reaches_slack_but_never_places_a_call(self):
+        # The other direction of the ruling, on a stored incident: `high` is a real
+        # business alert and must reach Slack, but must not ring a phone at 3am.
+        connection = self._seed(_incident("inc-high-call", "high", "2026-08-29T10:00:00Z"))
+        persist_result(
+            connection,
+            "inc-high-call",
+            _diagnosis("inc-high-call"),
+            "diagnosed",
+            trail=[_trail_entry()],
+        )
+        detail = self.app.detail("inc-high-call")
+        channels = {event["channel"]: event["status"] for event in detail["escalation"]}
+        self.assertEqual(channels["dashboard"], "delivered")
+        self.assertEqual(channels["slack"], "not_configured")
+        self.assertNotIn("phone", channels)
         self.assertEqual(self.app.pending_calls()["calls"], [])
 
     def test_dashboard_read_before_diagnosis_does_not_fire_or_record_escalation(self):
@@ -541,17 +694,43 @@ class SurfacesTests(unittest.TestCase):
         self.assertIsNotNone(detail["investigation"]["result"])
 
     def test_channels_for_pins_full_severity_binding_and_unknown_fallback(self):
-        # Pins the complete policy (critical and high both phone; low/medium dashboard-only;
-        # unknown stays conservative) so the binding is tested, not only commented.
+        # Pins the complete policy (only critical reaches the phone; high stays on
+        # dashboard and Slack; low/medium dashboard-only; unknown stays conservative)
+        # so the binding is tested, not only commented. An earlier revision asserted
+        # high -> phone, which encoded the defect: a live rehearsal placed eight real
+        # calls in twenty minutes, every one from a `high` incident.
         from surfaces.escalation import channels_for
         self.assertEqual(channels_for("low"), ("dashboard",))
         self.assertEqual(channels_for("medium"), ("dashboard",))
-        self.assertEqual(channels_for("high"), ("dashboard", "slack", "phone"))
+        self.assertEqual(channels_for("high"), ("dashboard", "slack"))
         self.assertEqual(channels_for("critical"), ("dashboard", "slack", "phone"))
         self.assertEqual(channels_for("unknown"), ("dashboard",))
-        self.assertEqual(channels_for("HIGH"), ("dashboard", "slack", "phone"))
+        self.assertEqual(channels_for("HIGH"), ("dashboard", "slack"))
         self.assertEqual(channels_for(None), ("dashboard",))
         self.assertEqual(channels_for(""), ("dashboard",))
+
+    def test_escalate_dispatches_exactly_the_bound_channels_and_only_critical_calls(self):
+        # channels_for is the table; this is the dispatch. Drives the real escalate()
+        # once per severity with both side-effecting channels stubbed, and asserts the
+        # phone provider is reached for `critical` and for nothing else.
+        expected = {
+            "low": ["dashboard"],
+            "medium": ["dashboard"],
+            "high": ["dashboard", "slack"],
+            "critical": ["dashboard", "slack", "phone"],
+        }
+        for severity, channels in expected.items():
+            with self.subTest(severity=severity):
+                called = []
+                outcomes = escalate(
+                    _incident(f"inc-{severity}", severity, "2026-08-29T10:00:00Z"),
+                    slack_url="https://hooks.example.invalid/webhook",
+                    poster=lambda url, payload: called.append("slack"),
+                    phone_provider=lambda incident, payload: called.append("phone"),
+                )
+                self.assertEqual([item["channel"] for item in outcomes], channels)
+                self.assertEqual(called, [c for c in channels if c != "dashboard"])
+                self.assertEqual("phone" in called, severity == "critical")
 
     def test_in_process_server_serves_overview_and_static_files(self):
         os.environ["CLEARWAVE_SURFACES_QUIET"] = "1"
@@ -560,8 +739,7 @@ class SurfacesTests(unittest.TestCase):
         httpd = make_server(self.db, host="127.0.0.1", port=0)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
-        self.addCleanup(httpd.shutdown)
-        self.addCleanup(httpd.server_close)
+        self.addCleanup(_stop_server, httpd, thread)
         port = httpd.server_address[1]
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         with opener.open(f"http://127.0.0.1:{port}/api/overview", timeout=2) as response:
@@ -570,7 +748,9 @@ class SurfacesTests(unittest.TestCase):
         with opener.open(f"http://127.0.0.1:{port}/", timeout=2) as response:
             page = response.read().decode("utf-8")
         self.assertIn("Control Tower", page)
-        self.assertIn("Fire hidden incident", page)
+        self.assertIn("Developing deviation", page)
+        self.assertIn("Collapse", page)
+        self.assertIn("Clear", page)
         self.assertIn("simulated data produced by this project's simulator", page)
         self.assertIn("Nothing shown represents or implies a real incident", page)
 
@@ -693,6 +873,11 @@ class SlackBlockKitTests(unittest.TestCase):
         self.assertIn("28,000", rendered)
         self.assertIn("112,000", rendered)
         self.assertIn("Merchant A", rendered)
+        self.assertIn("$112,000 USD/h", message["text"])
+        self.assertIn("Executive readout", rendered)
+        self.assertIn("Next action", rendered)
+        self.assertIn("Affected slice", rendered)
+        self.assertIn("No automatic remediation was executed", rendered)
         body = message["attachments"][0]["blocks"]
         self.assertEqual(message["attachments"][0]["color"], "#DC2626")
         severity_block = next(b for b in body if b["type"] == "header")
@@ -703,6 +888,43 @@ class SlackBlockKitTests(unittest.TestCase):
         self.assertIn("medium confidence", hypothesis_block["text"]["text"])
         self.assertNotIn("Bank X over-decline", hypothesis_block["text"]["text"])
         self.assertIn("Bank X over-decline", not_ruled_out_block["text"]["text"])
+
+    def test_affected_slice_is_labelled_for_fast_tam_triage(self):
+        payload = {
+            "incident_id": "inc-slice",
+            "severity": "high",
+            "affected_cohort": {
+                "merchant_id": "merchant-a",
+                "provider": "provider-p2",
+                "country": "CO",
+                "payment_method": "cash_in_store",
+                "card_network": "visa",
+                "issuing_bank": "bank-x",
+                "decline_code": "provider_timeout",
+            },
+        }
+        rendered = json.dumps(slack_blocks(payload))
+        self.assertIn("Affected slice", rendered)
+        for expected in (
+            "Merchant A",
+            "Provider P2",
+            "CO",
+            "cash in store",
+            "visa",
+            "bank-x",
+            "provider timeout",
+        ):
+            self.assertIn(expected, rendered)
+        for label in (
+            "*Merchant*",
+            "*Provider*",
+            "*Country*",
+            "*Payment method*",
+            "*Card network*",
+            "*Issuing bank*",
+            "*Decline code*",
+        ):
+            self.assertIn(label, rendered)
 
     def test_citations_render_as_verified_against_sources(self):
         payload = {
@@ -1094,14 +1316,33 @@ class StaticContractTests(unittest.TestCase):
         html = (ROOT / "surfaces" / "static" / "index.html").read_text(encoding="utf-8")
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
         css = (ROOT / "surfaces" / "static" / "styles.css").read_text(encoding="utf-8")
+        self.assertIn('data-stage="developing"', html)
+        self.assertIn('data-stage="collapse"', html)
+        self.assertIn('data-stage="clear"', html)
+        self.assertIn("Developing deviation", html)
+        self.assertIn("Collapse", html)
+        self.assertRegex(html, r'data-stage="clear"[\s\S]*?Clear')
         self.assertIn('aria-pressed="false"', html)
         self.assertIn('data-on="false"', html)
-        self.assertIn("Fire hidden incident", js)
-        self.assertIn("Stop hidden incident", js)
-        self.assertIn('judgeTrigger.setAttribute("aria-pressed"', js)
+        self.assertIn('data-stage', js)
+        self.assertIn('"developing"', js)
+        self.assertIn('"collapse"', js)
+        self.assertIn('"clear"', js)
+        self.assertIn("aria-pressed", js)
         # The on state must be visibly distinct, in the palette already on the
         # board rather than a second visual language.
         self.assertRegex(css, r'\.judge button\[data-on="true"\][^}]*var\(--sev-critical\)')
+
+    def test_judge_acknowledgement_does_not_borrow_detector_words(self):
+        banned = ("detected", "warned", "watching", "incident")
+        for stage in ("developing", "collapse", "clear"):
+            text = acknowledgement(stage).lower()
+            for word in banned:
+                self.assertNotIn(word, text, stage)
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        judge = js[js.index("function renderJudge"):js.index("$(\"drawer-close\")")]
+        for word in ("detected", "warned", "watching", "incident"):
+            self.assertNotIn(word, judge.lower())
 
     def test_the_judge_control_never_upgrades_a_failure_into_a_claim(self):
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
@@ -1239,6 +1480,7 @@ class DashboardWiringTests(unittest.TestCase):
             "/api/calls",
             "/api/escalations",
             "/api/trigger",
+            "/api/ask",
         ):
             self.assertIn(path, js, f"{path} is served but never fetched")
 
@@ -1281,6 +1523,520 @@ class DashboardWiringTests(unittest.TestCase):
         # Containers the page only addresses by id carry no rule by design.
         containers = {"queue-board", "detail-board", "evidence-board", "escalation-board", "is-active"}
         self.assertEqual(sorted(emitted - styled - containers), [])
+
+
+class RevenueFirstOverviewTests(unittest.TestCase):
+    """The overview is revenue-led: money is the subject, the incident explains it.
+
+    The board used to open on `SERVICE STATUS: critical` with money wedged
+    between an incident status and an incident count. Money now leads, and the
+    operational figures stay as the context that explains it.
+    """
+
+    def setUp(self):
+        static = ROOT / "surfaces" / "static"
+        self.html = (static / "index.html").read_text(encoding="utf-8")
+        self.js = (static / "app.js").read_text(encoding="utf-8")
+        self.css = (static / "styles.css").read_text(encoding="utf-8")
+        self.overview = self.js[self.js.index("function renderOverview"):self.js.index("function renderQueue")]
+
+    def test_money_is_emitted_before_the_operational_context(self):
+        risk = self.overview.index("Revenue at risk")
+        rate = self.overview.index("Loss rate")
+        strip = self.overview.index("contextStrip(")
+        self.assertLess(risk, strip)
+        self.assertLess(rate, strip)
+
+    def test_money_carries_the_headline_weight_not_the_incident_status(self):
+        # Hierarchy is size and weight, not a second colour vocabulary.
+        risk = re.search(r"\.money \.mfig-risk dd \{[^}]*font-size: (\d+)px", self.css)
+        status = re.search(r"\.ctx-v \{[^}]*font-size: ([\d.]+)px", self.css)
+        self.assertIsNotNone(risk)
+        self.assertIsNotNone(status)
+        self.assertGreater(int(risk.group(1)), float(status.group(1)) * 2)
+
+    def test_the_conversion_bars_are_the_printed_figure_not_a_derived_one(self):
+        gap = self.js[self.js.index("function gapRow"):self.js.index("function conversionGap")]
+        self.assertIn("style=\"width:' + text +", gap)
+        self.assertIn("const text = ratio(value);", gap)
+        # No second measurement is taken between the two bars.
+        for arithmetic in ("* 100", " - ", "reduce(", "Number("):
+            self.assertNotIn(arithmetic, gap)
+
+    def test_the_overview_computes_nothing(self):
+        board = self.js[self.js.index("function figure(value"):self.js.index("function renderQueue")]
+        for arithmetic in ("reduce(", "+ Number(", " / 60", ".toFixed("):
+            self.assertNotIn(arithmetic, board)
+
+    def test_the_platform_total_refusal_survives_the_business_framing(self):
+        self.assertIn("REFUSAL_NOTE", self.js)
+        self.assertIn("A portfolio total.", self.js)
+        self.assertIn(
+            "Adding cited <code>loss_per_hour</code> figures would be a number that exists only here.",
+            self.js,
+        )
+        self.assertIn("A real total has to come from W2 as its own cited figure.", self.js)
+        self.assertIn("Whose fault it is.", self.js)
+        self.assertIn('overviewNotes.innerHTML = REFUSAL_NOTE;', self.js)
+
+    def test_gmv_at_risk_still_reads_as_an_estimate(self):
+        self.assertIn("estimated · gmv_at_risk on incident ", self.js)
+        self.assertIn("gmv_at_risk, an estimate", self.js)
+
+    def test_the_loss_rate_is_worded_as_a_rate_that_has_not_happened_yet(self):
+        self.assertIn("loss_per_hour on that incident, if it continues", self.js)
+        self.assertIn("loss_per_hour, if it continues", self.js)
+
+    def test_an_empty_store_reads_as_healthy_rather_than_broken(self):
+        self.assertIn("No revenue at risk", self.js)
+        self.assertIn("no active incident, so there is no money figure to copy", self.js)
+        self.assertNotIn('overviewBoard.innerHTML =\n        \'<p class="empty">No incidents in the store.', self.js)
+        self.assertRegex(self.css, r"\.calm \{")
+        self.assertRegex(self.css, r"\.calm-mark \{[^}]*var\(--good\)")
+
+    def test_the_merchant_section_never_calls_a_cohort_a_merchant(self):
+        # "Merchant health" over a row titled PROVIDER P2 asserted something
+        # the stored cohort does not say.
+        self.assertNotIn("Merchant health", self.js)
+        self.assertIn("Who is carrying it", self.js)
+        self.assertIn("or per cohort where the stored incident names no merchant", self.js)
+        self.assertIn('const isMerchant = Boolean(row.merchant_id);', self.js)
+        self.assertIn('isMerchant ? "merchant" : "cohort"', self.js)
+        # And the row label is no longer shouted in uppercase.
+        self.assertNotRegex(self.css, r"\.mcard-head h4 \{[^}]*text-transform")
+
+    def test_a_merchant_figure_cites_one_incident_and_never_a_total(self):
+        self.assertIn("function merchantCite", self.js)
+        self.assertIn("merchant-burn:", self.js)
+        self.assertIn("merchant-risk:", self.js)
+        self.assertIn("not a total for the row and not a total for the platform", self.js)
+
+    def test_a_calm_headline_is_never_contradicted_by_live_money_below_it(self):
+        # "No revenue at risk" over "USD 78,919 / hour, if it continues" is two
+        # panels contradicting each other. The money is kept - what a merchant
+        # lost is real - but a closed row is worded as closed.
+        self.assertIn('const live = row.source_is_active !== false;', self.js)
+        self.assertIn('"Was costing / hour"', self.js)
+        self.assertIn('"Was at risk"', self.js)
+        self.assertIn('"loss_per_hour, while it ran"', self.js)
+        self.assertIn('"Converted "', self.js)
+        self.assertIn('What it cost earlier', self.js)
+        self.assertIn('Nothing here is still running.', self.js)
+        self.assertRegex(self.css, r"\.mcard\.is-past")
+
+    def test_the_watch_rail_still_sits_apart_and_below_the_real_incident(self):
+        board = self.html.index('id="overview-board"')
+        merchants = self.html.index('id="overview-merchants"')
+        rail = self.html.index('id="overview-watch-rail"')
+        self.assertLess(board, merchants)
+        self.assertLess(merchants, rail)
+
+    def test_the_view_keys_the_other_layers_build_against_are_untouched(self):
+        for view in ("overview", "queue", "detail", "escalation", "evidence"):
+            self.assertIn(f'data-view="{view}"', self.html)
+
+    def test_the_judge_control_was_not_touched_by_the_business_framing(self):
+        self.assertIn('id="judge-form"', self.html)
+        for stage in ("developing", "collapse", "clear"):
+            self.assertIn(f'data-stage="{stage}"', self.html)
+
+
+class MerchantImpactPayloadTests(unittest.TestCase):
+    """Per-merchant money is published and copied, never summed in the page."""
+
+    def test_a_row_publishes_the_money_of_its_own_top_incident(self):
+        rows = merchant_health([
+            _incident("inc-a", "critical", "2026-08-29T10:00:00Z", merchant="merchant-b"),
+            _incident("inc-b", "low", "2026-08-29T11:00:00Z", merchant="merchant-b"),
+        ])
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["source_incident_id"], "inc-a")
+        top = _incident("inc-a", "critical", "2026-08-29T10:00:00Z", merchant="merchant-b")
+        self.assertEqual(row["financial_impact"], top["financial_impact"])
+        self.assertEqual(row["change"], top["change"])
+
+    def test_a_group_with_a_live_record_never_publishes_a_closed_one(self):
+        # A resolved CRITICAL used to outrank a live LOW, so the row asserted
+        # the money of an incident that was already over.
+        closed = _incident("inc-old", "critical", "2026-08-29T09:00:00Z", merchant="merchant-b")
+        closed["lifecycle_state"] = "resolved"
+        live = _incident("inc-now", "low", "2026-08-29T10:00:00Z", merchant="merchant-b")
+        rows = merchant_health([closed, live])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["source_incident_id"], "inc-now")
+        self.assertTrue(rows[0]["source_is_active"])
+
+    def test_a_group_with_only_closed_records_is_flagged_as_history(self):
+        closed = _incident("inc-old", "critical", "2026-08-29T09:00:00Z", merchant="merchant-b")
+        closed["lifecycle_state"] = "resolved"
+        rows = merchant_health([closed])
+        self.assertEqual(rows[0]["source_incident_id"], "inc-old")
+        self.assertFalse(rows[0]["source_is_active"])
+        self.assertEqual(rows[0]["active_incident_count"], 0)
+
+    def test_a_cohort_without_a_merchant_keeps_merchant_id_null(self):
+        record = _incident("inc-p", "high", "2026-08-29T10:00:00Z", merchant=None)
+        record["affected_cohort"].pop("merchant_id")
+        rows = merchant_health([record])
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0]["merchant_id"])
+        self.assertIn("Provider", rows[0]["scope_label"])
+
+
+def _answered_payload():
+    """The engine's documented answered shape, as briefed."""
+    return {
+        "outcome": "diagnosed",
+        "answer": "Approvals for merchant-b fell because adyen started declining card payments in MX.",
+        "figures": [
+            {"label": "Approval now", "value": 0.52, "query_id": "q-1"},
+            {"label": "Costing / hour", "value": {"amount": 19784.62, "currency": "USD"}, "query_id": "q-2"},
+        ],
+        "citations": [
+            {
+                "sequence": 1,
+                "query_id": "q-1",
+                "tool": "cohort_metrics",
+                "parameters": {"merchant_id": "merchant-b"},
+                "response": {"approval": 0.52},
+                "timestamp": "2026-08-30T06:00:00Z",
+                "outcome": "ok",
+            },
+            {
+                "sequence": 2,
+                "query_id": "q-2",
+                "tool": "financial_impact",
+                "parameters": {"merchant_id": "merchant-b"},
+                "response": {"loss_per_hour": 19784.62},
+                "timestamp": "2026-08-30T06:00:02Z",
+                "outcome": "ok",
+            },
+        ],
+    }
+
+
+class AskAdapterTests(unittest.TestCase):
+    """The one seam onto the engine. No domain logic lives on this side of it."""
+
+    def _stub(self, payload):
+        def call(question, connection, agent=None):
+            return payload
+        return call
+
+    def test_without_a_key_the_engine_is_never_called(self):
+        called = []
+
+        def spy(*args, **kwargs):
+            called.append(args)
+            return _answered_payload()
+
+        with patch.object(ask_module, "api_key_present", return_value=False):
+            out = ask_module.answer("why?", None, entry_point=spy)
+        self.assertEqual(out["outcome"], "agent_unavailable")
+        self.assertEqual(out["unavailable_kind"], ask_module.KIND_NO_API_KEY)
+        self.assertEqual(called, [], "a model call was made with no key configured")
+        # The panel's own wording for this state carries it, so the adapter does
+        # not also supply prose the card would then print twice.
+        self.assertIsNone(out["answer"])
+        self.assertIn("OPENAI_API_KEY", out["reason"])
+
+    def test_a_missing_engine_module_is_a_state_not_a_crash(self):
+        with patch.object(ask_module, "api_key_present", return_value=True), \
+             patch.object(ask_module, "engine", return_value=None):
+            out = ask_module.answer("why?", None)
+        self.assertEqual(out["outcome"], "agent_unavailable")
+        self.assertEqual(out["unavailable_kind"], ask_module.KIND_ENGINE_MISSING)
+        self.assertIsNone(out["answer"])
+
+    def test_a_slow_engine_times_out_rather_than_hanging_the_board(self):
+        started = threading.Event()
+
+        def slow(question, connection, agent=None):
+            started.set()
+            time.sleep(5)
+            return _answered_payload()
+
+        with patch.object(ask_module, "api_key_present", return_value=True), \
+             patch.object(ask_module, "_GUARD_MARGIN_SECONDS", 0.05):
+            out = ask_module.answer("why?", None, timeout=0.2, entry_point=slow)
+        self.assertTrue(started.wait(2))
+        self.assertEqual(out["outcome"], "agent_unavailable")
+        self.assertEqual(out["unavailable_kind"], ask_module.KIND_TIMEOUT)
+        self.assertIn("was not answered", out["answer"])
+
+    def test_an_engine_that_raises_returns_an_outcome_not_an_exception(self):
+        def boom(question, connection, agent=None):
+            raise RuntimeError("gateway refused")
+
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            out = ask_module.answer("why?", None, entry_point=boom)
+        self.assertEqual(out["outcome"], "agent_unavailable")
+        self.assertEqual(out["unavailable_kind"], ask_module.KIND_ENGINE_ERROR)
+        self.assertIn("gateway refused", out["answer"])
+
+    def test_an_answer_keeps_every_figure_tied_to_its_own_query(self):
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            out = ask_module.answer("why?", None, entry_point=self._stub(_answered_payload()))
+        self.assertEqual(out["outcome"], "diagnosed")
+        self.assertIsNone(out["reason"])
+        self.assertEqual([f["query_id"] for f in out["figures"]], ["q-1", "q-2"])
+        self.assertEqual([c["query_id"] for c in out["citations"]], ["q-1", "q-2"])
+        self.assertEqual(out["figures"][1]["value"], {"amount": 19784.62, "currency": "USD"})
+
+    def test_a_figure_the_engine_did_not_cite_never_borrows_a_citation(self):
+        payload = _answered_payload()
+        payload["figures"].append({"label": "Retry load", "value": "1.44x"})
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            out = ask_module.answer("why?", None, entry_point=self._stub(payload))
+        self.assertIsNone(out["figures"][2]["query_id"])
+        self.assertEqual(out["figures"][0]["query_id"], "q-1")
+
+    def test_the_outcome_vocabulary_is_the_c4_one_and_nothing_else(self):
+        self.assertEqual(
+            set(ask_module.OUTCOMES),
+            {"diagnosed", "ambiguous", "insufficient_evidence", "agent_unavailable"},
+        )
+        for outcome in ("ambiguous", "insufficient_evidence"):
+            payload = dict(_answered_payload(), outcome=outcome, reason="ignored")
+            with patch.object(ask_module, "api_key_present", return_value=True):
+                out = ask_module.answer("why?", None, entry_point=self._stub(payload))
+            self.assertEqual(out["outcome"], outcome)
+            # `reason` only ever qualifies agent_unavailable.
+            self.assertIsNone(out["reason"])
+
+    def test_the_adapter_asks_for_the_shorter_interactive_deadline(self):
+        seen = {}
+
+        def spy(question, connection, timeout_seconds=None):
+            seen["timeout"] = timeout_seconds
+            return _answered_payload()
+
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            ask_module.answer("why?", None, entry_point=spy)
+        # The engine bounds itself at 60s by default. A judge is watching a
+        # dashboard, so the box asks for less.
+        self.assertEqual(seen["timeout"], ask_module.ASK_TIMEOUT_SECONDS)
+        self.assertLess(ask_module.ASK_TIMEOUT_SECONDS, 60.0)
+
+    def test_an_engine_without_the_deadline_knob_is_still_callable(self):
+        def older(question, connection, agent=None):
+            return _answered_payload()
+
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            out = ask_module.answer("why?", None, entry_point=older)
+        self.assertEqual(out["outcome"], "diagnosed")
+
+    def test_the_engines_own_unavailable_prose_is_never_read_as_a_state_key(self):
+        # `reason` is free prose from the engine. It is shown, not parsed for
+        # meaning - only the deadline wording chooses between two honest
+        # drawings, and no figure or outcome depends on it.
+        payload = dict(
+            _answered_payload(),
+            outcome="agent_unavailable",
+            reason="The question deadline expired after 30s: timed out",
+        )
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            out = ask_module.answer("why?", None, entry_point=self._stub(payload))
+        self.assertEqual(out["unavailable_kind"], ask_module.KIND_TIMEOUT)
+        self.assertIn("deadline expired", out["reason"])
+
+        payload["reason"] = "the gateway refused every tool"
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            out = ask_module.answer("why?", None, entry_point=self._stub(payload))
+        self.assertEqual(out["unavailable_kind"], ask_module.KIND_ENGINE_ERROR)
+
+    def test_missing_evidence_survives_to_the_panel(self):
+        payload = {
+            "outcome": "insufficient_evidence",
+            "answer": "I cannot answer that from what I measured.",
+            "figures": [],
+            "citations": [],
+            "missing_evidence": ["A decline-reason breakdown for merchant-b.", ""],
+        }
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            out = ask_module.answer("why?", None, entry_point=self._stub(payload))
+        self.assertEqual(out["outcome"], "insufficient_evidence")
+        self.assertIsNone(out["unavailable_kind"])
+        self.assertEqual(out["missing_evidence"], ["A decline-reason breakdown for merchant-b."])
+
+    def test_the_question_is_bounded(self):
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            out = ask_module.answer("x" * 5000, None, entry_point=self._stub(_answered_payload()))
+        self.assertEqual(len(out["question"]), ask_module.MAX_QUESTION_CHARS)
+
+
+class AskEndpointTests(unittest.TestCase):
+    """The endpoint costs a model call, so reaching it must take a press."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.db = Path(self._tmpdir.name) / "clearwave.db"
+        connect(self.db).close()
+        self.app = SurfacesApp(self.db)
+
+    def test_ask_is_post_only_so_a_poll_can_never_reach_a_model(self):
+        status, body = self.app.handle("GET", "/api/ask")
+        self.assertEqual(status, 405)
+        self.assertIn("POST only", body["error"])
+
+    def test_a_blank_question_is_refused_before_the_engine(self):
+        status, body = self.app.handle("POST", "/api/ask", {"question": "   "})
+        self.assertEqual(status, 400)
+
+    def test_a_question_returns_the_panel_payload(self):
+        stub = lambda question, connection, agent=None: _answered_payload()
+        with patch.object(ask_module, "api_key_present", return_value=True), \
+             patch.object(ask_module, "engine", return_value=stub):
+            status, body = self.app.handle("POST", "/api/ask", {"question": "why?"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["outcome"], "diagnosed")
+        self.assertEqual(len(body["citations"]), 2)
+
+    def test_a_second_press_never_stacks_a_second_model_call(self):
+        entered = threading.Event()
+        release = threading.Event()
+        calls = []
+
+        def slow(question, connection, agent=None):
+            calls.append(question)
+            entered.set()
+            release.wait(5)
+            return _answered_payload()
+
+        results = {}
+
+        def first():
+            results["first"] = self.app.handle("POST", "/api/ask", {"question": "one"})
+
+        with patch.object(ask_module, "api_key_present", return_value=True), \
+             patch.object(ask_module, "engine", return_value=slow):
+            worker = threading.Thread(target=first)
+            worker.start()
+            self.assertTrue(entered.wait(5))
+            status, body = self.app.handle("POST", "/api/ask", {"question": "two"})
+            release.set()
+            worker.join(5)
+        self.assertEqual(status, 409)
+        self.assertIn("already running", body["error"])
+        self.assertEqual(calls, ["one"], "the second press reached the engine")
+        self.assertEqual(results["first"][0], 200)
+
+    def test_the_lock_is_released_even_when_the_engine_fails(self):
+        def boom(question, connection, agent=None):
+            raise RuntimeError("nope")
+
+        with patch.object(ask_module, "api_key_present", return_value=True), \
+             patch.object(ask_module, "engine", return_value=boom):
+            self.assertEqual(self.app.handle("POST", "/api/ask", {"question": "one"})[0], 200)
+            status, _ = self.app.handle("POST", "/api/ask", {"question": "two"})
+        self.assertEqual(status, 200)
+
+
+class AskPanelPageTests(unittest.TestCase):
+    """The panel shows what the engine returned, cites it, and computes nothing."""
+
+    def setUp(self):
+        static = ROOT / "surfaces" / "static"
+        self.html = (static / "index.html").read_text(encoding="utf-8")
+        self.js = (static / "app.js").read_text(encoding="utf-8")
+        self.css = (static / "styles.css").read_text(encoding="utf-8")
+
+    def test_the_polling_loop_never_touches_the_ask_endpoint(self):
+        refresh = self.js[self.js.index("function refresh()"):self.js.index("function loadDetail")]
+        self.assertNotIn("/api/ask", refresh)
+        self.assertNotIn("submitAsk", refresh)
+        # And the only fetch of it is the explicit press.
+        self.assertEqual(self.js.count('fetch("/api/ask"'), 1)
+        submit = self.js[self.js.index("function submitAsk"):self.js.index('$("ask-form")')]
+        self.assertIn('fetch("/api/ask"', submit)
+        self.assertIn('method: "POST"', submit)
+
+    def test_only_a_press_or_an_example_press_can_ask(self):
+        self.assertIn('$("ask-form").addEventListener("submit"', self.js)
+        # The example chips fill and submit; both are a user press.
+        self.assertIn("ASK_EXAMPLES", self.js)
+        self.assertNotIn("setInterval(submitAsk", self.js)
+        self.assertNotIn("setTimeout(submitAsk", self.js)
+
+    def test_a_second_press_is_refused_in_the_page_as_well_as_the_server(self):
+        submit = self.js[self.js.index("function submitAsk"):self.js.index('$("ask-form")')]
+        self.assertIn("if (state.asking) return;", submit)
+        self.assertIn('$("ask-go").disabled = true;', submit)
+        self.assertIn("response.status === 409", submit)
+        self.assertIn("is-busy", self.js)
+        self.assertRegex(self.css, r"\.ask-card\.is-busy")
+
+    def test_the_pending_state_is_shown_rather_than_the_page_freezing(self):
+        self.assertIn("is-pending", self.js)
+        self.assertIn("Reading the store", self.js)
+        # A 30s wait needs something to read, not a bare spinner.
+        self.assertIn("choosing and running its own queries", self.js)
+        self.assertIn("including the ones that came back empty", self.js)
+        self.assertRegex(self.css, r"\.ask-spin \{")
+        self.assertIn('aria-live="polite"', self.html)
+
+    def test_every_non_answer_state_is_designed_rather_than_thrown(self):
+        for key, phrase in (
+            ("no_api_key", "No model is configured"),
+            ("engine_missing", "The ask engine is not in this build"),
+            ("timeout", "The question ran past its limit"),
+            ("insufficient_evidence", "Not answerable from what we measure"),
+            ("ambiguous", "The evidence does not settle it"),
+            ("engine_error", "The engine could not complete"),
+        ):
+            self.assertIn(key, self.js)
+            self.assertIn(phrase, self.js)
+        # ambiguous and insufficient_evidence are different situations and are
+        # deliberately not collapsed into one message.
+        self.assertIn("support more than one explanation", self.js)
+        self.assertIn("is not in the store", self.js)
+        self.assertIn("What it would have needed", self.js)
+        self.assertIn("payload.missing_evidence", self.js)
+        # None of them is drawn as an incident.
+        ask_css = self.css[self.css.index("/* Ask the data."):self.css.index("/* The warning rail.")]
+        for banned in ("--sev-critical", "--sev-high", "--sev-low"):
+            self.assertNotIn(banned, ask_css)
+
+    def test_the_citations_are_rendered_next_to_the_answer(self):
+        self.assertIn("function askCitations", self.js)
+        self.assertIn("The queries it ran", self.js)
+        self.assertIn("row.query_id", self.js)
+        self.assertIn("row.tool", self.js)
+        self.assertIn("function askCite", self.js)
+        self.assertIn("ask-cite:", self.js)
+        self.assertIn("ask-fig:", self.js)
+
+    def test_an_uncited_figure_says_so_rather_than_showing_a_cite_dot(self):
+        self.assertIn("the engine tied no query to this one", self.js)
+        figures = self.js[self.js.index("function askFigures"):self.js.index("function askCitations")]
+        self.assertIn("row.query_id", figures)
+        self.assertIn("ask-uncited", figures)
+
+    def test_the_panel_computes_nothing(self):
+        panel = self.js[self.js.index("// Ask the data."):self.js.index("function renderQueue")]
+        for arithmetic in ("reduce(", "* 100", "+ Number(", ".toFixed(", " / "):
+            self.assertNotIn(arithmetic, panel)
+
+    def test_the_panel_supports_the_board_rather_than_taking_it_over(self):
+        board = self.html.index('id="overview-board"')
+        merchants = self.html.index('id="overview-merchants"')
+        ask = self.html.index('id="ask-form"')
+        rail = self.html.index('id="overview-watch-rail"')
+        self.assertLess(board, merchants)
+        self.assertLess(merchants, ask)
+        self.assertLess(ask, rail)
+        # No display-weight money in the panel: the answer is prose, not a KPI.
+        answer = re.search(r"\.ask-answer \{[^}]*font-size: (\d+)px", self.css)
+        risk = re.search(r"\.money \.mfig-risk dd \{[^}]*font-size: (\d+)px", self.css)
+        self.assertLess(int(answer.group(1)), int(risk.group(1)))
+
+    def test_the_judge_control_is_untouched_by_the_panel(self):
+        self.assertIn('id="judge-form"', self.html)
+        for stage in ("developing", "collapse", "clear"):
+            self.assertIn(f'data-stage="{stage}"', self.html)
+        self.assertNotIn("ask", self.html[self.html.index('id="judge-form"'):self.html.index("</header>")])
 
 
 class EscalationRaceTests(unittest.TestCase):
@@ -1365,11 +2121,17 @@ class EscalationRaceTests(unittest.TestCase):
         # winner finishes.
         connection = connect(self.db)
         self.addCleanup(connection.close)
+        # Precondition changed with the move to a per-channel claim: the
+        # winner holds one row per channel in escalation_channel_claim, not a
+        # single incident-level row in escalation_claim. The property under
+        # test is unchanged and is the one #59 fixed - the loser must not fire.
         with connection:
-            connection.execute(
-                "INSERT INTO escalation_claim (incident_id, claimed_at) VALUES (?, ?)",
-                ("inc-race", "2026-08-29T10:00:00.000Z"),
-            )
+            for channel in ("dashboard", "slack", "phone"):
+                connection.execute(
+                    "INSERT INTO escalation_channel_claim "
+                    "(incident_id, channel, claimed_at) VALUES (?, ?, ?)",
+                    ("inc-race", channel, "2026-08-29T10:00:00.000Z"),
+                )
 
         def failing_escalate(*args, **kwargs):
             raise AssertionError("the losing caller must never fire escalate()")
@@ -1392,6 +2154,184 @@ class EscalationRaceTests(unittest.TestCase):
         self.assertEqual(len(healed), 1)
 
 
+class PerChannelEscalationClaimTests(unittest.TestCase):
+    """A channel fires when its band is reached, and at most once per incident.
+
+    `docs/contracts/notification-escalation.md` specifies "one record per
+    channel per incident". The claim used to be keyed on the incident alone,
+    so the first C4 result locked it: an incident stored `high` (dashboard and
+    Slack) that a later sweep re-measured as `critical` short-circuited before
+    severity was re-read, and the phone never rang.
+
+    These drive the real ensure_escalation with both side-effecting channels
+    stubbed - no webhook URL, a fake provider - so nothing leaves the process.
+    `not_configured` is the expected healthy Slack status in an isolated run.
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.db = Path(self._tmpdir.name) / "clearwave.db"
+        self.connection = connect(self.db)
+        self.addCleanup(self.connection.close)
+        insert_incident(self.connection, _incident("inc-climb", "high", "2026-08-29T10:00:00Z"))
+        persist_result(
+            self.connection,
+            "inc-climb",
+            _diagnosis("inc-climb"),
+            "diagnosed",
+            trail=[_trail_entry()],
+        )
+        self.result = load_investigation(self.connection, "inc-climb")
+        self.calls = []
+
+    def _read_at(self, severity, incident_id="inc-climb", lifecycle_state="detected"):
+        """One dashboard read of the same incident, re-measured to `severity`."""
+        incident = _incident(
+            incident_id, severity, "2026-08-29T10:00:00Z", lifecycle_state=lifecycle_state
+        )
+        return ensure_escalation(
+            self.connection,
+            incident,
+            self.result,
+            slack_url="",
+            phone_provider=lambda incident, payload: self.calls.append(incident["incident_id"]),
+            log=lambda message: None,
+        )
+
+    def _channels(self, incident_id="inc-climb"):
+        return sorted(
+            event["channel"] for event in load_escalation(self.connection, incident_id)
+        )
+
+    def test_phone_fires_once_on_the_upgrade_and_nothing_fires_twice(self):
+        self._read_at("high")
+        self.assertEqual(self._channels(), ["dashboard", "slack"])
+        self.assertEqual(self.calls, [], "high must not call - #85 binds the phone to critical")
+
+        self._read_at("critical")
+        self.assertEqual(self.calls, ["inc-climb"], "the phone rings once, on the upgrade")
+        self.assertEqual(self._channels(), ["dashboard", "phone", "slack"])
+        # Exactly three rows: dashboard and slack were not fired or recorded a
+        # second time when the incident climbed into the critical band.
+        self.assertEqual(len(load_escalation(self.connection, "inc-climb")), 3)
+
+    def test_oscillating_across_the_band_boundary_pages_exactly_once(self):
+        # A live row can cross 0.70 in both directions as persistence and
+        # trajectory move around the line. The claim records that a channel
+        # has fired, never the severity that fired it, so it is monotonic:
+        # the phone rings on the first crossing and is silent on every one after.
+        for severity in ("high", "critical", "high", "critical", "high", "critical"):
+            self._read_at(severity)
+        self.assertEqual(self.calls, ["inc-climb"], "one call in total, not one per crossing")
+        self.assertEqual(self._channels(), ["dashboard", "phone", "slack"])
+        self.assertEqual(len(load_escalation(self.connection, "inc-climb")), 3)
+
+    def test_a_watch_escalates_nowhere_at_any_severity(self):
+        # The lifecycle allowlist stays ahead of everything the per-channel
+        # claim does: for a watch, severity is never read and nothing is claimed.
+        insert_incident(
+            self.connection,
+            _incident("inc-watch", "low", "2026-08-29T10:00:00Z", lifecycle_state="watching"),
+        )
+        persist_result(
+            self.connection,
+            "inc-watch",
+            _diagnosis("inc-watch"),
+            "diagnosed",
+            trail=[_trail_entry()],
+        )
+        self.result = load_investigation(self.connection, "inc-watch")
+        for severity in ("low", "medium", "high", "critical"):
+            events = self._read_at(severity, incident_id="inc-watch", lifecycle_state="watching")
+            self.assertEqual(events, [], f"a watch must escalate nowhere at severity {severity}")
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self._channels("inc-watch"), [])
+        claims = self.connection.execute(
+            "SELECT COUNT(*) FROM escalation_channel_claim WHERE incident_id = ?", ("inc-watch",)
+        ).fetchone()[0]
+        self.assertEqual(claims, 0, "a watch must not even be claimed")
+
+    def test_nothing_fires_before_a_c4_result_exists(self):
+        insert_incident(self.connection, _incident("inc-bare", "critical", "2026-08-29T10:00:00Z"))
+        incident = load_incident(self.connection, "inc-bare")
+        self.assertEqual(ensure_escalation(self.connection, incident, None), [])
+        self.assertEqual(self._channels("inc-bare"), [])
+
+    def test_a_store_written_before_this_change_does_not_re_fire(self):
+        # The demo stack has live rows whose channels were claimed under the
+        # old incident-level key, so escalation_channel_claim is empty for
+        # them. The recorded escalation_event rows must suppress a re-fire on
+        # their own, without a migration.
+        with self.connection:
+            for channel in ("dashboard", "slack"):
+                self.connection.execute(
+                    """INSERT INTO escalation_event
+                       (incident_id, channel, status, payload, detail, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    ("inc-climb", channel, "delivered", "{}", None, "2026-08-29T10:00:01.000Z"),
+                )
+            self.connection.execute(
+                "INSERT INTO escalation_claim (incident_id, claimed_at) VALUES (?, ?)",
+                ("inc-climb", "2026-08-29T10:00:01.000Z"),
+            )
+        self._read_at("high")
+        self.assertEqual(self._channels(), ["dashboard", "slack"])
+        self.assertEqual(self.calls, [])
+        # ...and the upgrade still reaches the phone, exactly once.
+        self._read_at("critical")
+        self.assertEqual(self.calls, ["inc-climb"])
+        self.assertEqual(self._channels(), ["dashboard", "phone", "slack"])
+
+
+class EscalateChannelSelectionTests(unittest.TestCase):
+    """`channels` narrows dispatch to a subset; it can never widen it."""
+
+    def test_channels_narrows_dispatch_without_touching_the_binding(self):
+        incident = _incident("inc-narrow", "critical", "2026-08-29T10:00:00Z")
+        placed = []
+        outcomes = escalate(
+            incident,
+            None,
+            slack_url="",
+            phone_provider=lambda incident, payload: placed.append(1),
+            log=lambda message: None,
+            channels=("phone",),
+        )
+        self.assertEqual([outcome["channel"] for outcome in outcomes], ["phone"])
+        self.assertEqual(placed, [1])
+
+    def test_channels_cannot_reach_a_channel_this_severity_does_not_bind(self):
+        # A caller asking for the phone on a `high` incident gets silence, not
+        # a call: CHANNELS_BY_SEVERITY stays the only binding, and the subset
+        # is intersected with it rather than trusted.
+        incident = _incident("inc-widen", "high", "2026-08-29T10:00:00Z")
+        placed = []
+        outcomes = escalate(
+            incident,
+            None,
+            slack_url="",
+            phone_provider=lambda incident, payload: placed.append(1),
+            log=lambda message: None,
+            channels=("phone",),
+        )
+        self.assertEqual(outcomes, [])
+        self.assertEqual(placed, [])
+
+    def test_default_none_fires_every_bound_channel(self):
+        incident = _incident("inc-default", "critical", "2026-08-29T10:00:00Z")
+        outcomes = escalate(
+            incident,
+            None,
+            slack_url="",
+            phone_provider=lambda incident, payload: None,
+            log=lambda message: None,
+        )
+        self.assertEqual(
+            [outcome["channel"] for outcome in outcomes], ["dashboard", "slack", "phone"]
+        )
+
+
 class ServerHardeningTests(unittest.TestCase):
     """Defensive handling for a server reachable during a live judge demo."""
 
@@ -1404,8 +2344,7 @@ class ServerHardeningTests(unittest.TestCase):
         self.httpd = make_server(self.db, host="127.0.0.1", port=0)
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
-        self.addCleanup(self.httpd.shutdown)
-        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(_stop_server, self.httpd, self.thread)
         self.port = self.httpd.server_address[1]
 
     def _raw_post(self, path, body, content_length_header):
@@ -1467,3 +2406,216 @@ class ServerHardeningTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WatchRailTests(unittest.TestCase):
+    """A watch must read as a quieter rail, never as an active incident.
+
+    `INACTIVE_STATES` was `{"resolved", "mitigated"}` and `_is_active` treated
+    everything else as active, so `watching` - which is neither - counted as an
+    active incident: it inflated the "Right now" business figures and dropped
+    into the incident queue styled like a crossed floor.
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.db = Path(self._tmpdir.name) / "clearwave.db"
+        seed = connect(self.db)
+        insert_incident(seed, _incident("inc-live", "critical", "2026-08-29T10:00:00Z"))
+        insert_incident(seed, _watch("inc-watch"), lifecycle_state="watching")
+        seed.close()
+        self.app = SurfacesApp(self.db)
+
+    def test_a_watch_is_never_counted_as_an_active_incident(self):
+        overview = self.app.overview()
+        self.assertEqual(overview["active_incident_count"], 1)
+        self.assertEqual(overview["source_incident_id"], "inc-live")
+        self.assertEqual(
+            [item["incident_id"] for item in overview["incidents"]], ["inc-live"]
+        )
+
+    def test_a_watch_never_inflates_an_overview_figure(self):
+        overview = self.app.overview()
+        # Every headline figure is copied off the one active incident, so the
+        # watch cannot have contributed to any of them.
+        self.assertEqual(overview["gmv"], {"amount": 100000.0, "currency": "USD"})
+        self.assertEqual(
+            overview["financial_impact"]["loss_per_hour"],
+            {"amount": 112000.0, "currency": "USD"},
+        )
+        self.assertEqual(
+            [row["merchant_id"] for row in overview["merchant_health"]], ["merchant-a"]
+        )
+
+    def test_a_watch_is_not_in_the_incident_queue_but_is_on_the_rail(self):
+        queue = self.app.queue()
+        self.assertEqual([item["incident_id"] for item in queue["incidents"]], ["inc-live"])
+        self.assertEqual([item["incident_id"] for item in queue["watches"]], ["inc-watch"])
+        self.assertEqual(
+            [item["incident_id"] for item in self.app.overview()["watches"]], ["inc-watch"]
+        )
+
+    def test_a_watch_is_not_a_row_on_the_escalation_view(self):
+        # It fires no channel by construction, so listing it there would read as
+        # an incident that failed to escalate.
+        groups = self.app.escalations()["incidents"]
+        self.assertEqual([group["incident_id"] for group in groups], ["inc-live"])
+
+    def test_the_rail_carries_the_projected_figure_and_both_floor_vectors(self):
+        watch = self.app.queue()["watches"][0]
+        self.assertEqual(watch["lifecycle_state"], "watching")
+        self.assertEqual(watch["severity"], "low")
+        # Projected, under its own stored key, never merged into loss_per_hour.
+        self.assertEqual(watch["projected_loss_per_hour"]["amount"], 15798.36)
+        self.assertIn("not money already lost", watch["projected_loss_per_hour"]["basis"])
+        # The reason it is not yet an incident: the detection floor it has not
+        # crossed, the watch predicate that did hold, and the trajectory.
+        self.assertFalse(watch["detection_floors"]["z_min"])
+        self.assertTrue(watch["watch_floors"]["worsening"])
+        self.assertEqual(watch["trajectory"], 1)
+        self.assertEqual(watch["reasons"], ["conversion_near_miss"])
+        self.assertEqual(watch["scope_label"], "merchant-w")
+
+    def test_present_recomputes_nothing_for_the_rail(self):
+        stored = _watch("inc-copy")
+        item = present.watch_item(stored)
+        self.assertEqual(
+            item["projected_loss_per_hour"], stored["financial_impact"]["projected_loss_per_hour"]
+        )
+        self.assertEqual(item["detection_floors"], stored["detection"]["detection_floors"])
+        self.assertEqual(item["statement"], stored["detection"]["watch"]["statement"])
+
+
+class WatchNeverPagesTests(unittest.TestCase):
+    """The no-paging guarantee must be structural, not a chain of conventions.
+
+    Before this, a watch could not page only because `ensure_escalation` gates
+    on a C4 result and the investigation daemon claims `detected`, so a watch
+    never gets one. Nothing checked the lifecycle state. These tests point
+    `ensure_escalation` at a watch that does have a result - the mistake derek's
+    constraint names - and require silence.
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.db = Path(self._tmpdir.name) / "clearwave.db"
+        self.connection = connect(self.db)
+        self.addCleanup(self.connection.close)
+        self.fired = []
+
+        def spy(incident, result, **kwargs):
+            self.fired.append(incident.get("incident_id"))
+            return [{"channel": "slack", "status": "delivered", "payload": {}}]
+
+        patcher = patch("surfaces.store.escalate", spy)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_ensure_escalation_refuses_a_watch_that_has_an_investigation_result(self):
+        insert_incident(self.connection, _watch("inc-watch"), lifecycle_state="watching")
+        persist_result(
+            self.connection, "inc-watch", _diagnosis("inc-watch"), "diagnosed", trail=[_trail_entry()]
+        )
+        stored = load_incident(self.connection, "inc-watch")
+        self.assertEqual(stored["lifecycle_state"], "watching")
+
+        outcomes = ensure_escalation(
+            self.connection, stored, load_investigation(self.connection, "inc-watch")
+        )
+
+        self.assertEqual(outcomes, [])
+        self.assertEqual(self.fired, [], "no channel may fire for a watch")
+        self.assertEqual(load_escalation(self.connection, "inc-watch"), [])
+        rows = self.connection.execute(
+            "SELECT COUNT(*) FROM escalation_claim WHERE incident_id = 'inc-watch'"
+        ).fetchone()[0]
+        self.assertEqual(rows, 0, "a watch is refused before anything is claimed")
+
+    def test_the_lifecycle_state_is_what_refuses_it(self):
+        # The same row, the same result, differing only in lifecycle state. If
+        # the guard were removed the first call would fire and this test would
+        # fail on the watch, not on the incident.
+        for incident_id, state, expected in (("inc-watch", "watching", []), ("inc-real", "detected", ["inc-real"])):
+            record = _watch(incident_id)
+            record["lifecycle_state"] = state
+            insert_incident(self.connection, record, lifecycle_state=state)
+            persist_result(
+                self.connection, incident_id, _diagnosis(incident_id), "diagnosed", trail=[_trail_entry()]
+            )
+            ensure_escalation(
+                self.connection,
+                load_incident(self.connection, incident_id),
+                load_investigation(self.connection, incident_id),
+            )
+        self.assertEqual(self.fired, ["inc-real"])
+
+    def test_only_detected_and_beyond_may_escalate(self):
+        self.assertNotIn("watching", ESCALATABLE_STATES)
+        self.assertEqual(
+            ESCALATABLE_STATES,
+            frozenset(
+                {"detected", "investigating", "diagnosed", "acknowledged", "mitigated", "resolved"}
+            ),
+        )
+
+    def test_a_dashboard_read_of_a_store_holding_a_watch_pages_nothing(self):
+        insert_incident(self.connection, _watch("inc-watch"), lifecycle_state="watching")
+        persist_result(
+            self.connection, "inc-watch", _diagnosis("inc-watch"), "diagnosed", trail=[_trail_entry()]
+        )
+        app = SurfacesApp(self.db)
+        app.overview()
+        app.queue()
+        app.detail("inc-watch")
+        self.assertEqual(self.fired, [])
+
+
+class WatchRailPageTests(unittest.TestCase):
+    """The rail must be drawn, quiet, and never in a severity colour."""
+
+    def setUp(self):
+        static = ROOT / "surfaces" / "static"
+        self.html = (static / "index.html").read_text(encoding="utf-8")
+        self.js = (static / "app.js").read_text(encoding="utf-8")
+        self.css = (static / "styles.css").read_text(encoding="utf-8")
+
+    def test_the_rail_has_its_own_region_apart_from_the_incident_queue(self):
+        self.assertIn('id="overview-watch-rail"', self.html)
+        self.assertIn('id="queue-watch-rail"', self.html)
+        # It is never appended into the queue table itself.
+        self.assertIn("renderWatchRail", self.js)
+        render_queue = self.js.split("function renderQueue")[1].split("// The warning rail.")[0]
+        self.assertNotIn('class="rail', render_queue)
+        self.assertNotIn("state.watches", render_queue)
+
+    def test_the_badge_says_watching_and_is_not_a_severity(self):
+        self.assertIn('class="watching"', self.js)
+        self.assertIn(">watching<", self.js)
+        self.assertRegex(self.css, r"\.watching\s*\{")
+        # No severity badge markup is reused for a watch.
+        rail_js = self.js.split("function watchRow")[1].split("function onsetLine")[0]
+        self.assertNotIn("badgePair", rail_js)
+        self.assertNotIn("severityClass", rail_js)
+
+    def test_no_rule_on_the_rail_reaches_for_a_critical_colour(self):
+        start = self.css.index("/* The warning rail.")
+        rail_css = self.css[start:]
+        for banned in ("--sev-critical", "--sev-high", "--sev-medium"):
+            self.assertNotIn(banned, rail_css)
+
+    def test_the_projection_is_worded_as_a_projection(self):
+        self.assertIn("if this continues", self.js)
+        self.assertIn("projected_loss_per_hour", self.js)
+        # "loss" alone would present a projection as a realised figure.
+        self.assertNotIn("Loss / hour", self.js)
+
+    def test_the_rail_computes_nothing(self):
+        rail_js = self.js.split("// The warning rail.")[1].split("function readoutCell")[0]
+        for arithmetic in ("* 100", " / 60", "reduce(", "+ Number("):
+            self.assertNotIn(arithmetic, rail_js)
+
+    def test_the_empty_rail_is_deliberate_rather_than_half_drawn(self):
+        self.assertIn("Nothing is being watched", self.js)
+        self.assertRegex(self.css, r"\.rail\.is-quiet")

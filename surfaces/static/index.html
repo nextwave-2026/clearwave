@@ -17,11 +17,21 @@
       </div>
       <div class="mast-right">
         <form id="judge-form" class="judge">
-          <button type="submit" id="judge-trigger" data-on="false" aria-pressed="false">
-            <span class="judge-dot" aria-hidden="true"></span>
-            <span id="judge-label">Fire hidden incident</span>
-          </button>
-          <p id="judge-status" role="status">Judge trigger ready. The scenario stays hidden.</p>
+          <div class="judge-controls" role="group" aria-label="Traffic control">
+            <button type="submit" data-stage="developing" data-on="false" aria-pressed="false">
+              <span class="judge-dot" aria-hidden="true"></span>
+              Developing deviation
+            </button>
+            <button type="submit" data-stage="collapse" data-on="false" aria-pressed="false">
+              <span class="judge-dot" aria-hidden="true"></span>
+              Collapse
+            </button>
+            <button type="submit" data-stage="clear" data-on="true" aria-pressed="true">
+              <span class="judge-dot" aria-hidden="true"></span>
+              Clear
+            </button>
+          </div>
+          <p id="judge-status" role="status">Ready. These controls change merchant-b's traffic. The board will keep showing whatever the store already holds.</p>
         </form>
       </div>
     </div>
@@ -40,7 +50,7 @@
 
   <nav class="jump" aria-label="Views">
     <div class="wrap jump-in">
-      <button type="button" class="jump-link on" data-view="overview">Right now</button>
+      <button type="button" class="jump-link on" data-view="overview">Revenue impact</button>
       <button type="button" class="jump-link" data-view="queue">Incident queue</button>
       <button type="button" class="jump-link" data-view="detail">Incident detail</button>
       <button type="button" class="jump-link" data-view="escalation">Escalation</button>
@@ -51,11 +61,30 @@
   <main id="workspace" class="wrap">
     <section id="view-overview" class="screen overview view is-active" data-view="overview">
       <div class="screen-head">
-        <h2>Right now</h2>
-        <span class="who">Everything a TAM needs before scrolling</span>
+        <h2>Revenue impact</h2>
+        <span class="who">What this is costing, and the incident that explains it</span>
       </div>
-      <p class="screen-lede">Figures are copied from the highest-priority active incident. Nothing here is computed in the UI. A CRITICAL incident with LOW confidence is valid and expected. Severity and diagnostic confidence never share a badge.</p>
+      <p class="screen-lede">Money is the subject of this view; the incident below it is the explanation, not the headline. Every figure is copied from the highest-priority active incident and cites the record it came from. Nothing here is computed in the UI, and no figure is added up across incidents.</p>
       <div id="overview-board"></div>
+      <div id="overview-merchants"></div>
+
+      <section class="ask" aria-labelledby="ask-title">
+        <div class="ask-head">
+          <h3 id="ask-title">Ask the data</h3>
+          <p class="ask-lede">A plain question about this store. The answer comes back with every query it ran, so you can check it rather than trust it. This one call costs a model request, so it fires only when you press Ask - never on the board's refresh.</p>
+        </div>
+        <form id="ask-form" class="ask-form">
+          <label class="vh" for="ask-input">Your question about the data</label>
+          <input id="ask-input" class="ask-input" type="text" autocomplete="off" maxlength="400"
+                 placeholder="Why did approvals drop for merchant-b?">
+          <button id="ask-go" class="ask-go" type="submit">Ask</button>
+        </form>
+        <div id="ask-examples" class="ask-egs"></div>
+        <div id="ask-result" class="ask-result" role="status" aria-live="polite"></div>
+      </section>
+
+      <div id="overview-watch-rail"></div>
+      <div id="overview-notes"></div>
     </section>
 
     <section id="view-queue" class="screen view" data-view="queue" hidden>
@@ -65,6 +94,7 @@
       </div>
       <p class="screen-lede">Queue is ordered by business priority. A CRITICAL incident with LOW confidence is valid and expected.</p>
       <div id="queue-board" class="queue-board"></div>
+      <div id="queue-watch-rail"></div>
     </section>
 
     <section id="view-detail" class="screen view" data-view="detail" hidden>

@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import os
 import unittest
+import warnings
 from types import SimpleNamespace
 from unittest import mock
 
@@ -26,12 +27,14 @@ class ModelDiscoveryTests(unittest.TestCase):
     def test_missing_key_prints_shared_message_without_constructing_client(self):
         stdout = io.StringIO()
         stderr = io.StringIO()
-        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": ""}), mock.patch(
-            "investigation.models.load_dotenv"
-        ), mock.patch("investigation.models.OpenAI") as openai, mock.patch(
-            "sys.stdout", stdout
-        ), mock.patch("sys.stderr", stderr):
-            code = main()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ResourceWarning)
+            with mock.patch.dict(os.environ, {"OPENAI_API_KEY": ""}), mock.patch(
+                "investigation.models.load_dotenv"
+            ), mock.patch("investigation.models.OpenAI") as openai, mock.patch(
+                "sys.stdout", stdout
+            ), mock.patch("sys.stderr", stderr):
+                code = main()
         self.assertEqual(code, 1)
         self.assertEqual(stdout.getvalue(), "")
         self.assertEqual(stderr.getvalue(), MISSING_KEY_MESSAGE + "\n")

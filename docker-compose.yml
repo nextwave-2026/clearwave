@@ -6,6 +6,8 @@ services:
     command: sleep infinity
     volumes:
       - .:/workspaces/clearwave:cached
+    tmpfs:
+      - /workspaces/clearwave/state/ground_truth
     depends_on:
       kafka:
         condition: service_healthy
@@ -131,6 +133,90 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - ./state:/data
+    tmpfs:
+      - /data/ground_truth
+    restart: unless-stopped
+
+  detector:
+    build:
+      context: .
+      dockerfile: detector/Dockerfile
+    container_name: clearwave-detector
+    user: "1000:1000"
+    # One long-lived consume loop. Empty polls are not terminal; SIGINT and
+    # SIGTERM drain the in-flight batch then exit 0. Sweeps every 45s even
+    # when the topics are quiet. A client-level broker failure exits non-zero
+    # into restart: unless-stopped; compose owns that retry, not this process.
+    environment:
+      CLEARWAVE_DB: /data/clearwave.db
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+    volumes:
+      - ./state:/data
+    tmpfs:
+      - /data/ground_truth
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+      worker-merchant-a:
+        condition: service_started
+      worker-merchant-b:
+        condition: service_started
+      worker-merchant-c:
+        condition: service_started
+    restart: unless-stopped
+
+  surfaces:
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+    image: clearwave-stack
+    container_name: clearwave-surfaces
+    working_dir: /workspaces/clearwave
+    user: "1000:1000"
+    # Bind 0.0.0.0 so the published port is reachable from outside the container.
+    # Deliberate for the containerised demo; host-side `make surfaces-serve` still
+    # defaults to 127.0.0.1. Host port 8082 because 8080, 8090 and 18080 are taken.
+    command: ["python", "-m", "surfaces", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "8082:8080"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      CLEARWAVE_DB: /data/clearwave.db
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - .:/workspaces/clearwave
+      - ./state:/data
+    tmpfs:
+      - /data/ground_truth
+      - /workspaces/clearwave/state/ground_truth
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+      worker-merchant-a:
+        condition: service_started
+      worker-merchant-b:
+        condition: service_started
+      worker-merchant-c:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/overview', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     restart: unless-stopped
 
 volumes:
