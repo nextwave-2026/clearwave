@@ -971,6 +971,17 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("const outcome = investigation.outcome", js)
         self.assertIn('(outcome ? " · " + outcome : "")', js)
 
+    def test_escalation_hypothesis_renders_statement_not_object_object(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn("String(hypothesis)", js)
+        self.assertIn("function c4FieldText", js)
+        self.assertIn("value.statement", js)
+        self.assertIn("value.explanation", js)
+        self.assertIn("value.action", js)
+        self.assertIn("No causal narrative is stored for this incident.", js)
+        self.assertIn("payload.leading_hypothesis", js)
+        self.assertIn("c4FieldText(", js)
+
 
 
 class EscalationEndpointTests(unittest.TestCase):

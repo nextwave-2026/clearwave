@@ -99,7 +99,7 @@ Finally, the judge restores the selected worker:
 
 Use the merchant they selected. Expected: the worker logs `cleared active incident`. If the live path failed earlier, there is nothing to stop.
 
-The broker-free fallback is proven. An earlier rehearsal of all three guaranteed scenarios took `2:48`; the evaluator returned cohort precision and recall of `1.0` for each. Model calls varied from about 45 to more than 100 seconds, so never start three fresh calls inside this slot. If the model is unavailable, deterministic localization, money, and evidence remain visible while the narrative is marked `agent_unavailable`. ([demo standing](demo-sequence.md#which-path-to-use), [ADR 0010](adr/0010-every-investigation-emits-a-result.md), [evaluator rule](../evaluator/README.md))
+The broker-free fallback is proven end to end for the provider degradation path: the supported `detector seed --scenario provider_incident` path stores a C3, and `investigation.vertical` produces the diagnosed C4 and dashboard view. The other two guaranteed scenarios are not exposed through supported offline seed commands and are not promised here. The earlier all-three rehearsal used hand-written `tests.synthetic` generators, so its `2:48` timing and `1.0` evaluator result are not guarantees for the supported seed path. Model calls vary from about 45 to more than 100 seconds, so never start three fresh calls inside this slot. If the model is unavailable, deterministic localization, money, and evidence remain visible while the narrative is marked `agent_unavailable`. ([demo standing](demo-sequence.md#which-path-to-use), [ADR 0010](adr/0010-every-investigation-emits-a-result.md), [evaluator rule](../evaluator/README.md))
 
 ## What comes next
 

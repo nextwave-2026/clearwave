@@ -111,6 +111,24 @@
     return "Investigation has not run yet.";
   }
 
+  // C4 narrative fields are objects (statement / explanation / action), not
+  // strings. String(object) becomes "[object Object]" on the escalation view.
+  function c4FieldText(value, fallback) {
+    if (value == null || value === "") return fallback;
+    if (typeof value === "string") return value;
+    if (typeof value === "object") {
+      if (typeof value.statement === "string" && value.statement) return value.statement;
+      if (typeof value.explanation === "string" && value.explanation) return value.explanation;
+      if (typeof value.action === "string" && value.action) return value.action;
+      try {
+        const rendered = JSON.stringify(value);
+        if (rendered) return rendered;
+      } catch (err) {}
+      return fallback;
+    }
+    return String(value);
+  }
+
   function statusBanner(incident, investigation) {
     if (isInvestigating(incident)) {
       return '<div class="note warn tight banner"><h4>Investigation is running</h4><p>This usually takes about a minute.</p></div>';
@@ -604,7 +622,10 @@
     const citations = payload.citations || {};
     const keys = Object.keys(citations);
     const event = (group.channels || []).filter(function (item) { return item.channel === "slack"; })[0];
-    const hypothesis = payload.leading_hypothesis;
+    const hypothesis = c4FieldText(
+      payload.leading_hypothesis,
+      "No causal narrative is stored for this incident."
+    );
     const sevClass = severityClass(payload.severity || group.severity);
     return '<div class="panel"><h3>Slack</h3>' +
       '<p class="hint">The payload that was rendered into Block Kit, copied field for field. Status: ' +
@@ -630,7 +651,7 @@
       "/hr if sustained.</p>" +
       "<p>Diagnostic confidence: <b>" +
       escapeHtml(confidenceLabel(payload.diagnostic_confidence, group.lifecycle_state)) + "</b>. " +
-      escapeHtml(hypothesis ? String(hypothesis) : "No causal narrative is stored for this incident.") +
+      escapeHtml(hypothesis) +
       "</p></div>" +
       (keys.length
         ? '<div class="ctx mono">' + keys.map(function (key) {
