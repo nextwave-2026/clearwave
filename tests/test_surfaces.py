@@ -1315,7 +1315,7 @@ class StaticContractTests(unittest.TestCase):
 
     def test_escalation_outcomes_are_shown_as_read_only_data(self):
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
-        self.assertIn("These are stored outcomes, not controls.", js)
+        self.assertIn("stored outcomes, not controls", js)
         self.assertIn("event.channel", js)
         self.assertIn("event.status", js)
         self.assertIn("fallback_dashboard", js)
@@ -1561,12 +1561,17 @@ class DashboardWiringTests(unittest.TestCase):
         self.assertIn("count(blast[key])", js)
         self.assertNotIn("fmt(blast[key])", js)
 
-    def test_escalation_view_exists_and_is_read_only(self):
+    def test_escalation_outcomes_survive_and_stay_read_only(self):
+        # The store-wide escalation tab was cut from the board. The outcomes it
+        # existed to show did not go with it: they are on the incident whose
+        # ladder fired, which is where a TAM reads them, and they are still a
+        # reading of stored rows rather than a control.
         html = (ROOT / "surfaces" / "static" / "index.html").read_text(encoding="utf-8")
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
-        self.assertIn('data-view="escalation"', html)
-        self.assertIn('id="escalation-board"', html)
-        self.assertIn("Nothing here is a control", html)
+        self.assertNotIn('data-view="escalation"', html)
+        self.assertIn("escalationLine(", js)
+        self.assertIn("stored outcomes, not controls", js)
+        self.assertIn('citeButton("detail-escalation"', js)
         # No control may reach into a channel from this page.
         self.assertNotIn("/api/calls/", js)
         self.assertNotIn("acknowledge", js)
@@ -1774,7 +1779,11 @@ class RevenueFirstOverviewTests(unittest.TestCase):
         self.assertLess(merchants, rail)
 
     def test_the_view_keys_the_other_layers_build_against_are_untouched(self):
-        for view in ("overview", "queue", "detail", "escalation", "evidence"):
+        # `escalation` was removed from the tab row on the captain's instruction.
+        # It was a view key, not a boundary: the C5 payload in INTERFACES.md,
+        # /api/escalations and surfaces/escalation.py are all untouched, and the
+        # per-incident outcomes moved onto the incident detail.
+        for view in ("overview", "queue", "detail", "evidence"):
             self.assertIn(f'data-view="{view}"', self.html)
 
     def test_the_judge_control_was_not_touched_by_the_business_framing(self):

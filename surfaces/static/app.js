@@ -1301,16 +1301,7 @@
     lead.appendChild(meta);
     head.appendChild(lead);
     const lost = financial.estimated_lost_approved_volume || {};
-    const chanCards = channels.length
-      ? '<div class="panel"><h3>Escalation</h3><p class="hint">Severity routes. Confidence never does. These are stored outcomes, not controls.</p><div class="chan">' +
-        channels.map(function (event) {
-          const armed = event.status === "delivered" || event.status === "fallback_dashboard";
-          return '<article class="chan-card' + (armed ? " armed" : "") + '"><h4>' +
-            escapeHtml(event.channel || "channel") + "</h4><p class=\"state\">" +
-            escapeHtml(event.status || "not in store") + "</p></article>";
-        }).join("") +
-        "</div></div>"
-      : '<div class="panel"><h3>Escalation</h3><p class="empty">No escalation outcome is stored for this incident.</p></div>';
+    const chanCards = escalationLine(incident, channels);
     const diagnosisPair = badgePair(
       incident.severity,
       (investigation.result || {}).diagnostic_confidence,
@@ -1322,16 +1313,17 @@
     // leaves a judge reading a puzzling pair; one line of copy turns it into a
     // design decision. It asserts no figure.
     const diagnosis = '<div class="panel"><h3>Priority and confidence</h3>' +
-      '<p class="hint">Two readings, two owners, deliberately not one score.</p>' +
+      '<p class="hint">Two owners, deliberately not one score.</p>' +
       '<div class="dual">' +
       '<div><span class="dual-l">priority</span>' + diagnosisPair.querySelector(".sev").outerHTML + "</div>" +
       '<div><span class="dual-l">confidence</span>' + diagnosisPair.querySelector(".conf").outerHTML + "</div>" +
       "</div>" +
-      '<p class="dual-note">Priority is the measured business impact of the incident. Confidence is the ' +
+      '<details class="disclose"><summary>Why these are two readings, not one score</summary>' +
+      '<div class="disclose-body"><p>Priority is the measured business impact of the incident. Confidence is the ' +
       "investigation's assessment of how strongly the evidence supports a cause. Neither is allowed to move " +
       "the other, so a critical incident at low confidence reads exactly as it should: a large problem " +
       "nobody can explain yet, which is worse than a small one and not better. Escalation routes on " +
-      "priority alone.</p>" +
+      "priority alone.</p></div></details>" +
       "</div>";
     frame.innerHTML =
       '<div class="frame-bar"><span class="dot"></span><span class="path mono">' + escapeHtml(path) + "</span></div>" +
@@ -1361,7 +1353,7 @@
     }
     const cause = questionCard(
       "4. What probably caused it?",
-      "The investigation's leading hypothesis. Never guessed in the UI.",
+      null,
       withheldOr("cause", causeBlock(questions.what_probably_caused_it,
         narrativePlaceholder(incident, investigation, "cause")))
     );
@@ -1379,30 +1371,30 @@
     }
     left.appendChild(questionCard(
       "5. Why do we believe that?",
-      "What is established, what is not ruled out, and what would settle it.",
+      null,
       withheldOr("belief", beliefBlock(questions.why_we_believe_that,
         narrativePlaceholder(incident, investigation, "belief")))
     ));
     const right = document.createElement("div");
     right.appendChild(questionCard(
       "6. What should the TAM do?",
-      "Recommended next action from the investigation record.",
+      null,
       withheldOr("action", actionBlock(questions.what_the_operator_should_do,
         narrativePlaceholder(incident, investigation, "action")))
     ));
     right.appendChild(questionCard(
       "1. What changed?",
-      "Copied from the incident change block.",
+      null,
       changeBlock(questions.what_changed)
     ));
     right.appendChild(questionCard(
       "2. Where?",
-      "Affected cohort as stored.",
+      null,
       whereBlock(questions.where, incident)
     ));
     right.appendChild(questionCard(
       "3. How much does it matter?",
-      "Financial impact as stored.",
+      null,
       moneyBlock(questions.how_much_it_matters)
     ));
     right.insertAdjacentHTML("beforeend", diagnosis);
@@ -1413,6 +1405,32 @@
     detailBoard.innerHTML = "";
     detailBoard.appendChild(frame);
     bindCites(detailBoard);
+  }
+
+  // The escalation ladder, as one line rather than a screen.
+  //
+  // The tab this replaced was the strongest surface in a full rehearsal, and
+  // what made it strong was that the outcomes are stored rows: which channel
+  // was reached, at which severity, with what result. That has not changed -
+  // it is read from the same `escalation_event` records, cited like every
+  // other figure, and it is still an account of what already fired rather than
+  // a control. Only its size on the page changed.
+  function escalationLine(incident, channels) {
+    const sev = badgePair(incident.severity, "__omit__", null).querySelector(".sev").outerHTML;
+    if (!channels.length) {
+      return '<p class="escline"><span class="escline-l">Escalation</span>' +
+        '<span class="empty">No escalation outcome is stored for this incident.</span></p>';
+    }
+    const parts = channels.map(function (event) {
+      const status = event.status || "not in store";
+      const reached = status === "delivered" || status === "fallback_dashboard";
+      return '<span class="escch' + (reached ? " reached" : "") + '">' +
+        escapeHtml(event.channel || "channel") + " <b>" + escapeHtml(status) + "</b></span>";
+    }).join("");
+    return '<p class="escline"><span class="escline-l">Escalation</span>' + sev +
+      '<span class="escch-list">' + parts + "</span>" +
+      '<span class="escline-note">stored outcomes, not controls' +
+      citeButton("detail-escalation", "cite the escalation outcomes") + "</span></p>";
   }
 
   function questionCard(title, hint, inner) {
@@ -1974,7 +1992,8 @@
       html += '<p class="q-label">Pointing the same way</p>' + evidenceList(supporting);
     }
     if (competing.length) {
-      html += '<section class="rigor"><h4>Not ruled out<span class="rigor-n">' + competing.length + "</span></h4>" +
+      html += '<details class="disclose rigor"><summary>Not ruled out<span class="rigor-n">' +
+        competing.length + "</span></summary><div class=\"disclose-body\">" +
         '<p class="rigor-why">The agent has to publish what it could not eliminate. Each of these survives ' +
         "the evidence gathered so far, and carries the query that keeps it alive.</p>" +
         '<ol class="claims">' + competing.map(function (item) {
@@ -1985,17 +2004,18 @@
           ? '<div class="rigor-amb"><p class="q-label">Why this cannot be settled from what is stored</p><p>' +
             escapeHtml(String(ambiguity.statement)) + "</p>" + evidenceList(ambiguity.evidence) + "</div>"
           : "") +
-        "</section>";
+        "</div></details>";
     }
     if (missing.length) {
-      html += '<section class="rigor next"><h4>What would settle it<span class="rigor-n">' + missing.length + "</span></h4>" +
+      html += '<details class="disclose rigor next"><summary>What would settle it<span class="rigor-n">' +
+        missing.length + "</span></summary><div class=\"disclose-body\">" +
         '<p class="rigor-why">Named next observations, not a shrug. Each one would discriminate between the ' +
         "explanations above.</p>" +
         '<ol class="claims">' + missing.map(function (item) {
           return "<li><p>" + escapeHtml(String(item.request || "")) + "</p>" +
             (item.reason ? '<p class="because">Because ' + escapeHtml(lowerFirst(item.reason)) + "</p>" : "") +
             evidenceList(item.evidence) + "</li>";
-        }).join("") + "</ol></section>";
+        }).join("") + "</ol></div></details>";
     }
     if (!html) return '<p class="q-none">' + escapeHtml(fallback) + "</p>";
     return html;
@@ -2007,8 +2027,16 @@
     const urgency = data.urgency
       ? '<span class="urg">' + escapeHtml(String(data.urgency)) + "</span>"
       : "";
-    return '<p class="q-lead">' + escapeHtml(String(data.action)) + "</p>" +
-      (urgency ? '<p class="q-urg">urgency ' + urgency + "</p>" : "") +
+    const text = String(data.action);
+    const stop = text.indexOf(". ");
+    const opening = stop > 0 ? text.slice(0, stop + 1) : text;
+    const rest = stop > 0 ? text.slice(stop + 1).trim() : "";
+    return (urgency ? '<p class="q-urg">urgency ' + urgency + "</p>" : "") +
+      '<p class="q-lead">' + escapeHtml(opening) + "</p>" +
+      (rest
+        ? '<details class="disclose"><summary>The rest of the recommendation</summary>' +
+          '<div class="disclose-body"><p>' + escapeHtml(rest) + "</p></div></details>"
+        : "") +
       '<p class="q-label">What that rests on</p>' +
       evidenceList(data.basis, "No citation was stored for this recommendation.") +
       '<p class="q-foot">Advisory. The system does not execute it.</p>';
@@ -2298,6 +2326,7 @@
   }
 
   function renderEscalation() {
+    if (!escalationBoard) return;
     const data = state.escalations;
     if (!data) {
       escalationBoard.innerHTML = '<p class="empty">Waiting for the store.</p>';
@@ -2413,6 +2442,7 @@
       "detail-lost": { title: "Payments lost", field: "financial_impact.estimated_lost_approved_volume.payments", value: (financial.estimated_lost_approved_volume || {}).payments, source: incident.incident_id },
       "detail-onset": { title: "Onset", field: "incident.onset", value: incident.onset, source: incident.incident_id },
       "detail-persist": { title: "Observed for", field: "persistence.observed_for_seconds", value: (incident.persistence || {}).observed_for_seconds, source: incident.incident_id },
+      "detail-escalation": { title: "Escalation outcomes", field: "escalation_event.status", value: ((state.detail || {}).escalation || []).map(function (event) { return (event.channel || "channel") + ": " + (event.status || "not in store"); }).join(" · "), source: incident.incident_id },
     };
     const rec = table[citeId];
     if (!rec) return null;

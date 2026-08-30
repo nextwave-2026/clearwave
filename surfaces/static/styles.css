@@ -1058,6 +1058,83 @@ td.num .mini { margin-top: 8px; min-width: 96px; }
 .prov-disclose .prov-in { padding-block: 6px; }
 .prov-disclose .sim-note { margin: 8px 0 0; }
 
+/* The escalation ladder as one line. The tab it replaced is gone; the stored
+   outcomes it showed are not, and they still read as an account of what fired
+   rather than as anything you can press. */
+.escline {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 18px 0 0;
+  padding: 12px 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.escline-l {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-3);
+}
+
+.escch-list { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.escch {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.escch b { font-weight: 600; color: var(--ink-2); }
+.escch.reached { border-color: rgba(63, 191, 135, 0.4); }
+.escch.reached b { color: var(--good); }
+
+.escline-note {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--ink-3);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The detail's two columns used to leave one short and the other long, so the
+   screen ended on a column of nothing. Letting the browser balance them keeps
+   the cards in reading order and the page the height of its content. */
+@media (min-width: 961px) {
+  .detail-grid {
+    display: block;
+    columns: 2;
+    column-gap: 18px;
+  }
+  .detail-grid > div { display: contents; }
+  .detail-grid .panel { break-inside: avoid; margin: 0 0 18px; }
+}
+
+@media (max-width: 640px) {
+  .escline { gap: 10px; padding: 11px 13px; }
+  .escline-note { margin-left: 0; }
+}
+
+.disclose.rigor { margin-top: 16px; }
+.disclose.rigor > summary { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.disclose.rigor > summary:hover { color: var(--ink); }
+.disclose.rigor .rigor-n {
+  margin-left: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--lilac-deep);
+  background: rgba(107, 123, 255, 0.14);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.disclose.rigor .rigor-why { margin: 10px 0 0; font-size: 11.5px; color: var(--ink-3); }
+
 /* Supporting context. True, useful, and no longer the headline. */
 .ctxbar {
   display: flex;
