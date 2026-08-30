@@ -309,9 +309,18 @@ def ingest_stream(
 
 
 def window_bounds(connection: sqlite3.Connection) -> tuple[int, int] | None:
-    """Return the epoch range actually present, or None on an empty store."""
+    """Return the epoch range across all stored event kinds, or None if empty."""
     row = connection.execute(
-        "SELECT MIN(occurred_epoch) AS lo, MAX(occurred_epoch) AS hi FROM attempt"
+        """
+        SELECT MIN(event_epoch) AS lo, MAX(event_epoch) AS hi
+        FROM (
+            SELECT occurred_epoch AS event_epoch FROM attempt
+            UNION ALL
+            SELECT sample_epoch AS event_epoch FROM telemetry_sample
+            UNION ALL
+            SELECT closed_epoch AS event_epoch FROM payment_closed
+        )
+        """
     ).fetchone()
     if row is None or row["lo"] is None:
         return None

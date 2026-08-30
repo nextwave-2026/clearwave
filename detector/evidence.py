@@ -38,7 +38,25 @@ TOOLS = (
     "incident_history",
     "financial_impact",
     "metric_series",
+    "ingest_health",
 )
+
+# `ingest_health` groups dead letters by reason. The reason is an exception
+# string, so its cardinality is bounded by the failure modes rather than by the
+# traffic, but a pathological store should not be able to return an unbounded
+# list. The count of distinct reasons is always reported in full.
+DEAD_LETTER_REASON_LIMIT = 10
+
+# The event-time column of each stored record kind, for `ingest_health`.
+# `store.KINDS` names the tables; only the attempt table's column feeds
+# `window_bounds`, and therefore the watermark, because the canonical event is
+# the attempt. Telemetry and closed-payment rows are stored alongside it and
+# would otherwise be invisible on a store that holds them and nothing else.
+KIND_TIME_COLUMNS = {
+    "attempt": "occurred_epoch",
+    "telemetry": "sample_epoch",
+    "closed": "closed_epoch",
+}
 
 # Closed metric vocabulary for `metric_series`. A caller asking for anything
 # else gets a refusal naming the set, never a silently substituted default.
@@ -891,6 +909,130 @@ def _identifier(request: dict[str, Any], key: str) -> str:
     return value
 
 
+# --------------------------------------------------------------------------
+# 12. ingest_health
+# --------------------------------------------------------------------------
+
+def _ingest_health(connection: sqlite3.Connection, request: dict[str, Any]) -> dict[str, Any]:
+    """Answer "is anything actually arriving?" from the store alone.
+
+    Every other tool measures the payments. This one measures the measuring:
+    how many records survived normalisation into the store, how many were
+    refused and why, how recent the newest one is, and how far that newest
+    event sits ahead of the point measurement is complete to. It is the only
+    tool whose subject is the pipeline rather than the traffic, which is why it
+    takes no cohort and no window - a freshness figure narrowed to a window is
+    not a freshness figure.
+
+    **`duplicates` is deliberately absent.** At-least-once delivery is turned
+    into exactly-once counting by ``INSERT OR IGNORE`` on `event_id`
+    (`store.write_batch`), so a redelivered record leaves no trace in the
+    store: the counter exists only in the consumer's in-memory `Progress` for
+    the length of one run and is reported on its stdout. There is no honest way
+    to recover it here, so it is named in `not_measured` rather than guessed
+    at. `not_measured` is a statement about this tool, not a counter.
+
+    **The event-time fields describe every accepted event stream.**
+    `newest_event_at`, `watermark`, `as_of` and `lag_seconds` all read
+    `store.window_bounds`, which spans attempts, telemetry samples, and closed
+    payments. `newest_by_kind` retains each stream's individual newest event for
+    operators diagnosing which stream moved the shared freshness reading.
+
+    **`rejected` and `dead_letter.count` are one measurement, not two.** A
+    refused record is dead-lettered in the same statement that rejects it, so
+    the two fields are equal by construction. Both are published because a
+    caller asking "was anything rejected" and a caller asking "what is in the
+    dead-letter queue" are asking the same question of this store and should
+    not have to know that.
+    """
+    if request:
+        # No input is defined, so an argument is a caller believing in a filter
+        # that does not exist. Refusing beats silently answering a wider
+        # question than the one asked.
+        raise EvidenceError(
+            "invalid_input",
+            "ingest_health takes no input; it reports the whole store, "
+            f"but received {', '.join(sorted(map(str, request)))}",
+        )
+
+    stored = store.stored_counts(connection)
+    bounds = store.window_bounds(connection)
+    mark = watermark(connection)
+
+    rows = connection.execute(
+        "SELECT reason, COUNT(*) AS n FROM dead_letter "
+        "GROUP BY reason ORDER BY n DESC, reason ASC"
+    ).fetchall()
+    sources = connection.execute(
+        "SELECT source, COUNT(*) AS n FROM dead_letter "
+        "GROUP BY source ORDER BY n DESC, source ASC"
+    ).fetchall()
+    rejected = sum(int(row["n"]) for row in rows)
+
+    return {
+        "as_of": _as_of(connection),
+        "watermark": schema.iso_utc(mark),
+        # The headline: normalised payment attempts the store holds, post-dedupe.
+        "accepted": stored["attempt"],
+        "stored": {
+            "attempts": stored["attempt"],
+            "telemetry_samples": stored["telemetry"],
+            "payments_closed": stored["closed"],
+        },
+        "rejected": rejected,
+        "dead_letter": {
+            "count": rejected,
+            "distinct_reasons": len(rows),
+            "reasons": [
+                {"reason": row["reason"], "count": int(row["n"])}
+                for row in rows[:DEAD_LETTER_REASON_LIMIT]
+            ],
+            "by_source": [
+                {"source": row["source"], "count": int(row["n"])} for row in sources
+            ],
+        },
+        "oldest_event_at": schema.iso_utc(bounds[0]) if bounds else None,
+        "newest_event_at": schema.iso_utc(bounds[1]) if bounds else None,
+        # Per-kind newest event times identify which stream moved the shared
+        # freshness reading above.
+        "newest_by_kind": {
+            name: _newest_event_at(connection, store.KINDS[kind], column)
+            for name, kind, column in (
+                ("attempts", "attempt", KIND_TIME_COLUMNS["attempt"]),
+                ("telemetry_samples", "telemetry", KIND_TIME_COLUMNS["telemetry"]),
+                ("payments_closed", "closed", KIND_TIME_COLUMNS["closed"]),
+            )
+        },
+        # How far the newest observed event sits ahead of the watermark. This
+        # is event time against event time, never against the wall clock: it
+        # says how much of what has arrived is not yet measured, and it stays
+        # the same on a replay. It is not "how long since a record arrived",
+        # and a caller must not present it as one.
+        "lag_seconds": max(0, bounds[1] - mark) if bounds else None,
+        "lateness_grace_seconds": config.LATENESS_GRACE_SECONDS,
+        "not_measured": {
+            "duplicates": (
+                "redelivered records are dropped by INSERT OR IGNORE on event_id and "
+                "leave no row behind; the count lives only in the consumer run that "
+                "saw them, so the store cannot report it"
+            ),
+        },
+    }
+
+
+
+def _newest_event_at(connection: sqlite3.Connection, table: str, column: str) -> str | None:
+    """The newest event time in one stored table, or None where it holds none.
+
+    Read-only, and deliberately here rather than in `store`: this supplements
+    the shared bounds with the stream that supplied each newest event.
+    """
+    row = connection.execute(f"SELECT MAX({column}) AS hi FROM {table}").fetchone()
+    if row is None or row["hi"] is None:
+        return None
+    return schema.iso_utc(int(row["hi"]))
+
+
 _HANDLERS = {
     "cohort_metrics": _cohort_metrics,
     "cohort_compare": _cohort_compare,
@@ -902,4 +1044,5 @@ _HANDLERS = {
     "incident_history": _incident_history,
     "financial_impact": _financial_impact,
     "metric_series": _metric_series,
+    "ingest_health": _ingest_health,
 }
