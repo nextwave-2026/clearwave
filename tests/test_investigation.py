@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
+from investigation.agent import InvestigationRun
 from investigation.gateway import EvidenceGateway
 from investigation.prefilter import compute_signature, prefilter
 from investigation.degrade import degrade_result
@@ -18,11 +23,13 @@ from investigation.store import (
     evidence_fingerprint,
     insert_incident,
     model_call_summary,
+    next_result_version,
     persist_result,
     read_result,
     reclaim_expired_claims,
 )
 from investigation.trail import EvidenceTrail
+from surfaces.present import detail as present_detail
 from surfaces.store import ESCALATABLE_STATES, connect as surfaces_connect, ensure_escalation, load_investigation
 
 
@@ -572,6 +579,259 @@ class PrefilterTests(unittest.TestCase):
         self.assertTrue(result["candidates"])
         self.assertTrue(result["reason"])
         self.assertIn("unknown_observable_failure", {candidate["name"] for candidate in result["candidates"]})
+
+
+def _trail_identity(entries):
+    return [
+        (
+            entry.get("sequence"),
+            entry.get("query_id"),
+            entry.get("tool"),
+            entry.get("outcome"),
+            bool(entry.get("executed", True)),
+        )
+        for entry in entries
+    ]
+
+
+class LiveTrailPersistenceTests(unittest.TestCase):
+    def _store(self):
+        connection = connect(":memory:")
+        self.addCleanup(connection.close)
+        insert_incident(connection, {"incident_id": "inc-1", "affected_cohort": {}})
+        return connection
+
+    def _persist_live(self, connection, incident_id, version):
+        def persist_entry(entry):
+            append_trail_entry(connection, incident_id, entry, version=version)
+
+        return persist_entry
+
+    def _gateway(self, connection, version, incident_id="inc-1"):
+        return EvidenceGateway(
+            runner=lambda tool, parameters, timeout: {"ok": True, "tool": tool},
+            persist_entry=self._persist_live(connection, incident_id, version),
+        )
+
+    def test_entries_are_readable_after_each_gateway_call(self):
+        connection = self._store()
+        self.assertTrue(claim_incident(connection, "inc-1"))
+        version = next_result_version(connection, "inc-1")
+        gateway = self._gateway(connection, version)
+        gateway.call("cohort_metrics", REQUEST, opening=True)
+        live = read_result(connection, "inc-1")
+        self.assertIsNone(live["completed_at"])
+        self.assertEqual(len(live["trail"]), 1)
+        self.assertEqual(live["trail"][0]["sequence"], 1)
+        self.assertEqual(live["trail"][0]["tool"], "cohort_metrics")
+        gateway.call("drilldown", {"incident_id": "inc-1"}, opening=True)
+        live = read_result(connection, "inc-1")
+        self.assertEqual([entry["tool"] for entry in live["trail"]], ["cohort_metrics", "drilldown"])
+        self.assertEqual([entry["sequence"] for entry in live["trail"]], [1, 2])
+
+    def test_final_write_over_live_entries_does_not_duplicate(self):
+        connection = self._store()
+        self.assertTrue(claim_incident(connection, "inc-1"))
+        version = next_result_version(connection, "inc-1")
+        gateway = self._gateway(connection, version)
+        gateway.call("cohort_metrics", REQUEST, opening=True)
+        gateway.call("drilldown", {"incident_id": "inc-1"}, opening=True)
+        produced = list(gateway.trail.entries)
+        stored = persist_result(
+            connection,
+            "inc-1",
+            {"incident_id": "inc-1"},
+            "diagnosed",
+            version=version,
+            trail=gateway.trail,
+        )
+        self.assertEqual(stored["version"], version)
+        self.assertEqual(_trail_identity(stored["trail"]), _trail_identity(produced))
+        count = connection.execute(
+            "SELECT COUNT(*) FROM evidence_trail WHERE incident_id = 'inc-1'"
+        ).fetchone()[0]
+        self.assertEqual(count, len(produced))
+        self.assertEqual([entry["sequence"] for entry in stored["trail"]], [1, 2])
+
+    def test_reinvestigation_live_entries_use_the_new_version(self):
+        connection = self._store()
+        first = {
+            "query_id": "q_old",
+            "tool": "cohort_metrics",
+            "parameters": REQUEST,
+            "response": {"query_id": "q_old"},
+            "timestamp": "2026-08-29T10:00:00Z",
+            "duration_ms": 1.0,
+            "outcome": "success",
+            "executed": True,
+            "sequence": 1,
+        }
+        persist_result(
+            connection,
+            "inc-1",
+            {"incident_id": "inc-1", "run": 1},
+            "diagnosed",
+            trail=[first],
+        )
+        connection.execute(
+            "UPDATE incident SET lifecycle_state = 'detected' WHERE incident_id = 'inc-1'"
+        )
+        connection.commit()
+        self.assertTrue(claim_incident(connection, "inc-1"))
+        version = next_result_version(connection, "inc-1")
+        self.assertEqual(version, 2)
+        gateway = self._gateway(connection, version)
+        gateway.call("decline_breakdown", REQUEST, opening=True)
+        live = read_result(connection, "inc-1")
+        self.assertEqual(live["version"], 2)
+        self.assertIsNone(live["completed_at"])
+        self.assertEqual([entry["tool"] for entry in live["trail"]], ["decline_breakdown"])
+        self.assertEqual(live["trail"][0]["sequence"], 1)
+        previous = read_result(connection, "inc-1", version=1)
+        self.assertEqual(previous["result"], {"incident_id": "inc-1", "run": 1})
+        self.assertEqual(previous["trail"][0]["query_id"], "q_old")
+        stored = persist_result(
+            connection,
+            "inc-1",
+            {"incident_id": "inc-1", "run": 2},
+            "diagnosed",
+            version=version,
+            trail=gateway.trail,
+        )
+        self.assertEqual(stored["version"], 2)
+        self.assertEqual(_trail_identity(stored["trail"]), _trail_identity(gateway.trail.entries))
+        versions = {
+            row[0]: row[1]
+            for row in connection.execute(
+                "SELECT result_version, COUNT(*) FROM evidence_trail "
+                "WHERE incident_id = 'inc-1' GROUP BY result_version"
+            ).fetchall()
+        }
+        self.assertEqual(versions, {1: 1, 2: 1})
+
+    def test_raising_live_write_does_not_fail_the_run(self):
+        def boom(entry):
+            raise RuntimeError("store unavailable")
+
+        gateway = EvidenceGateway(
+            runner=lambda tool, parameters, timeout: {"ok": True},
+            persist_entry=boom,
+        )
+        response = gateway.call("cohort_metrics", REQUEST, opening=True)
+        self.assertNotIn("error", response)
+        self.assertEqual(len(gateway.trail.entries), 1)
+        connection = self._store()
+        stored = persist_result(
+            connection,
+            "inc-1",
+            {"incident_id": "inc-1"},
+            "diagnosed",
+            trail=gateway.trail,
+        )
+        self.assertEqual(len(stored["trail"]), 1)
+        self.assertEqual(stored["trail"][0]["query_id"], gateway.trail.entries[0]["query_id"])
+
+    def test_in_flight_result_does_not_page(self):
+        connection = surfaces_connect(":memory:")
+        self.addCleanup(connection.close)
+        incident = {
+            "incident_id": "inc-1",
+            "affected_cohort": {},
+            "severity": "critical",
+            "lifecycle_state": "investigating",
+        }
+        insert_incident(connection, incident, lifecycle_state="detected")
+        self.assertTrue(claim_incident(connection, "inc-1"))
+        version = next_result_version(connection, "inc-1")
+        gateway = self._gateway(connection, version)
+        gateway.call("cohort_metrics", REQUEST, opening=True)
+        live = read_result(connection, "inc-1")
+        self.assertFalse(bool(live))
+        events = ensure_escalation(connection, incident, live)
+        self.assertEqual(events, [])
+
+    def test_present_serves_claimed_at_as_started_at_while_in_flight(self):
+        connection = self._store()
+        incident = {"incident_id": "inc-1", "affected_cohort": {}, "lifecycle_state": "investigating"}
+        self.assertTrue(claim_incident(connection, "inc-1"))
+        claimed_at = connection.execute(
+            "SELECT claimed_at FROM investigation_claim WHERE incident_id = 'inc-1'"
+        ).fetchone()[0]
+        version = next_result_version(connection, "inc-1")
+        gateway = self._gateway(connection, version)
+        gateway.call("cohort_metrics", REQUEST, opening=True)
+        live = read_result(connection, "inc-1")
+        payload = present_detail(incident, live)
+        self.assertEqual(payload["investigation"]["started_at"], claimed_at)
+        self.assertIsNone(payload["investigation"]["completed_at"])
+        self.assertFalse(payload["investigation"]["narrative_available"])
+        self.assertEqual(len(payload["evidence_trail"]), 1)
+        self.assertEqual(payload["evidence_trail"][0]["sequence"], 1)
+
+    def test_runner_live_and_final_share_version_and_sequence(self):
+        handle, path = tempfile.mkstemp(suffix=".db")
+        os.close(handle)
+        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+        connection = connect(path)
+        self.addCleanup(connection.close)
+        insert_incident(connection, {"incident_id": "inc-1", "affected_cohort": {}})
+        first_query = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+
+        class Agent:
+            query_budget = 6
+
+            def investigate(self, incident, gateway=None):
+                gw = gateway or EvidenceGateway(
+                    query_budget=self.query_budget,
+                    runner=lambda tool, parameters, timeout: {"ok": True, "tool": tool},
+                )
+                gw.call("cohort_metrics", REQUEST, opening=True)
+                first_query.set()
+                if not release.wait(5):
+                    raise RuntimeError("timed out waiting to continue investigation")
+                gw.call("drilldown", {"incident_id": incident["incident_id"]}, opening=True)
+                run = InvestigationRun(
+                    result=degrade_result(incident, reason="live runner"),
+                    trail=gw.trail,
+                    started_at="2026-08-30T12:00:00.000Z",
+                    completed_at="2026-08-30T12:01:00.000Z",
+                    duration_ms=1.0,
+                )
+                finished.set()
+                return run
+
+        runner = InvestigationRunner(connection, Agent())
+        self.addCleanup(runner.close)
+        runner.poll_once(wait=False)
+        self.assertTrue(first_query.wait(5))
+        peek = connect(path)
+        self.addCleanup(peek.close)
+        live = read_result(peek, "inc-1")
+        self.assertIsNone(live["completed_at"])
+        self.assertEqual(len(live["trail"]), 1)
+        self.assertEqual(live["trail"][0]["sequence"], 1)
+        self.assertEqual(live["trail"][0]["tool"], "cohort_metrics")
+        in_flight_version = live["version"]
+        release.set()
+        self.assertTrue(finished.wait(5))
+        runs = []
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            runs = runner.poll_once(wait=False)
+            if runs:
+                break
+            time.sleep(0.02)
+        self.assertEqual(len(runs), 1)
+        stored = read_result(connection, "inc-1")
+        self.assertEqual(stored["version"], in_flight_version)
+        self.assertEqual(_trail_identity(stored["trail"]), _trail_identity(runs[0].trail.entries))
+        count = connection.execute(
+            "SELECT COUNT(*) FROM evidence_trail WHERE incident_id = 'inc-1'"
+        ).fetchone()[0]
+        self.assertEqual(count, 2)
+        self.assertEqual([entry["sequence"] for entry in stored["trail"]], [1, 2])
 
 
 if __name__ == "__main__":

@@ -299,7 +299,10 @@ def _state(incident: Mapping[str, Any]) -> str:
 def _narrative_available(investigation: Mapping[str, Any] | None) -> bool:
     if investigation is None:
         return False
-    return investigation.get("outcome") != "agent_unavailable"
+    outcome = investigation.get("outcome")
+    if not outcome:
+        return False
+    return outcome != "agent_unavailable"
 
 
 def _result_body(investigation: Mapping[str, Any] | None) -> dict[str, Any] | None:
