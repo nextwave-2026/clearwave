@@ -27,11 +27,13 @@ this package uses absolute `worker.*` imports:
     python -m worker.worker merchant-c --incident-issuing-bank "Nu Brasil"
     python -m worker.worker merchant-c --scenario provider-issuer-confounded
 
-Loops forever until interrupted (Ctrl+C). --incident-* flags set the
-starting incident; while running, it also polls
-worker.helpers.control.CONTROL_TOPIC each tick, so worker/inject.py (or
-eventually W4's judge trigger) can start or stop an incident live without
-restarting this process.
+Healthy-traffic workers loop until SIGINT or SIGTERM. A --scenario run
+also stops when --scenario-duration-seconds elapses (default 900). Both
+paths run the finally block: pending deliveries flushed, control consumer
+closed, C6 record closed. --incident-* flags set the starting incident;
+while running, it also polls worker.helpers.control.CONTROL_TOPIC each
+tick, so worker/inject.py (or W4's judge trigger) can start or stop an
+incident live without restarting this process.
 
 --scenario runs one of the guaranteed scenarios in docs/scenarios.md
 instead: same Incident mechanism underneath, but it also records the C6
@@ -43,7 +45,6 @@ silent no-op.
 """
 
 import os
-import time
 from pathlib import Path
 
 from confluent_kafka import Producer as ConfluentProducer
@@ -58,6 +59,7 @@ from worker.helpers.incident import SPIKE, Incident
 from worker.helpers.merchant import Merchant
 from worker.helpers.payment import PaymentAttemptBuilder
 from worker.helpers.telemetry import TelemetrySampleBuilder
+from worker.runtime import RunStopper, WorkerStop
 
 SPIKE_MULTIPLIER = 3  # extra chains generated per tick while a spike incident is active
 
@@ -125,8 +127,10 @@ class Producer:
         # serves delivery-report callbacks without blocking for one
         self._producer.poll(0)
 
-    def flush(self) -> None:
-        self._producer.flush()
+    def flush(self, timeout: float = 10.0) -> None:
+        remaining = self._producer.flush(timeout)
+        if remaining:
+            print(f"warning: {remaining} messages still unsent after flush")
 
 
 def run(
@@ -135,54 +139,83 @@ def run(
     interval_seconds: float,
     telemetry_every: int,
     scenario_run: ScenarioRun | None = None,
+    duration_seconds: float | None = None,
+    producer: Producer | None = None,
+    control: IncidentControl | None = None,
+    stopper: RunStopper | None = None,
+    install_signal_handlers: bool = True,
 ) -> None:
-    producer = Producer()
-    control = IncidentControl(merchant.merchant_id, initial=incident)
+    producer = producer if producer is not None else Producer()
+    control = control if control is not None else IncidentControl(
+        merchant.merchant_id, initial=incident
+    )
     payment_builder = PaymentAttemptBuilder(merchant, incident=incident)
     telemetry_builder = TelemetrySampleBuilder(merchant, incident=incident)
+    stopper = stopper if stopper is not None else RunStopper(duration_seconds)
+    previous_handlers = stopper.arm_signals() if install_signal_handlers else None
     tick = 0
     try:
-        while True:
-            control.poll()
-            payment_builder.incident = control.incident
-            telemetry_builder.incident = control.incident
+        try:
+            while True:
+                if stopper.duration_elapsed():
+                    print("scenario duration elapsed, stopping...")
+                    break
+                control.poll()
+                payment_builder.incident = control.incident
+                telemetry_builder.incident = control.incident
 
-            attempts = payment_builder.build_chain()
-            for attempt in attempts:
-                producer.send("attempt", key=attempt["payment_id"], event=attempt)
+                attempts = payment_builder.build_chain()
+                for attempt in attempts:
+                    producer.send("attempt", key=attempt["payment_id"], event=attempt)
 
-            closed = payment_builder.build_closed(attempts)
-            producer.send("closed", key=closed["payment_id"], event=closed)
-            if scenario_run is not None:
-                scenario_run.observe(attempts, closed)
+                closed = payment_builder.build_closed(attempts)
+                producer.send("closed", key=closed["payment_id"], event=closed)
+                if scenario_run is not None:
+                    scenario_run.observe(attempts, closed)
 
-            active = control.incident
-            if active is not None and active.effect == SPIKE:
-                # no per-attempt effect - extra volume forced into the
-                # scoped cohort is the effect itself
-                for _ in range(SPIKE_MULTIPLIER):
-                    extra_attempts = payment_builder.build_chain(forced=active.scope)
-                    for attempt in extra_attempts:
-                        producer.send("attempt", key=attempt["payment_id"], event=attempt)
-                    extra_closed = payment_builder.build_closed(extra_attempts)
-                    producer.send("closed", key=extra_closed["payment_id"], event=extra_closed)
-                    if scenario_run is not None:
-                        scenario_run.observe(extra_attempts, extra_closed)
+                active = control.incident
+                if active is not None and active.effect == SPIKE:
+                    # no per-attempt effect - extra volume forced into the
+                    # scoped cohort is the effect itself
+                    for _ in range(SPIKE_MULTIPLIER):
+                        extra_attempts = payment_builder.build_chain(forced=active.scope)
+                        for attempt in extra_attempts:
+                            producer.send(
+                                "attempt", key=attempt["payment_id"], event=attempt
+                            )
+                        extra_closed = payment_builder.build_closed(extra_attempts)
+                        producer.send(
+                            "closed", key=extra_closed["payment_id"], event=extra_closed
+                        )
+                        if scenario_run is not None:
+                            scenario_run.observe(extra_attempts, extra_closed)
 
-            tick += 1
-            if telemetry_every > 0 and tick % telemetry_every == 0:
-                sample = telemetry_builder.build()
-                producer.send("telemetry", key=sample["service_id"], event=sample)
+                tick += 1
+                if telemetry_every > 0 and tick % telemetry_every == 0:
+                    sample = telemetry_builder.build()
+                    producer.send("telemetry", key=sample["service_id"], event=sample)
 
-            time.sleep(interval_seconds)
-    except KeyboardInterrupt:
-        print("stopping, flushing pending deliveries...")
+                stopper.sleep(interval_seconds)
+        except WorkerStop as stop:
+            print(f"stopping on {stop.reason}, flushing pending deliveries...")
+        except KeyboardInterrupt:
+            print("stopping, flushing pending deliveries...")
     finally:
-        producer.flush()
-        control.close()
-        if scenario_run is not None:
-            scenario_run.close()
-            print(f"ground truth recorded: instance_id={scenario_run.instance_id}")
+        try:
+            producer.flush(timeout=10.0)
+        finally:
+            try:
+                control.close()
+            finally:
+                try:
+                    if scenario_run is not None:
+                        scenario_run.close()
+                        print(
+                            f"ground truth recorded: instance_id={scenario_run.instance_id}"
+                        )
+                finally:
+                    if previous_handlers is not None:
+                        stopper.restore(previous_handlers)
 
 
 if __name__ == "__main__":
@@ -196,4 +229,7 @@ if __name__ == "__main__":
         args.interval_seconds,
         args.telemetry_every,
         scenario_run=scenario_run,
+        duration_seconds=(
+            args.scenario_duration_seconds if scenario_run is not None else None
+        ),
     )

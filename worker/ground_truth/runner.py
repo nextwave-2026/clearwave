@@ -30,8 +30,9 @@ class ScenarioRun:
         self.incident = self.definition.build_incident()
         self.payments_total = 0
         self.payments_approved = 0
+        self._closed = False
 
-        self._conn = store.connect(db_path) if db_path else store.connect()
+        self._conn = store.connect(db_path)
         start = _now()
         end = start + timedelta(seconds=duration_seconds)
         self.instance_id = store.record_injection(
@@ -63,6 +64,8 @@ class ScenarioRun:
             self.payments_approved += 1
 
     def close(self) -> None:
+        if self._closed:
+            return
         baseline = self.definition.strength_baseline
         observed_rate = (
             self.payments_approved / self.payments_total if self.payments_total else baseline
@@ -84,5 +87,8 @@ class ScenarioRun:
             "confounded": self.incident.confound_bank is not None,
             "priority_relations": [],
         }
-        store.record_observation(self._conn, self.instance_id, observed, evaluation)
-        self._conn.close()
+        try:
+            store.record_observation(self._conn, self.instance_id, observed, evaluation)
+        finally:
+            self._conn.close()
+            self._closed = True

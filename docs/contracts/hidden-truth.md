@@ -187,6 +187,13 @@ In particular:
    that callers will ignore an available answer. A system that can see the answer has not
    demonstrated detection or investigation.
 
+In a containerised run, each merchant worker bind-mounts its own store at
+`state/ground_truth/<merchant_id>/` so the evaluator can read a closed record from the host.
+That mount is attached only to the `worker-*` services. Detection and investigation still have
+no import path, no volume, and no environment variable pointing at the store. The evaluator
+refuses a record whose window is still open, and when more than one worker has a closed record
+it requires `--instance-id` or `--scenario-id` rather than guessing which one to score.
+
 No scenario identifier ever reaches detection or investigation. This is the rule in
 [ADR 0012](../adr/0012-scenario-identifiers-never-reach-l4.md): the same diagnostic path serves
 every scenario, the agent is never told which one is running, and neither layer may branch on a
