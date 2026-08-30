@@ -105,13 +105,22 @@ def watch_item(incident: Mapping[str, Any]) -> dict[str, Any]:
 
     Deliberately no severity and no diagnostic_confidence: a watch is never
     investigated, so there is no C4 result to attach, and it must not carry
-    fields that would let it read like an incident on screen. The detector's
-    watch fields (projected loss, the floor vector, the trajectory) are read
-    as optional, because that side of the pivot may land after this one -
-    an absent field renders "not in store" like everywhere else on this
-    page, never a fabricated value.
+    fields that would let it read like an incident on screen - the contract
+    forces `severity: low` on a watch record (docs/contracts/incident.md) but
+    this shape never reads it, so it is structurally impossible for a watch
+    to render a severity badge regardless of what the record carries.
+
+    The detector's own explanation lives at `detection.watch`
+    (detector/detect.py:_watch_block): a `statement` already written in
+    prose, plus `not_yet_met`, the named floors still failing. Both are
+    copied through rather than reconstructed from the floor booleans, so
+    this never drifts from the detector's own wording. `detection` is
+    documented as W2 provenance, safe for any consumer to ignore, so every
+    field here is read as optional - an absent one renders "not in store"
+    like everywhere else on this page, never a fabricated value.
     """
     financial = _mapping(incident.get("financial_impact"))
+    watch = _mapping(_mapping(incident.get("detection")).get("watch"))
     return {
         "incident_id": incident.get("incident_id"),
         "lifecycle_state": incident.get("lifecycle_state"),
@@ -120,8 +129,9 @@ def watch_item(incident: Mapping[str, Any]) -> dict[str, Any]:
         "scope_label": cohort_scope_label(_mapping(incident.get("affected_cohort"))),
         "change": incident.get("change"),
         "projected_loss_per_hour": financial.get("projected_loss_per_hour"),
-        "floors": incident.get("floors"),
-        "trajectory": incident.get("trajectory"),
+        "trajectory": watch.get("trajectory"),
+        "reason": watch.get("statement"),
+        "not_yet_met": watch.get("not_yet_met"),
     }
 
 

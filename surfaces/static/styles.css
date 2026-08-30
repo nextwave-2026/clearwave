@@ -17,6 +17,9 @@
   --sev-high: #E8722E;
   --sev-medium: #B0842C;
   --sev-low: #6E7789;
+  /* A watch (a near-miss below the detection floors) is deliberately not on
+     the severity ladder above - it must never read as an alert. */
+  --watch: #6C86B0;
   --good: #3FBF87;
   --cite: #6B7BFF;
   --r-sm: 6px;
@@ -701,6 +704,40 @@ table th:last-child, table td:last-child { padding-right: 0; }
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+
+/* Watch rail: a persisted near-miss below the detection floors. Reads as
+   an observation, not an alarm - never the severity ladder, no lamp, no
+   sev/conf badge pair. #watch-rail itself carries no class, styled by id
+   like #overview-board and #queue-board, and stays hidden when empty. */
+#watch-rail { display: grid; gap: 12px; margin: 0 0 24px; }
+
+.watch-card {
+  border: 1px solid var(--line-soft);
+  border-left: 3px solid var(--watch);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  padding: 14px 16px;
+}
+
+.watch-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.watch-head h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
+
+.watch-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--watch);
+  color: var(--watch);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.watch-line { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+.watch-money { margin: 8px 0 0; font-weight: 600; color: var(--ink); }
+.watch-reason { margin: 4px 0 0; font-size: 11.5px; color: var(--ink-3); }
 
 .chan {
   display: grid;

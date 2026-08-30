@@ -690,6 +690,10 @@ class WatchStateTests(unittest.TestCase):
         return connection
 
     def test_a_watch_is_never_counted_active_and_never_heads_the_overview(self):
+        # severity="critical" here is deliberate, not realistic: the real
+        # contract forces "low" on a watch (docs/contracts/incident.md), but
+        # this proves the exclusion is keyed on lifecycle_state alone, not on
+        # trusting that severity stayed low.
         self._seed(
             _incident("inc-watch", "critical", "2026-08-29T09:00:00Z", lifecycle_state="watching"),
         )
@@ -708,6 +712,10 @@ class WatchStateTests(unittest.TestCase):
         self.assertEqual(overview["source_incident_id"], "inc-real")
 
     def test_a_watch_never_escalates_even_with_a_forced_c4_result(self):
+        # severity="critical" is deliberate here too: escalation.channels_for
+        # would route a real critical incident to every channel, so proving
+        # the guard blocks it even at this severity shows the block is keyed
+        # on lifecycle_state, not on the contract's severity="low" promise.
         connection = self._seed(
             _incident("inc-watch", "critical", "2026-08-29T09:00:00Z", lifecycle_state="watching"),
         )
@@ -742,14 +750,37 @@ class WatchStateTests(unittest.TestCase):
         self.assertNotEqual(load_escalation(connection, "inc-real"), [])
 
     def test_a_watch_appears_in_its_own_rail_with_the_detectors_fields(self):
+        # Shape taken from the real detector/detect.py:_watch_block and
+        # docs/contracts/incident.md, not guessed: the floor vector and
+        # trajectory live under detection.watch, not as top-level fields,
+        # and a watch's stored severity is always "low" (untouched here -
+        # watch_item() must never read it regardless of what it says).
         self._seed(
             _incident(
                 "inc-watch",
-                None,
+                "low",
                 "2026-08-29T09:00:00Z",
                 lifecycle_state="watching",
-                floors={"z_min": False, "absolute_drop_min": True, "volume_min": True},
-                trajectory="worsening",
+                detection={
+                    "trajectory": 1,
+                    "watch": {
+                        "reasons": ["conversion_near_miss"],
+                        "watch_floors": {
+                            "has_measurement": True,
+                            "not_already_an_incident": True,
+                            "volume_min": True,
+                            "statistically_real": False,
+                            "materially_large": True,
+                            "worsening": True,
+                        },
+                        "not_yet_met": ["statistically_real"],
+                        "trajectory": 1,
+                        "leading_indicators": None,
+                        "degraded_leading_indicators": [],
+                        "statement": "This cohort is unusual for itself against its last hour "
+                        "and is getting worse.",
+                    },
+                },
                 financial_impact={"projected_loss_per_hour": {"amount": 4100.0, "currency": "USD"}},
             )
         )
@@ -761,29 +792,33 @@ class WatchStateTests(unittest.TestCase):
         self.assertNotIn("severity", watch)
         self.assertNotIn("diagnostic_confidence", watch)
         self.assertEqual(watch["projected_loss_per_hour"], {"amount": 4100.0, "currency": "USD"})
+        self.assertEqual(watch["trajectory"], 1)
+        self.assertEqual(watch["not_yet_met"], ["statistically_real"])
         self.assertEqual(
-            watch["floors"], {"z_min": False, "absolute_drop_min": True, "volume_min": True}
+            watch["reason"],
+            "This cohort is unusual for itself against its last hour and is getting worse.",
         )
-        self.assertEqual(watch["trajectory"], "worsening")
 
         queue = self.app.queue()
         self.assertEqual(queue["incidents"], [])
         self.assertEqual([w["incident_id"] for w in queue["watches"]], ["inc-watch"])
 
     def test_a_watch_with_no_detector_fields_yet_reports_them_as_absent_not_fabricated(self):
-        # The detector side of the pivot (andres) may land after this one -
-        # present.py must not invent a number or a reason it was never given.
-        self._seed(_incident("inc-watch", None, "2026-08-29T09:00:00Z", lifecycle_state="watching"))
+        # detection.watch may be absent entirely (a store from before the
+        # detector's watch predicate landed) - present.py must not invent a
+        # number or a reason it was never given.
+        self._seed(_incident("inc-watch", "low", "2026-08-29T09:00:00Z", lifecycle_state="watching"))
         watch = self.app.overview()["watches"][0]
         self.assertIsNone(watch["projected_loss_per_hour"])
-        self.assertIsNone(watch["floors"])
         self.assertIsNone(watch["trajectory"])
+        self.assertIsNone(watch["reason"])
+        self.assertIsNone(watch["not_yet_met"])
 
     def test_a_watch_is_excluded_from_merchant_health(self):
         self._seed(
             _incident(
                 "inc-watch",
-                None,
+                "low",
                 "2026-08-29T09:00:00Z",
                 lifecycle_state="watching",
                 merchant="merchant-only-watch",
