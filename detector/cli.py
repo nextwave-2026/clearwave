@@ -120,6 +120,43 @@ def incident_id_for(incident: dict[str, Any]) -> str:
     return f"inc-{incident['onset'][:10]}-{digest[:8]}"
 
 
+def adopt_watch_identity(connection, record: dict[str, Any], identify) -> str:
+    """Keep the first-watch id when the picture sharpens or onset walks.
+
+    The hash of onset-plus-cohort is the right identifier for a brand-new row.
+    It is the wrong identifier for the next sweep of the same episode: onset
+    drifts as the trailing window eats the incident, and localisation deepens
+    as the drop grows, so hashing again mints a second row. A watching row
+    whose cohort is this one, or a sharpening of it, is the same episode -
+    pin the original id and the original onset so the warning and the incident
+    are one record a judge can point at.
+    """
+    cohort = record.get("affected_cohort") or {}
+    # Reuse any live episode, not only a watch. Once the row has been
+    # detected, a later sweep with a walked onset used to hash a second id
+    # because the match looked only at `watching`. Resolved rows are a prior
+    # episode and must not be reused.
+    live_states = {
+        store.WATCHING,
+        "detected",
+        "investigating",
+        "diagnosed",
+        "acknowledged",
+    }
+    matches = [
+        existing
+        for existing in store.list_incidents(connection)
+        if existing.get("lifecycle_state") in live_states
+        and detect.cohorts_same_episode(existing.get("affected_cohort"), cohort)
+    ]
+    if not matches:
+        return identify(record)
+    matches.sort(key=lambda item: (item.get("onset") or "", item.get("incident_id") or ""))
+    chosen = matches[0]
+    record["onset"] = chosen["onset"]
+    return chosen["incident_id"]
+
+
 def _periodic_sweeper(connection, every_seconds: float, sink: list[dict[str, Any]], clock=time.monotonic):
     """A `consumer.consume` batch hook that sweeps on a wall-clock interval.
 
@@ -192,11 +229,14 @@ def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
     incident = detect.build_incident(connection, start, end, merchant_normals=merchant_normals)
     stored = False
     if incident is not None:
-        incident["incident_id"] = incident_id_for(incident)
+        incident["incident_id"] = adopt_watch_identity(
+            connection, incident, incident_id_for
+        )
         if persist:
             # lifecycle_state 'detected' is the sole handoff signal to L4
             # (DECISIONS.md, 2026-08-29T19:43Z), so detection writes it durably
-            # rather than calling investigation.
+            # rather than calling investigation. Adopting a watch id first is
+            # what makes that write an upgrade of the warning, not a second row.
             stored = store.save_incident(connection, incident)
     # Watches are C3 records in `lifecycle_state: watching` on the same table,
     # written through the same identifier rule, so the row a cohort is watched
@@ -209,9 +249,22 @@ def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
         merchant_normals=merchant_normals,
         identify=incident_id_for,
     )
+    keep_ids: set[str] = set()
+    if incident is not None:
+        keep_ids.add(incident["incident_id"])
     if persist:
         for watch in watches:
+            watch["incident_id"] = adopt_watch_identity(
+                connection, watch, incident_id_for
+            )
             store.save_incident(connection, watch, lifecycle_state=store.WATCHING)
+            keep_ids.add(watch["incident_id"])
+        store.expire_watches_except(connection, keep_ids)
+    else:
+        for watch in watches:
+            watch["incident_id"] = adopt_watch_identity(
+                connection, watch, incident_id_for
+            )
 
     return {
         "incident": incident,

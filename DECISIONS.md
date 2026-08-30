@@ -148,3 +148,7 @@ another contributor pushed first, run `git pull --no-rebase && git push`; union 
   -> other side: do not plan a judge-facing terminal step; put the mild inject on the dashboard, not in a CLI walkthrough; derek owns that two-stage control so nobody else starts it; keep compose and scripts as off-screen recovery only
 - 2026-08-30T04:40Z  derek  live demo stack: detector and dashboard run as compose services on the same store as the investigation daemon; `make stack-up` is the operator start, dashboard published on host port 8082
   -> other side: do not tell a judge to run `make e2e` then `make surfaces-serve`; start the stack at least 60 minutes before the pitch (`BASELINE_TRAILING_BUCKETS=60`) and leave it running. Host `make surfaces-serve` still binds 127.0.0.1. Do not add these targets to `make/w1.mk`, `w2.mk` or `w4.mk`.
+- 2026-08-30T05:38Z  derek  watch predicate requires both z <= -1.5 and abs drop >= 0.01, not either as the 03:59Z note wrote. Ordinary minute-to-minute noise on a healthy cohort clears a one-point drop; requiring both is what makes z -2.3 watch and z -1.0 not.
+  -> other side: do not loosen the watch floors to OR; tests.test_detector.WatchTests.test_the_predicate_is_tuned_where_it_was_asked_to_be pins this
+- 2026-08-30T05:38Z  derek  retune the mild inject magnitude, not the detection floors. Captain: "raising floors would weaken the real product to make the demo look good, and we do not do that."
+  -> other side: STAGE_DEVELOPING is the lever; Z_MIN, ABS_DROP_MIN, N_PAYMENTS_MIN and SUSTAIN_BUCKETS stay

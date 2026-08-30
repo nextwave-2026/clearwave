@@ -167,6 +167,13 @@ FORMING_LATENCY_MIN_BASELINE_MS = 50.0  # below this a ratio is noise, not a sig
 # volume is compared to its own trailing baseline too, at the same bucket rate.
 FORMING_VOLUME_COLLAPSE_RATIO = 0.25  # under a quarter of its own normal rate
 FORMING_VOLUME_BASELINE_MIN = 60      # payments of trailing history before we judge it
+# Latency and timeout are only judged when the recent rate is comparable to
+# the trailing rate. A detector that just replayed Kafka from offset zero
+# sees a 30x volume spike against a thin trailing hour; that is warmup, not
+# a forming outage. Volume collapse is the opposite signal and does not use
+# this band - zero traffic is the finding.
+FORMING_VOLUME_COMPARABLE_MIN = 0.5
+FORMING_VOLUME_COMPARABLE_MAX = 2.0
 
 # --- the watch -------------------------------------------------------------
 # The near-miss predicate, beside the four detection floors rather than inside
