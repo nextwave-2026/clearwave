@@ -80,7 +80,7 @@ Weak evidence is stated immediately through `diagnostic_confidence`, `competing_
   ],
   "diagnostic_confidence": "medium",
   "recommended_next_action": {
-    "action": "Investigate Provider P2 and collect a discriminatory provider/issuer comparison before broad rerouting.",
+    "action": "Incident: the Provider P2 cohort is at 64% approval versus its 92% baseline in the 15-minute window, with a projected USD 112000/hour exposure - the measured shortfall applied to typical hourly attempted value, not money already lost. Provider degradation is likely; issuer over-decline remains unresolved. First inspect the Provider P2 dashboard for the cited timeout and latency signal, then notify merchant-a's payments owner and consider shifting eligible traffic only if the cited sibling comparison supports it. Clearwave has executed no remediation.",
     "urgency": "now",
     "basis": [
       {
@@ -108,8 +108,14 @@ Weak evidence is stated immediately through `diagnostic_confidence`, `competing_
   each request also cites the evidence that makes it necessary.
 - `diagnostic_confidence` is qualitative (`low`, `medium`, or `high`). It describes causal evidence,
   not business urgency, and must not be fabricated as a precise probability.
-- `recommended_next_action` contains an advisory `action`, `urgency`, and evidence-backed `basis`.
-  The system does not execute the action.
+- `recommended_next_action` contains a concise advisory `action`, `urgency`, and evidence-backed `basis`.
+  The action is a TAM-facing operational brief: it names what changed (cohort, measured shortfall against
+  baseline, and window), the projected loss per hour and its meaning (the measured shortfall applied to
+  typical hourly attempted value, what an hour at the current rate would cost, not money already lost),
+  the key correlated signals, ranked causes with established/likely/unresolved status, and no more than
+  three concrete human actions with their reasons. It must not ask the investigation agent only for more
+  analysis or use empty monitoring language without a named signal and threshold/change. The system does
+  not execute the action.
 - Every object in an evidence or basis array is an evidence item and must contain the exact
   `query_id` returned by the C2 call that supports its claim. A narrative claim without a cited
   query is not an evidence-backed claim.

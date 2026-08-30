@@ -16,7 +16,11 @@ from investigation.contracts import InvestigationResult
 from investigation.gateway import EvidenceGateway
 from investigation.ledger import HypothesisLedger, LedgerError
 from investigation.prefilter import prefilter
-from investigation.prompt import WATCH_INSTRUCTIONS, assemble_prompt
+from investigation.prompt import (
+    RECOMMENDATION_INSTRUCTIONS,
+    WATCH_INSTRUCTIONS,
+    assemble_prompt,
+)
 from investigation.runner import InvestigationRunner
 from investigation.store import connect, insert_incident
 
@@ -299,6 +303,22 @@ class AgentLoopTests(unittest.TestCase):
         prompt = assemble_prompt(INCIDENT, {}, [{"hypothesis": "provider_degradation"}])
         self.assertIn("confirmed incident", prompt)
         self.assertNotIn("This record is a WATCH", prompt)
+
+    def test_recommendation_prompt_is_tam_actionable_and_bounded(self):
+        prompt = assemble_prompt(INCIDENT, {}, [{"hypothesis": "provider_degradation"}])
+        self.assertIn(RECOMMENDATION_INSTRUCTIONS, prompt)
+        for phrase in ("affected cohort", "projected loss per hour", "provider dashboard", "basis array"):
+            self.assertIn(phrase, prompt)
+        self.assertIn("no more than three numbered action items", prompt)
+        self.assertIn("not money already lost", prompt)
+        self.assertIn("Do not make another comparison", prompt)
+
+    def test_watch_recommendation_is_preventive_not_failure_shaped(self):
+        watch = {**INCIDENT, "lifecycle_state": "watching", "severity": "low"}
+        prompt = assemble_prompt(watch, {}, [{"hypothesis": "provider_degradation"}])
+        self.assertIn("recommendation preventive", prompt)
+        self.assertIn("not a confirmed failure", prompt)
+        self.assertIn("threshold", prompt.lower())
 
 
 class RunnerTests(unittest.TestCase):
