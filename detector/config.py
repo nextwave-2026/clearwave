@@ -93,11 +93,30 @@ FX_TO_USD = {
 
 # Recurrence promotes, because a fault that keeps coming back is a worse fault
 # than one that happened once. The count is prior *matching* incidents on the
-# same cohort inside the lookback - the number `incident_history` already
-# publishes as `recurrence.prior_matching_incidents`. The ladder mirrors
+# same cohort inside the lookback, counted as episodes rather than rows (see
+# RECURRENCE_EPISODE_GAP_SECONDS). It is deliberately NOT the same figure as
+# `incident_history`'s `recurrence.prior_matching_incidents`, which stays a
+# plain count of the rows it lists over an operator-chosen window. The ladder mirrors
 # SEVERITY_LOSS_RATE_CEILING in shape and points the other way: that one caps a
 # band, this one lifts it, and both are read after the weighted sum.
 RECURRENCE_LOOKBACK_SECONDS = 6 * 3600
+# Rows are not episodes. Onset is measured from the rolling detect window, so a
+# single continuous fault drifts its onset - and the incident id derived from it
+# - and lands in the table as two or more rows. Counting rows would let ONE
+# rehearsal of ONE injection satisfy the two-prior threshold below and promote
+# the next run a band. So a prior row only counts as a prior *episode* when the
+# cohort was quiet between them: its `last_seen_epoch` must be at least this far
+# before this incident's `onset_epoch`. The bound to clear is the drift of one
+# continuous episode, which cannot exceed one sweep plus the detect window
+# (DETECT_WINDOW_BUCKETS + SUSTAIN_BUCKETS = 8 buckets); 15 minutes leaves
+# headroom and stays far below the 6-hour lookback, so two genuinely separate
+# faults an hour apart still count as two.
+RECURRENCE_EPISODE_GAP_SECONDS = 15 * 60
+# A `watching` row is a near-miss we deliberately chose not to page on, so it
+# must never lift a later band. Every ordinary downstream state - claimed,
+# investigating, diagnosed, mitigated, resolved - is a genuine prior recurrence
+# and keeps counting.
+RECURRENCE_EXCLUDED_LIFECYCLE_STATES = ("watching",)
 SEVERITY_RECURRENCE_PROMOTION = (  # (prior matching incidents, bands promoted)
     (2, 1),
     (4, 2),
