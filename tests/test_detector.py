@@ -868,18 +868,21 @@ class WatchTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(row["lifecycle_state"], "investigating")
 
-    def test_investigation_never_claims_a_watch(self):
-        # The daemon claims `detected` only. This asserts the behaviour rather
-        # than trusting the convention, because a watch reaching the claim SQL
-        # is the one way this quietly becomes model calls on noise.
+    def test_investigation_claims_a_watch(self):
+        # Replaces test_investigation_never_claims_a_watch. Investigating only
+        # after `detected` destroyed the preventive value, so a watch is now
+        # claimable. The atomic UPDATE still takes the row exactly once.
+        from investigation.store import claim_incident
+
         connection, sweep = self._sweep(synthetic.two_stage_deviation_mild_only())
         watch_id = sweep["watches"][0]["incident_id"]
-        claimed = connection.execute(
-            "UPDATE incident SET lifecycle_state = 'investigating' "
-            "WHERE incident_id = ? AND lifecycle_state = 'detected'",
+        self.assertTrue(claim_incident(connection, watch_id))
+        self.assertFalse(claim_incident(connection, watch_id))
+        row = connection.execute(
+            "SELECT lifecycle_state FROM incident WHERE incident_id = ?",
             (watch_id,),
-        )
-        self.assertEqual(claimed.rowcount, 0)
+        ).fetchone()
+        self.assertEqual(row["lifecycle_state"], "investigating")
 
     def test_a_slow_provider_is_watched_while_conversion_is_still_healthy(self):
         # W1's effect=latency: attempts approve and decline at baseline rates

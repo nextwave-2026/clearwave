@@ -20,6 +20,7 @@ The layer sequence is L1 merchant emission, L2 ingestion and normalisation, L3 d
 - [0012 - Scenario identifiers never reach L4](0012-scenario-identifiers-never-reach-l4.md)
 - [0013 - Hand-rolled OpenAI loop is the constrained agent runtime](0013-hand-rolled-openai-loop-agent-runtime.md)
 - [0022 - OpenAI structured outputs fit bounded investigation](0022-openai-structured-loop-over-coding-agent-harness.md)
+- [0025 - Investigation starts on a watch](0025-investigation-starts-on-a-watch.md) - supersedes the claim-only-detected property of ADR 0024
 
 ## W1 records - `raul`
 
@@ -37,7 +38,7 @@ The layer they describe is documented in [detection-plane.md](../detection-plane
 - [0020 - Native source shapes are normalised through a mapper registry](0020-native-shapes-through-a-mapper-registry.md)
 - [0021 - The canonical model closes the decline vocabulary and preserves the raw code](0021-canonical-vocabulary-with-preserved-raw-code.md)
 - [0023 - Severity is relative to the merchant, and recurrence may promote past the money ceiling](0023-severity-is-relative-to-the-merchant-and-promoted-by-recurrence.md) - supersedes ADR 0016
-- [0024 - Leading indicators warn early, and nothing is predicted](0024-leading-indicators-warn-early-without-prediction.md)
+- [0024 - Leading indicators warn early, and nothing is predicted](0024-leading-indicators-warn-early-without-prediction.md) - claim-only-detected property superseded by ADR 0025
 
 How this plane behaves at Yuno's real volume, and the two changes that would be needed, is in
 [scaling.md](../scaling.md).

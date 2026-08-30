@@ -1,8 +1,13 @@
 # C4 - Investigation result
 
-C4 is produced by the investigation agent from one C3 incident and C2 evidence responses. It
+C4 is produced by the investigation agent from one C3 record and C2 evidence responses. It
 explains why a cause is plausible, what remains uncertain, and what to investigate next. It never
-changes the incident's business priority.
+changes the record's business priority.
+
+The same shape is used for a watch and for a confirmed incident. A watch investigation must not
+assert that something has failed and must not assert a root cause the evidence does not support.
+Weak evidence is stated immediately through `diagnostic_confidence`, `competing_explanations`,
+`why_ambiguity_exists` and `missing_evidence`. There is no parallel watch schema.
 
 ## Shape
 

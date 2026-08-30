@@ -42,8 +42,9 @@ from .env import (
 )
 from .gateway import EvidenceGateway
 from .runner import InvestigationRunner
+from .store import CLAIMABLE_STATES
 from .store import connect as investigation_connect
-from .store import read_result
+from .store import model_call_summary, read_result
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "state" / "vertical.db"
@@ -79,6 +80,8 @@ class VerticalOutcome:
     trail: list[dict[str, Any]] = field(default_factory=list)
     run: InvestigationRun | None = None
     path: str = "vertical-path"
+    model_calls: int = 0
+    store_model_calls: int = 0
 
     @property
     def outcome(self) -> str:
@@ -118,24 +121,24 @@ def seed_and_detect(db_path: Path) -> list[dict[str, Any]]:
 
 
 def list_detected(db_path: Path) -> list[dict[str, Any]]:
-    """Detected C3 incidents already in the store, newest onset first."""
+    """Claimable C3 records already in the store, newest onset first."""
     resolved = db_path.resolve()
     connection = investigation_connect(resolved)
     try:
         rows = list_detector_incidents(connection)
     finally:
         connection.close()
-    return [row for row in rows if row.get("lifecycle_state") == "detected"]
+    return [row for row in rows if row.get("lifecycle_state") in CLAIMABLE_STATES]
 
 
 def select_detected(
     detected: list[dict[str, Any]],
     incident_id: str | None = None,
 ) -> dict[str, Any]:
-    """Pick the named detected incident, or the newest one when unnamed."""
+    """Pick the named claimable record, or the newest one when unnamed."""
     if not detected:
         raise RuntimeError(
-            "this store holds no incident with lifecycle_state detected. "
+            "this store holds no incident with lifecycle_state watching or detected. "
             "Run `python3 -m detector detect` (or `detector consume --detect`) against the same "
             "CLEARWAVE_DB first."
         )
@@ -146,7 +149,7 @@ def select_detected(
             return dict(row)
     known = ", ".join(str(row.get("incident_id")) for row in detected)
     raise RuntimeError(
-        f"no detected incident {incident_id} in this store. Detected: {known}"
+        f"no watching or detected incident {incident_id} in this store. Claimable: {known}"
     )
 
 
@@ -156,7 +159,7 @@ def investigate_store(
     use_model: bool | None = None,
     incident_ids: list[str] | None = None,
 ) -> tuple[str, list[InvestigationRun]]:
-    """Claim detected incidents through the real runner.
+    """Claim watches and detected incidents through the real runner.
 
     ``use_model`` defaults to whether ``OPENAI_API_KEY`` is set. Without a key
     the injected unavailable client is used so OpenAI is never constructed.
@@ -212,10 +215,10 @@ def execute_investigation_only(
     incident_id: str | None = None,
     use_model: bool | None = None,
 ) -> VerticalOutcome:
-    """Investigate one already-detected incident in a prepared store. No seed, no detect.
+    """Investigate one already-stored watch or incident. No seed, no detect.
 
     This is the join between a store that detection already wrote to - a live
-    Kafka run included - and one investigation against that stored incident.
+    Kafka run included - and one investigation against that stored record.
     The store is never reset and never reseeded.
     """
     resolved = db_path.resolve()
@@ -257,6 +260,7 @@ def _investigate_detected(
             (run.result.incident_id,),
         ).fetchone()
         lifecycle_after = str(row["lifecycle_state"] if row is not None else "")
+        cost = model_call_summary(connection)
     finally:
         connection.close()
     result = run.result_dict
@@ -277,6 +281,15 @@ def _investigate_detected(
         result=result,
         trail=trail,
         run=run,
+        model_calls=next(
+            (
+                item["model_calls"]
+                for item in cost.get("by_incident", [])
+                if item.get("incident_id") == run.result.incident_id
+            ),
+            0,
+        ),
+        store_model_calls=int(cost.get("total", 0)),
     )
 
 
@@ -402,6 +415,8 @@ def format_report(outcome: VerticalOutcome) -> str:
         "",
         f"Evidence trail: {executed} executed queries",
         citation_line,
+        f"Model calls for this record: {outcome.model_calls}",
+        f"Model calls in this store: {outcome.store_model_calls}",
     ]
     return redact_secrets("\n".join(lines))
 

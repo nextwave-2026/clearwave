@@ -1,4 +1,4 @@
-"""Polling runner for detected incidents."""
+"""Polling runner for watches and detected incidents."""
 
 from __future__ import annotations
 
@@ -15,12 +15,21 @@ from pydantic import ValidationError
 from .agent import InvestigationAgent, InvestigationRun
 from .contracts import InvestigationResult
 from .degrade import degrade_result
-from .store import persist_result
+from .store import (
+    CLAIMABLE_STATES,
+    claim_incident,
+    evidence_fingerprint,
+    persist_result,
+    prepare,
+    read_bound_fingerprint,
+)
 from .trail import EvidenceTrail
+
+_CLAIMABLE_SQL = "lifecycle_state IN ('detected', 'watching')"
 
 
 class InvestigationRunner:
-    """Claim detected incidents and process them with bounded concurrency."""
+    """Claim watches and detected incidents and process them with bounded concurrency."""
 
     def __init__(
         self,
@@ -40,6 +49,8 @@ class InvestigationRunner:
         self.max_concurrency = int(max_concurrency)
         self.poll_interval_seconds = float(poll_interval_seconds)
         self.incident_ids = tuple(str(value) for value in incident_ids) if incident_ids else None
+        self.model_calls = 0
+        prepare(self.connection)
         self._executor = ThreadPoolExecutor(max_workers=self.max_concurrency)
         self._futures: set[Future[InvestigationRun]] = set()
         self._lock = threading.Lock()
@@ -53,7 +64,7 @@ class InvestigationRunner:
         slots = self.max_concurrency - len(self._futures)
         if slots <= 0:
             return finished
-        claimed = self._claim_detected(slots)
+        claimed = self._claim_pending(slots)
         for incident in claimed:
             future = self._executor.submit(self._investigate, incident)
             self._futures.add(future)
@@ -94,32 +105,44 @@ class InvestigationRunner:
 
     start = run_forever
 
-    def _claim_detected(self, limit: int) -> list[dict[str, Any]]:
-        if self.incident_ids is None:
-            rows = self.connection.execute(
-                "SELECT incident_id, record FROM incident "
-                "WHERE lifecycle_state = 'detected' ORDER BY created_at, incident_id LIMIT ?",
-                (limit,),
-            ).fetchall()
-        else:
-            placeholders = ",".join("?" for _ in self.incident_ids)
-            rows = self.connection.execute(
-                "SELECT incident_id, record FROM incident "
-                f"WHERE lifecycle_state = 'detected' AND incident_id IN ({placeholders}) "
-                "ORDER BY created_at, incident_id LIMIT ?",
-                (*self.incident_ids, limit),
-            ).fetchall()
+    def _claim_pending(self, limit: int) -> list[dict[str, Any]]:
+        rows = self._pending_rows()
         claimed: list[dict[str, Any]] = []
         for row in rows:
+            if len(claimed) >= limit:
+                break
             incident_id = str(row["incident_id"])
-            from .store import claim_incident
-
+            record = json.loads(row["record"])
+            if not isinstance(record, Mapping):
+                continue
+            record = dict(record)
+            record["lifecycle_state"] = str(row["lifecycle_state"])
+            if self.incident_ids is None:
+                current = evidence_fingerprint(record)
+                previous = read_bound_fingerprint(self.connection, incident_id)
+                if previous is not None and previous == current:
+                    continue
             if not claim_incident(self.connection, incident_id):
                 continue
-            record = json.loads(row["record"])
-            if isinstance(record, Mapping):
-                claimed.append(dict(record))
+            claimed.append(record)
         return claimed
+
+    def _pending_rows(self) -> list[Any]:
+        order = (
+            "ORDER BY CASE lifecycle_state WHEN 'detected' THEN 0 ELSE 1 END, "
+            "created_at, incident_id"
+        )
+        if self.incident_ids is None:
+            return self.connection.execute(
+                "SELECT incident_id, record, lifecycle_state FROM incident "
+                f"WHERE {_CLAIMABLE_SQL} {order}"
+            ).fetchall()
+        placeholders = ",".join("?" for _ in self.incident_ids)
+        return self.connection.execute(
+            "SELECT incident_id, record, lifecycle_state FROM incident "
+            f"WHERE {_CLAIMABLE_SQL} AND incident_id IN ({placeholders}) {order}",
+            self.incident_ids,
+        ).fetchall()
 
     def _investigate(self, incident: Mapping[str, Any]) -> InvestigationRun:
         started = time.monotonic()
@@ -127,29 +150,43 @@ class InvestigationRunner:
         try:
             output = self.agent.investigate(incident)
             if isinstance(output, InvestigationRun):
-                return output
+                return self._stamp(output, incident)
             if isinstance(output, InvestigationResult):
                 result = output
             elif isinstance(output, Mapping):
                 result = InvestigationResult.model_validate(output)
             else:
                 raise TypeError("agent must return an InvestigationRun or C4 result mapping")
-            return InvestigationRun(
-                result=result,
-                trail=EvidenceTrail(),
-                started_at=started_at,
-                completed_at=_utc_now(),
-                duration_ms=round((time.monotonic() - started) * 1000.0, 3),
+            return self._stamp(
+                InvestigationRun(
+                    result=result,
+                    trail=EvidenceTrail(),
+                    started_at=started_at,
+                    completed_at=_utc_now(),
+                    duration_ms=round((time.monotonic() - started) * 1000.0, 3),
+                ),
+                incident,
             )
         except (ValidationError, TypeError, ValueError, RuntimeError, OSError) as exc:
             result = degrade_result(incident, reason=f"runner recovered from agent failure: {exc}")
-            return InvestigationRun(
-                result=result,
-                trail=EvidenceTrail(),
-                started_at=started_at,
-                completed_at=_utc_now(),
-                duration_ms=round((time.monotonic() - started) * 1000.0, 3),
+            return self._stamp(
+                InvestigationRun(
+                    result=result,
+                    trail=EvidenceTrail(),
+                    started_at=started_at,
+                    completed_at=_utc_now(),
+                    duration_ms=round((time.monotonic() - started) * 1000.0, 3),
+                ),
+                incident,
             )
+
+    def _stamp(self, run: InvestigationRun, incident: Mapping[str, Any]) -> InvestigationRun:
+        claimed_from = str(incident.get("lifecycle_state") or "detected")
+        if claimed_from not in CLAIMABLE_STATES:
+            claimed_from = "detected"
+        run.claimed_from = claimed_from
+        run.evidence_fingerprint = evidence_fingerprint(incident)
+        return run
 
     def _persist(self, run: InvestigationRun) -> None:
         persist_result(
@@ -161,6 +198,15 @@ class InvestigationRunner:
             started_at=run.started_at,
             completed_at=run.completed_at,
             duration_ms=run.duration_ms,
+            resume_state=run.claimed_from,
+            evidence_fingerprint=run.evidence_fingerprint or None,
+        )
+        self.model_calls += 1
+        print(
+            f"investigation persisted {run.result.incident_id} "
+            f"from={run.claimed_from} outcome={run.result.outcome} "
+            f"model_calls_this_process={self.model_calls}",
+            flush=True,
         )
 
     def _collect_finished(self, *, persist: bool = False) -> list[InvestigationRun]:

@@ -100,13 +100,18 @@ walked onset does not mint a second row. When a sweep no longer wants a watch - 
 recovered, or it was only warmup - the row moves to `resolved`. A watch is a claim about the
 present; it does not sit on the board after that claim has stopped being true.
 
-A watch is not an incident, and three behaviours make that true rather than merely stated:
+A watch is not an incident. Two behaviours still make that true rather than merely stated, and a
+third has changed:
 
-- **`detected` remains the sole handoff signal.** The investigation daemon claims
-  `lifecycle_state = 'detected'` and therefore never claims a watch. Re-examining a watch is a
-  detector loop, not a model loop.
+- **Investigation now starts on a watch.** The daemon claims `lifecycle_state IN ('detected',
+  'watching')` so it can advise while there is still time to act. After a watch investigation the
+  row returns to `watching`; it does not move to `diagnosed`. A later crossing of the floors
+  enriches the same record. Re-investigation happens only when the evidence fingerprint changes,
+  not on a timer. ADR 0025 records the reversal of the earlier claim-only-detected rule.
 - **`severity` on a watch is always `low`.** C5 routes on severity alone, so a watch cannot reach
   Slack or a phone even if escalation were later pointed at the row by mistake.
+- **C5 still does not escalate a watch.** `ESCALATABLE_STATES` is an allowlist of post-detection
+  states. A watch that holds a C4 result is refused before anything is claimed or fired.
 - **`financial_impact.projected_loss_per_hour`** is what an hour at the currently measured
   shortfall would cost, applied to the cohort's typical hourly attempted value from the trailing
   baseline. It is labelled projected because it is not realised money, it is a separate key from

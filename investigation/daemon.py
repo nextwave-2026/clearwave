@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     load_dotenv()
     parser = argparse.ArgumentParser(
         prog="investigation",
-        description="Watch the shared store and investigate detected incidents.",
+        description="Watch the shared store and investigate watches and detected incidents.",
     )
     parser.add_argument(
         "--db",

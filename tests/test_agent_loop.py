@@ -16,7 +16,7 @@ from investigation.contracts import InvestigationResult
 from investigation.gateway import EvidenceGateway
 from investigation.ledger import HypothesisLedger, LedgerError
 from investigation.prefilter import prefilter
-from investigation.prompt import assemble_prompt
+from investigation.prompt import WATCH_INSTRUCTIONS, assemble_prompt
 from investigation.runner import InvestigationRunner
 from investigation.store import connect, insert_incident
 
@@ -284,6 +284,21 @@ class AgentLoopTests(unittest.TestCase):
         self.assertNotIn("provider-secret", prompt)
         self.assertNotIn("hidden_truth", prompt)
         self.assertNotIn("evaluator", prompt.lower())
+
+    def test_watch_prompt_forbids_failure_claims(self):
+        watch = {**INCIDENT, "lifecycle_state": "watching", "severity": "low"}
+        prompt = assemble_prompt(watch, {}, [{"hypothesis": "provider_degradation"}])
+        self.assertIn("WATCH", prompt)
+        self.assertIn("not a confirmed incident", prompt)
+        self.assertIn("must not", prompt.lower())
+        self.assertIn("failed", prompt.lower())
+        self.assertIn(WATCH_INSTRUCTIONS.splitlines()[0], prompt)
+        self.assertNotIn("This record is a confirmed incident", prompt)
+
+    def test_detected_prompt_still_investigates_an_incident(self):
+        prompt = assemble_prompt(INCIDENT, {}, [{"hypothesis": "provider_degradation"}])
+        self.assertIn("confirmed incident", prompt)
+        self.assertNotIn("This record is a WATCH", prompt)
 
 
 class RunnerTests(unittest.TestCase):
