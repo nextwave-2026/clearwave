@@ -1,7 +1,7 @@
 """Severity-to-channel binding for W4.
 
 Severity is read from the incident record and never computed or adjusted.
-LOW and MEDIUM stay on the dashboard. HIGH and CRITICAL add Slack and the phone call.
+LOW and MEDIUM stay on the dashboard. HIGH adds Slack. Only CRITICAL adds the phone call.
 
 Every channel is fire-and-forget with a recorded outcome. A failing channel
 must never block the dashboard, never fail an incident, and never raise.
@@ -49,7 +49,7 @@ _TRUNCATION_SUFFIX = "…"
 CHANNELS_BY_SEVERITY = {
     "low": ("dashboard",),
     "medium": ("dashboard",),
-    "high": ("dashboard", "slack", "phone"),
+    "high": ("dashboard", "slack"),
     "critical": ("dashboard", "slack", "phone"),
 }
 

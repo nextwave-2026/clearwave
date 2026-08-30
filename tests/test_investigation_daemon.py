@@ -327,9 +327,13 @@ class DaemonServeTests(unittest.TestCase):
         finally:
             connection.close()
 
-        self.assertEqual({event["channel"] for event in events}, {"dashboard", "slack", "phone"})
-        self.assertEqual(len(events), 3)
-        self.assertEqual(len(again), 3)
+        # INCIDENT is `high`, which reaches the dashboard and Slack and never places a
+        # call - only `critical` does. This test is about firing every bound channel
+        # exactly once, not about the ladder itself; the binding is pinned in
+        # tests/test_surfaces.py and in docs/contracts/notification-escalation.md.
+        self.assertEqual({event["channel"] for event in events}, {"dashboard", "slack"})
+        self.assertEqual(len(events), 2)
+        self.assertEqual(len(again), 2)
         self.assertEqual(
             [(event["channel"], event["status"]) for event in events],
             [(event["channel"], event["status"]) for event in again],

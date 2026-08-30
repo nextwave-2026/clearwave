@@ -297,7 +297,8 @@ class SurfacesTests(unittest.TestCase):
         self.assertTrue(any(item["channel"] == "slack" and item["status"] == "not_configured" for item in outcomes))
 
     def test_failing_channel_does_not_block_or_raise(self):
-        incident = _incident("inc-high", "high", "2026-08-29T10:00:00Z")
+        # Critical, so all three channels are bound and the phone leg is exercised.
+        incident = _incident("inc-critical", "critical", "2026-08-29T10:00:00Z")
 
         def boom(url, payload):
             raise RuntimeError("webhook down")
@@ -532,6 +533,24 @@ class SurfacesTests(unittest.TestCase):
         self.assertTrue(ack["acknowledged"])
         self.assertEqual(self.app.pending_calls()["calls"], [])
 
+    def test_high_severity_reaches_slack_but_never_places_a_call(self):
+        # The other direction of the ruling, on a stored incident: `high` is a real
+        # business alert and must reach Slack, but must not ring a phone at 3am.
+        connection = self._seed(_incident("inc-high-call", "high", "2026-08-29T10:00:00Z"))
+        persist_result(
+            connection,
+            "inc-high-call",
+            _diagnosis("inc-high-call"),
+            "diagnosed",
+            trail=[_trail_entry()],
+        )
+        detail = self.app.detail("inc-high-call")
+        channels = {event["channel"]: event["status"] for event in detail["escalation"]}
+        self.assertEqual(channels["dashboard"], "delivered")
+        self.assertEqual(channels["slack"], "not_configured")
+        self.assertNotIn("phone", channels)
+        self.assertEqual(self.app.pending_calls()["calls"], [])
+
     def test_dashboard_read_before_diagnosis_does_not_fire_or_record_escalation(self):
         connection = self._seed(_incident("inc-early", "critical", "2026-08-29T10:00:00Z"))
         detail = self.app.detail("inc-early")
@@ -675,17 +694,43 @@ class SurfacesTests(unittest.TestCase):
         self.assertIsNotNone(detail["investigation"]["result"])
 
     def test_channels_for_pins_full_severity_binding_and_unknown_fallback(self):
-        # Pins the complete policy (critical and high both phone; low/medium dashboard-only;
-        # unknown stays conservative) so the binding is tested, not only commented.
+        # Pins the complete policy (only critical reaches the phone; high stays on
+        # dashboard and Slack; low/medium dashboard-only; unknown stays conservative)
+        # so the binding is tested, not only commented. An earlier revision asserted
+        # high -> phone, which encoded the defect: a live rehearsal placed eight real
+        # calls in twenty minutes, every one from a `high` incident.
         from surfaces.escalation import channels_for
         self.assertEqual(channels_for("low"), ("dashboard",))
         self.assertEqual(channels_for("medium"), ("dashboard",))
-        self.assertEqual(channels_for("high"), ("dashboard", "slack", "phone"))
+        self.assertEqual(channels_for("high"), ("dashboard", "slack"))
         self.assertEqual(channels_for("critical"), ("dashboard", "slack", "phone"))
         self.assertEqual(channels_for("unknown"), ("dashboard",))
-        self.assertEqual(channels_for("HIGH"), ("dashboard", "slack", "phone"))
+        self.assertEqual(channels_for("HIGH"), ("dashboard", "slack"))
         self.assertEqual(channels_for(None), ("dashboard",))
         self.assertEqual(channels_for(""), ("dashboard",))
+
+    def test_escalate_dispatches_exactly_the_bound_channels_and_only_critical_calls(self):
+        # channels_for is the table; this is the dispatch. Drives the real escalate()
+        # once per severity with both side-effecting channels stubbed, and asserts the
+        # phone provider is reached for `critical` and for nothing else.
+        expected = {
+            "low": ["dashboard"],
+            "medium": ["dashboard"],
+            "high": ["dashboard", "slack"],
+            "critical": ["dashboard", "slack", "phone"],
+        }
+        for severity, channels in expected.items():
+            with self.subTest(severity=severity):
+                called = []
+                outcomes = escalate(
+                    _incident(f"inc-{severity}", severity, "2026-08-29T10:00:00Z"),
+                    slack_url="https://hooks.example.invalid/webhook",
+                    poster=lambda url, payload: called.append("slack"),
+                    phone_provider=lambda incident, payload: called.append("phone"),
+                )
+                self.assertEqual([item["channel"] for item in outcomes], channels)
+                self.assertEqual(called, [c for c in channels if c != "dashboard"])
+                self.assertEqual("phone" in called, severity == "critical")
 
     def test_in_process_server_serves_overview_and_static_files(self):
         os.environ["CLEARWAVE_SURFACES_QUIET"] = "1"
