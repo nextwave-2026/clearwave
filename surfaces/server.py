@@ -89,14 +89,22 @@ class SurfacesApp:
         with store.measurement_session(self.db_path) as connection:
             return evidence.answer("ingest_health", {}, connection)
 
-    def series(self, incident_id: str, metric: str | None = None) -> dict[str, Any] | None:
-        """The C2 `metric_series` response for an incident's own cohort, verbatim.
+    # The two series the board draws, answered in one round trip because the
+    # board polls: two fetches per tick for one panel is a cost with no reader
+    # benefit. `rate` is what is converting. `failures` is the count behind it,
+    # which is the question a rate alone cannot answer - a conversion rate can
+    # fall because failures rose or because approvals simply stopped arriving,
+    # and the count separates those without anyone doing arithmetic on screen.
+    SERIES_VIEWS = (("rate", "payment_approval_conversion"), ("failures", "failed_attempts"))
+
+    def series(self, incident_id: str) -> dict[str, Any] | None:
+        """The C2 `metric_series` responses for an incident's own cohort, verbatim.
 
         `metric_series` is the only evidence tool that answers "since when" and
         "which way is it moving", and until now nothing served it to the board,
         so the one question a trend answers had no data behind it. This is the
-        same passthrough shape as `ingestion()` above: the tool measures, the
-        response is returned untouched, and the surface renames, rescales,
+        same passthrough shape as `ingestion()` above: the tool measures, each
+        response is returned untouched, and this layer renames, rescales,
         smooths and totals nothing. The board draws the stored points.
 
         The window is a *query parameter*, not a published figure: it runs the
@@ -112,23 +120,29 @@ class SurfacesApp:
                 return None
             end = evidence.watermark(connection)
             span = det_config.BASELINE_TRAILING_BUCKETS * det_config.BUCKET_SECONDS
-            request: dict[str, Any] = {
-                "cohort": incident.get("affected_cohort") or {},
-                "window": {
-                    "start": schema.iso_utc(end - span),
-                    "end": schema.iso_utc(end),
-                },
-                "bucket_seconds": det_config.BUCKET_SECONDS,
+            window = {
+                "start": schema.iso_utc(end - span),
+                "end": schema.iso_utc(end),
             }
-            if metric:
-                request["metric"] = metric
-            return {
+            cohort = incident.get("affected_cohort") or {}
+            payload: dict[str, Any] = {
                 "incident_id": incident_id,
                 "onset": incident.get("onset"),
                 "change": incident.get("change") or {},
                 "scope_label": incident.get("scope_label"),
-                "series": evidence.answer("metric_series", request, connection),
             }
+            for name, metric in self.SERIES_VIEWS:
+                payload[name] = evidence.answer(
+                    "metric_series",
+                    {
+                        "cohort": cohort,
+                        "window": dict(window),
+                        "metric": metric,
+                        "bucket_seconds": det_config.BUCKET_SECONDS,
+                    },
+                    connection,
+                )
+            return payload
 
     def merchants(self) -> dict[str, Any]:
         with store.session(self.db_path) as connection:

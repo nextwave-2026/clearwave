@@ -43,15 +43,20 @@
 
   <div class="prov">
     <div class="wrap">
-      <p class="sim-note">All merchants, banks, payments, incidents and outages shown are simulated data produced by this project's simulator for demonstration. Nothing shown represents or implies a real incident, outage, or service problem at any named company. Real company names are used only to make the demonstration recognisable and realistic.</p>
-      <div class="prov-in mono">
-        <span><b>clock</b> <span id="clock"></span></span>
-        <span><b>store</b> SQLite, CLEARWAVE_DB</span>
-        <span id="prov-source"><b>source</b> waiting for store</span>
-      </div>
-      <div class="prov-in prov-ingest mono" id="prov-ingest" aria-label="Ingestion, measured by the ingest_health evidence tool">
-        <span><b>ingest</b> waiting for store</span>
-      </div>
+      <details class="disclose prov-disclose" id="prov-disclose">
+        <summary>Provenance &amp; ingestion</summary>
+        <div class="disclose-body">
+          <div class="prov-in mono">
+            <span><b>clock</b> <span id="clock"></span></span>
+            <span><b>store</b> SQLite, CLEARWAVE_DB</span>
+            <span id="prov-source"><b>source</b> waiting for store</span>
+          </div>
+          <div class="prov-in prov-ingest mono" id="prov-ingest" aria-label="Ingestion, measured by the ingest_health evidence tool">
+            <span><b>ingest</b> waiting for store</span>
+          </div>
+          <p class="sim-note">All merchants, banks, payments, incidents and outages shown are simulated data produced by this project's simulator for demonstration. Nothing shown represents or implies a real incident, outage, or service problem at any named company. Real company names are used only to make the demonstration recognisable and realistic.</p>
+        </div>
+      </details>
     </div>
   </div>
 

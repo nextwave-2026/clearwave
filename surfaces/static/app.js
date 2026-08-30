@@ -547,12 +547,33 @@
     return -1;
   }
 
+  // The counts strip. A count has no natural ceiling the way a ratio does, so
+  // its bars are drawn against the tallest bucket the tool returned in this
+  // window - a scale, never a printed figure, and the strip says so under it.
+  // No bar is a derived value: each is one stored `failed_attempts` reading.
+  const STRIP_H = 58;
+
+  function trendBars(points, total, peak) {
+    if (!(peak > 0)) return "";
+    const span = TREND_W - TREND_PAD.l - TREND_PAD.r;
+    const width = Math.max(1.5, (span / Math.max(total, 1)) - 1.5);
+    return points.map(function (point, index) {
+      if (!point || typeof point.value !== "number" || !isFinite(point.value)) return "";
+      const height = (point.value / peak) * STRIP_H;
+      if (!(height > 0)) return "";
+      return '<rect class="trend-bar" x="' + (trendX(index, total) - width / 2).toFixed(1) +
+        '" y="' + (STRIP_H - height).toFixed(1) + '" width="' + width.toFixed(1) +
+        '" height="' + height.toFixed(1) + '"></rect>';
+    }).join("");
+  }
+
   function renderTrend() {
     const payload = state.series;
     const host = $("overview-trend");
     if (!host) return;
     if (!payload) { host.innerHTML = ""; return; }
-    const series = payload.series || {};
+    const series = payload.rate || {};
+    const failures = payload.failures || {};
     const points = series.points || [];
     const measured = points.filter(function (point) {
       return point && typeof point.value === "number";
@@ -570,7 +591,7 @@
         '<p class="trend-none">No bucket has closed in this window yet, so there is nothing ' +
         "to plot. " + escapeHtml(metricWords(series.metric)) + " appears here bucket by bucket " +
         "as measurement catches up.</p>" +
-        trendFoot(series) +
+        trendFoot(series, failures) +
         "</section>";
       bindCites(host);
       return;
@@ -607,13 +628,38 @@
     }
 
     const onset = trendOnsetIndex(points, payload.onset);
-    const onsetMark = onset >= 0
-      ? '<line class="trend-onset" x1="' + trendX(onset, total).toFixed(1) +
-        '" x2="' + trendX(onset, total).toFixed(1) + '" y1="' + TREND_PAD.t +
-        '" y2="' + (TREND_H - TREND_PAD.b) + '"></line>' +
-        '<text class="trend-onset-l" x="' + (trendX(onset, total) + 6).toFixed(1) +
+    const onsetLine = onset >= 0 ? trendX(onset, total).toFixed(1) : null;
+    const onsetMark = onsetLine
+      ? '<line class="trend-onset" x1="' + onsetLine + '" x2="' + onsetLine +
+        '" y1="' + TREND_PAD.t + '" y2="' + (TREND_H - TREND_PAD.b) + '"></line>' +
+        '<text class="trend-onset-l" x="' + (trendX(onset, total) + 7).toFixed(1) +
         '" y="' + (TREND_PAD.t + 10) + '">onset ' +
         escapeHtml(clockOf(points[onset].bucket_start) || "") + "</text>"
+      : "";
+
+    // The tallest stored reading in the window, used as the strip's scale and
+    // printed as the axis label because it is a value the tool returned, not
+    // one this page worked out.
+    const failPoints = failures.points || [];
+    const failValues = failPoints
+      .map(function (point) { return point && point.value; })
+      .filter(function (value) { return typeof value === "number" && isFinite(value); });
+    const peak = failValues.length ? Math.max.apply(null, failValues) : 0;
+    const strip = failValues.length
+      ? '<div class="trend-strip">' +
+        '<div class="trend-strip-head"><h4>Failed attempts per bucket</h4>' +
+        '<span class="trend-peak mono">peak ' + escapeHtml(count(peak)) +
+        citeButton("trend-failures", "cite the failed-attempt series") + "</span></div>" +
+        '<svg class="trend-strip-svg" viewBox="0 0 ' + TREND_W + " " + STRIP_H +
+        '" role="img" aria-label="Failed attempts per bucket, ' +
+        escapeHtml(count(failValues.length)) + ' measured buckets, peak ' +
+        escapeHtml(count(peak)) + '">' +
+        trendBars(failPoints, total, peak) +
+        (onsetLine
+          ? '<line class="trend-onset" x1="' + onsetLine + '" x2="' + onsetLine +
+            '" y1="0" y2="' + STRIP_H + '"></line>'
+          : "") +
+        "</svg></div>"
       : "";
 
     const first = clockOf(points[0].bucket_start);
@@ -627,20 +673,20 @@
       '<span class="tl tl-line">measured</span>' +
       (expected !== null ? '<span class="tl tl-exp">expected</span>' : "") +
       (expected !== null ? '<span class="tl tl-short">short of it</span>' : "") +
-      (onset >= 0 ? '<span class="tl tl-onset">onset</span>' : "") +
+      (onsetLine ? '<span class="tl tl-onset">onset</span>' : "") +
       "</p>" +
       "</div>" +
       '<svg class="trend-svg" viewBox="0 0 ' + TREND_W + " " + TREND_H +
       '" role="img" aria-label="' + escapeHtml(metricWords(series.metric)) +
       " for " + escapeHtml(payload.scope_label || "the affected cohort") +
-      ', ' + escapeHtml(count(measured.length)) + ' measured buckets">' +
+      ", " + escapeHtml(count(measured.length)) + ' measured buckets">' +
       "<defs>" +
       '<pattern id="trend-hatch" width="7" height="7" patternUnits="userSpaceOnUse" ' +
       'patternTransform="rotate(-45)">' +
       '<rect width="7" height="7" fill="rgba(255,77,94,0.16)"></rect>' +
       '<line x1="0" y1="0" x2="0" y2="7" stroke="rgba(255,77,94,0.5)" stroke-width="1.4"></line>' +
       "</pattern>" +
-      "<clipPath id=\"trend-below\"><rect x=\"" + TREND_PAD.l + "\" y=\"" +
+      '<clipPath id="trend-below"><rect x="' + TREND_PAD.l + '" y="' +
       (expected === null ? TREND_PAD.t : trendY(expected).toFixed(1)) +
       '" width="' + (TREND_W - TREND_PAD.l - TREND_PAD.r) +
       '" height="' + (expected === null ? 0 : (baseline - trendY(expected)).toFixed(1)) +
@@ -652,12 +698,12 @@
       '<text class="trend-tick" x="' + (TREND_PAD.l - 8) + '" y="' + baseline +
       '" text-anchor="end" dominant-baseline="middle">0%</text>' +
       shortfall + reference + line + onsetMark +
-      (first ? '<text class="trend-tick" x="' + TREND_PAD.l + '" y="' + (TREND_H - 6) +
-        '">' + escapeHtml(first) + "</text>" : "") +
-      (last ? '<text class="trend-tick" x="' + (TREND_W - TREND_PAD.r) + '" y="' +
-        (TREND_H - 6) + '" text-anchor="end">' + escapeHtml(last) + "</text>" : "") +
       "</svg>" +
-      trendFoot(series) +
+      strip +
+      '<p class="trend-axis-x mono">' +
+      "<span>" + escapeHtml(first || "") + "</span>" +
+      "<span>" + escapeHtml(last || "") + "</span></p>" +
+      trendFoot(series, failures) +
       "</section>";
     bindCites(host);
   }
@@ -666,10 +712,14 @@
   // uses: `metric_series` answers without a gateway query_id, so the citation
   // names the tool, the window and the watermark it measured through, which is
   // what a reader needs to re-run it.
-  function trendFoot(series) {
+  function trendFoot(series, failures) {
     const buckets = (series.points || []).length;
+    const second = failures && failures.metric
+      ? " + " + escapeHtml(String(failures.metric)) +
+        citeButton("trend-failures", "cite the failed-attempt series")
+      : "";
     return '<p class="trend-foot mono">' +
-      "metric_series · " + escapeHtml(String(series.metric || "not in store")) +
+      "metric_series · " + escapeHtml(String(series.metric || "not in store")) + second +
       " · " + escapeHtml(count(buckets)) + " buckets of " +
       escapeHtml(count(series.bucket_seconds)) + "s · measured through " +
       escapeHtml(String(series.measured_through || "not in store")) +
@@ -2329,7 +2379,8 @@
         body: watch.projected_loss_per_hour,
       };
     }
-    if (citeId === "trend-series") return seriesCite();
+    if (citeId === "trend-series") return seriesCite("rate");
+    if (citeId === "trend-failures") return seriesCite("failures");
     if (citeId && citeId.indexOf("ingest-") === 0) return ingestCite(citeId);
     if (citeId && citeId.indexOf("ask-") === 0) return askCite(citeId);
     if (citeId && citeId.indexOf("merchant-") === 0) return merchantCite(citeId);
@@ -2374,17 +2425,17 @@
   // gateway query_id: `metric_series` is answered straight off the evidence
   // surface here, exactly as `ingest_health` is, and no id is minted for a call
   // the gateway did not make. Everything below is read out of the response.
-  function seriesCite() {
+  function seriesCite(view) {
     const payload = state.series;
     if (!payload) return null;
-    const series = payload.series || {};
+    const series = payload[view] || {};
     const points = series.points || [];
     const measured = points.filter(function (point) {
       return point && typeof point.value === "number";
     });
     const window = series.window || {};
     return {
-      title: "Conversion over time",
+      title: view === "failures" ? "Failed attempts per bucket" : "Conversion over time",
       lede: "Answered by W2's metric_series evidence tool over the same store every other " +
         "figure on this board comes from. Each point is drawn at the value the tool returned; " +
         "nothing is averaged, smoothed, interpolated or forecast in the page.",

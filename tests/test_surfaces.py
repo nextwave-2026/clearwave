@@ -293,7 +293,13 @@ class SurfacesTests(unittest.TestCase):
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
         self.assertIn("data-severity", js)
         self.assertIn("data-confidence", js)
-        self.assertIn("CRITICAL incident with LOW confidence", html)
+        # The board's own prose was cut so the money leads; the guarantee did
+        # not move out of the product, it moved to where the two readings are
+        # actually drawn next to each other.
+        self.assertIn("Priority and confidence", js)
+        self.assertIn("deliberately not one score", js)
+        self.assertIn("a critical incident at low confidence reads exactly as it should", js)
+        self.assertNotIn("combined", html)
 
     def test_agent_unavailable_still_renders_with_narrative_marked_unavailable(self):
         connection = self._seed(_incident("inc-degraded", "critical", "2026-08-29T10:00:00Z"))
@@ -1612,18 +1618,85 @@ class RevenueFirstOverviewTests(unittest.TestCase):
         self.assertIsNotNone(status)
         self.assertGreater(int(risk.group(1)), float(status.group(1)) * 2)
 
-    def test_the_conversion_bars_are_the_printed_figure_not_a_derived_one(self):
-        gap = self.js[self.js.index("function gapRow"):self.js.index("function conversionGap")]
-        self.assertIn("style=\"width:' + text +", gap)
-        self.assertIn("const text = ratio(value);", gap)
-        # No second measurement is taken between the two bars.
-        for arithmetic in ("* 100", " - ", "reduce(", "Number("):
+    def test_the_conversion_gap_is_drawn_from_stored_figures_only(self):
+        # The shortfall is now drawn as a gap rather than described under two
+        # bars, which is a stronger claim, not a weaker one: three lengths are
+        # on screen and every one of them is a field the store published.
+        start = self.js.index("function conversionGap")
+        gap = self.js[start:self.js.index("\n  }", start)]
+        self.assertIn("const now = ratio(data.current_conversion);", gap)
+        self.assertIn("const expected = ratio(data.expected_conversion);", gap)
+        self.assertIn("const band = deltaWidth(change.absolute_delta);", gap)
+        self.assertIn("style=\"width:' + now +", gap)
+        self.assertIn("style=\"left:' + now + ';width:' + band +", gap)
+        self.assertIn("style=\"left:' + expected +", gap)
+        # Nothing is measured between the two ends: the band is the stored
+        # delta, never the distance worked out from the other two.
+        for arithmetic in (" - ", "reduce(", "Number(", "Math.max", "Math.min"):
             self.assertNotIn(arithmetic, gap)
+        # And the delta reaches the screen as the store's own figure, cited.
+        self.assertIn('"overview-delta"', self.js)
+        self.assertIn('"change.absolute_delta"', self.js)
+
+    def test_the_row_scale_gap_is_the_same_rule_as_the_header(self):
+        mini = self.js[self.js.index("function miniGap"):self.js.index("function conversionGap")]
+        self.assertIn("ratio((change || {}).actual)", mini)
+        self.assertIn("ratio((change || {}).expected)", mini)
+        self.assertIn("deltaWidth((change || {}).absolute_delta)", mini)
+        for arithmetic in (" - ", "reduce(", "Number("):
+            self.assertNotIn(arithmetic, mini)
 
     def test_the_overview_computes_nothing(self):
         board = self.js[self.js.index("function figure(value"):self.js.index("function renderQueue")]
-        for arithmetic in ("reduce(", "+ Number(", " / 60", ".toFixed("):
+        for arithmetic in ("reduce(", "+ Number(", " / 60"):
             self.assertNotIn(arithmetic, board)
+        # `.toFixed` is allowed only where it formats a value the store already
+        # published, exactly as `ratio()` does, or rounds an SVG coordinate.
+        # Anywhere else it would be a figure this layer worked out. Each site is
+        # named here so a new one has to be argued for rather than slipped in.
+        allowed = (
+            "Math.abs(value * 100).toFixed(1)",          # deltaWidth, on change.absolute_delta
+            "trendX(point.i, total).toFixed(1)",          # svg x, a coordinate
+            "trendY(point.v).toFixed(1)",                 # svg y, a coordinate
+            "trendX(run[0].i, total).toFixed(1)",
+            "trendX(run[run.length - 1].i, total).toFixed(1)",
+            "trendX(onset, total).toFixed(1)",
+            "(trendX(onset, total) + 7).toFixed(1)",
+            "trendY(expected).toFixed(1)",
+            "(baseline - trendY(expected)).toFixed(1)",   # svg height, a coordinate
+            "(trendX(index, total) - width / 2).toFixed(1)",
+            "width.toFixed(1)",
+            "(STRIP_H - height).toFixed(1)",
+            "height.toFixed(1)",
+        )
+        remaining = board
+        for site in allowed:
+            remaining = remaining.replace(site, "")
+        self.assertNotIn(".toFixed(", remaining)
+
+    def test_the_trend_draws_stored_points_and_never_invents_one(self):
+        trend = self.js[self.js.index("const TREND_W ="):self.js.index("function renderOverview")]
+        # A bucket the tool reported with no value breaks the line. Bridging it
+        # would draw a reading nobody took.
+        self.assertIn('typeof point.value === "number" && isFinite(point.value)', trend)
+        self.assertIn("current = null;", trend)
+        # No smoothing, no totalling, no projection past the last bucket.
+        for banned in ("reduce(", "slope", "forecast", "predict", "average", "smooth"):
+            self.assertNotIn(banned, trend)
+        # The ratio axis is the domain of a ratio, not a range read off this
+        # particular series, so two runs of the board are comparable.
+        self.assertIn("function trendY(value) {", trend)
+        self.assertNotIn("Math.max.apply(null, values)", trend)
+        # The series carries a citation like every other figure on the board.
+        self.assertIn('citeButton("trend-series"', self.js)
+        self.assertIn('citeButton("trend-failures"', self.js)
+        self.assertIn("function seriesCite(view)", self.js)
+
+    def test_the_trend_reads_its_own_endpoint_on_every_refresh(self):
+        # A chart that renders once and freezes reads as a screenshot on stage.
+        self.assertIn('jsonGet("/api/series/" + encodeURIComponent(incidentId))', self.js)
+        refresh = self.js[self.js.index("function refresh()"):self.js.index("function loadSeries")]
+        self.assertIn("loadSeries((payloads[0] || {}).source_incident_id);", refresh)
 
     def test_the_platform_total_refusal_survives_the_business_framing(self):
         self.assertIn("REFUSAL_NOTE", self.js)
@@ -1636,13 +1709,18 @@ class RevenueFirstOverviewTests(unittest.TestCase):
         self.assertIn("Whose fault it is.", self.js)
         self.assertIn('overviewNotes.innerHTML = REFUSAL_NOTE;', self.js)
 
-    def test_gmv_at_risk_still_reads_as_an_estimate(self):
-        self.assertIn("estimated · gmv_at_risk on incident ", self.js)
+    def test_gmv_at_risk_still_names_the_field_it_was_copied_from(self):
+        # The sentence under each figure became the stored field name it was
+        # copied from. The cite dot still rides on that line, so the route into
+        # the record is unchanged - only the paragraph competing with the money
+        # for the first read is gone.
+        self.assertIn('money(data.estimated_gmv_at_risk),\n        "gmv_at_risk", "overview-risk"', self.js)
         self.assertIn("gmv_at_risk, an estimate", self.js)
+        self.assertIn('citeButton(citeId, "cite " + label)', self.js)
 
     def test_the_loss_rate_is_worded_as_a_rate_that_has_not_happened_yet(self):
-        self.assertIn("loss_per_hour on that incident, if it continues", self.js)
         self.assertIn("loss_per_hour, if it continues", self.js)
+        self.assertIn("loss_per_hour, while it ran", self.js)
 
     def test_an_empty_store_reads_as_healthy_rather_than_broken(self):
         self.assertIn("No revenue at risk", self.js)
@@ -1656,7 +1734,7 @@ class RevenueFirstOverviewTests(unittest.TestCase):
         # the stored cohort does not say.
         self.assertNotIn("Merchant health", self.js)
         self.assertIn("Who is carrying it", self.js)
-        self.assertIn("or per cohort where the stored incident names no merchant", self.js)
+        self.assertIn("or per cohort where the incident names none", self.js)
         self.assertIn('const isMerchant = Boolean(row.merchant_id);', self.js)
         self.assertIn('isMerchant ? "merchant" : "cohort"', self.js)
         # And the row label is no longer shouted in uppercase.
@@ -1676,9 +1754,9 @@ class RevenueFirstOverviewTests(unittest.TestCase):
         self.assertIn('"Was costing / hour"', self.js)
         self.assertIn('"Was at risk"', self.js)
         self.assertIn('"loss_per_hour, while it ran"', self.js)
-        self.assertIn('"Converted "', self.js)
         self.assertIn('What it cost earlier', self.js)
-        self.assertIn('Nothing here is still running.', self.js)
+        self.assertIn('All closed.', self.js)
+        self.assertIn('worded in the past because it is over', self.js)
         self.assertRegex(self.css, r"\.mcard\.is-past")
 
     def test_the_watch_rail_still_sits_apart_and_below_the_real_incident(self):
