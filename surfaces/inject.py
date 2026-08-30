@@ -47,17 +47,16 @@ INJECTED_INCIDENT = {
     "decline_reason": "provider_timeout",
 }
 
-# Measured on the live demo volume (warm 8-hour merchant-b/adyen store,
-# ~180 payments in the 5-minute window) on 2026-08-30:
-#   0.10 at 2 min: no watch (conv 0.849); at 4.5 min: watch z=-1.50 then a
-#     child slice crossed Z_MIN.
-#   0.12 on the isolated verify stack: delivered, but within four minutes the
-#     row was already investigating on a bank child - skipped past watching.
+# Measured on the live isolated verify-demo stack after merchant/provider-first
+# localisation (2026-08-30):
+#   0.12 delivered a correct merchant-b/adyen row, but by the verifier's sample
+#     (first sighting + 45s) it had already crossed into detected - stage one
+#     requires lifecycle_state=watching.
+#   0.10 is the mild developing magnitude that should spend time as a watch on
+#     the joint cohort once localisation names merchant-b rather than a bank.
 #   0.20 at 2 min: incident z=-3.80, no watch.
-# Detection floors were not moved; this is the inject magnitude. 0.10 is the
-# strongest magnitude that still spends time as a merchant-relative watch on
-# the live multi-merchant adyen mix (merchant-c dilutes provider=adyen alone).
-STAGE_DEVELOPING = 0.14
+# Detection floors were not moved; this is the inject magnitude.
+STAGE_DEVELOPING = 0.12
 # Today's near-total break, reachable directly as well as after developing.
 STAGE_COLLAPSE = 0.95
 

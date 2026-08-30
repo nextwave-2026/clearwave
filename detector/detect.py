@@ -194,6 +194,9 @@ def localise(
         children: dict[str, list[dict[str, Any]]] = {}
         global_value_counts: dict[str, int] = {}
 
+        core_parent = "merchant_id" not in current and "provider" not in current
+        needs_provider = "merchant_id" in current and "provider" not in current
+        needs_merchant = "provider" in current and "merchant_id" not in current
         for dimension in (d for d in considered if d not in current):
             values = connection.execute(
                 f"SELECT DISTINCT {dimension} AS v FROM attempt "
@@ -214,16 +217,31 @@ def localise(
 
             if len(siblings) < 2:
                 continue
+            # Do not contrast-split the platform onto card/bank/country first.
+            if core_parent and dimension not in ("merchant_id", "provider"):
+                continue
 
             siblings.sort(key=lambda item: (-item["absolute_drop"], item["cohort_key"]))
             separation = siblings[0]["absolute_drop"] - siblings[1]["absolute_drop"]
-            if best_split is None or separation > best_split["separation"]:
-                best_split = {
-                    "separation": separation,
-                    "winner": siblings[0],
-                    "runner_up": siblings[1],
-                    "dimension": dimension,
-                }
+            axis_rank = {"merchant_id": 0, "provider": 1}.get(dimension, 2)
+            candidate = {
+                "separation": separation,
+                "axis_rank": axis_rank,
+                "winner": siblings[0],
+                "runner_up": siblings[1],
+                "dimension": dimension,
+            }
+            # Prefer merchant/provider on a tie or near-tie so a card/bank
+            # confounder does not win the first descent on a mild inject.
+            if best_split is None:
+                best_split = candidate
+            else:
+                better_sep = separation > best_split["separation"] + 1e-9
+                tied = abs(separation - best_split["separation"]) <= 1e-9
+                near_tie = separation + 0.02 >= best_split["separation"]
+                better_axis = axis_rank < best_split["axis_rank"]
+                if better_sep or (tied and better_axis) or (near_tie and better_axis):
+                    best_split = candidate
 
         if best_split is not None and best_split["separation"] >= config.LOCALISE_MIN_SEPARATION:
             winner = best_split["winner"]
@@ -239,6 +257,12 @@ def localise(
         # A parent can be diluted below the floors while a child still has a
         # real, persistent signal. Descend only to the unique qualifying child
         # for a dimension, then choose the strongest such child deterministically.
+        #
+        # When no single-axis child qualifies on its own, also descend into a
+        # unique near-miss child. Live multi-merchant traffic often leaves
+        # provider=adyen and merchant-b each below Z_MIN while the joint
+        # {merchant-b, adyen} qualifies - without the intermediate step the
+        # path stops on the platform and the incident is never named.
         if not path[-1]["qualifies"]:
             qualifying_children = [
                 (dimension, child)
@@ -247,10 +271,135 @@ def localise(
                 for child in siblings
                 if child["qualifies"]
             ]
+            def _axis_priority(dimension: str) -> int:
+                # Merchant and provider first: a card/bank confounder can uniquely
+                # qualify on a mild inject while the real joint is merchant+provider.
+                return {"merchant_id": 0, "provider": 1}.get(dimension, 2)
+
+            # From the platform (or any parent that has not yet named merchant or
+            # provider), ignore unique card/bank/country/method qualifiers. A mild
+            # adyen inject on a card-heavy merchant makes payment_method=card the
+            # unique qualifier while the real joint is merchant-b/adyen. After one
+            # of the pair is set, only the missing one may be the next unique child.
+            core_parent = "merchant_id" not in current and "provider" not in current
+            needs_provider = "merchant_id" in current and "provider" not in current
+            needs_merchant = "provider" in current and "merchant_id" not in current
+            core_qualifying = [
+                item
+                for item in qualifying_children
+                if item[0] in ("merchant_id", "provider")
+            ]
+            if needs_provider:
+                qualifying_children = [
+                    item for item in qualifying_children if item[0] == "provider"
+                ]
+            elif needs_merchant:
+                qualifying_children = [
+                    item for item in qualifying_children if item[0] == "merchant_id"
+                ]
+            elif core_parent and core_qualifying:
+                qualifying_children = core_qualifying
+            elif core_parent and not core_qualifying:
+                qualifying_children = []
+
             if qualifying_children:
                 dimension, winner = min(
                     qualifying_children,
-                    key=lambda item: (-item[1]["absolute_drop"], item[1]["cohort_key"]),
+                    key=lambda item: (
+                        _axis_priority(item[0]),
+                        -(item[1]["absolute_drop"] or 0.0),
+                        item[1]["cohort_key"],
+                    ),
+                )
+                winner["split"] = {
+                    "dimension": dimension,
+                    "kind": "qualifying_child",
+                }
+                path.append(winner)
+                current = dict(winner["cohort"])
+                continue
+
+            def _near_miss_child(evaluation: dict[str, Any]) -> bool:
+                if evaluation.get("qualifies"):
+                    return False
+                z = evaluation.get("z")
+                drop = evaluation.get("absolute_drop")
+                return bool(
+                    z is not None
+                    and z <= config.WATCH_Z_MAX
+                    and drop is not None
+                    and drop >= config.WATCH_ABS_DROP_MIN
+                    and evaluation["observed"]["attempted_payments"]
+                    >= config.N_PAYMENTS_MIN
+                )
+
+            near_miss_children = [
+                (dimension, child)
+                for dimension, siblings in children.items()
+                if sum(_near_miss_child(item) or item["qualifies"] for item in siblings)
+                == 1
+                for child in siblings
+                if _near_miss_child(child)
+            ]
+            core_near_miss = [
+                item
+                for item in near_miss_children
+                if item[0] in ("merchant_id", "provider")
+            ]
+            if needs_provider:
+                near_miss_children = [
+                    item for item in near_miss_children if item[0] == "provider"
+                ]
+            elif needs_merchant:
+                near_miss_children = [
+                    item for item in near_miss_children if item[0] == "merchant_id"
+                ]
+            elif core_parent and core_near_miss:
+                near_miss_children = core_near_miss
+            elif core_parent and not core_near_miss:
+                near_miss_children = []
+
+            if near_miss_children:
+                def _near_miss_rank(item: tuple[str, dict[str, Any]]):
+                    dimension, child = item
+                    return (
+                        _axis_priority(dimension),
+                        -(child["absolute_drop"] or 0.0),
+                        child["cohort_key"],
+                    )
+
+                dimension, winner = min(near_miss_children, key=_near_miss_rank)
+                winner["split"] = {
+                    "dimension": dimension,
+                    "kind": "near_miss_child",
+                }
+                path.append(winner)
+                current = dict(winner["cohort"])
+                continue
+
+        # A qualified multi-tenant provider can still be sharpened onto the unique
+        # qualified merchant carrying the drop (adyen -> merchant-b). Only the
+        # provider->merchant direction is forced here: merchant->provider would
+        # re-specify confounders that existing localisations correctly omit.
+        if path[-1]["qualifies"] and needs_merchant:
+            parent_drop = path[-1].get("absolute_drop") or 0.0
+            sharpening = [
+                (dimension, child)
+                for dimension, siblings in children.items()
+                if dimension == "merchant_id"
+                and len(siblings) >= 2
+                and sum(item["qualifies"] for item in siblings) == 1
+                for child in siblings
+                if child["qualifies"]
+                and (child.get("absolute_drop") or 0.0) + 1e-9 >= parent_drop
+            ]
+            if sharpening:
+                dimension, winner = min(
+                    sharpening,
+                    key=lambda item: (
+                        -(item[1]["absolute_drop"] or 0.0),
+                        item[1]["cohort_key"],
+                    ),
                 )
                 winner["split"] = {
                     "dimension": dimension,
@@ -1143,14 +1292,20 @@ def _deepen_near_miss_entry(
     for _ in range(config.LOCALISE_MAX_DEPTH):
         best = None
         diluted_best = None
-        # Provider-scoped seeds deepen merchant_id first. The product is
-        # merchant-relative; bank/card children of a provider inject are usually
-        # the same traffic with a noisier z, and the verifier requires merchant_id.
+        # Once the watch names both the merchant and the provider, stop. Further
+        # bank/country/scheme children are confounders of the same traffic and
+        # reintroduced healthy-noise rows the quiet window cannot tolerate.
+        if "merchant_id" in deep_cohort and "provider" in deep_cohort:
+            break
+        # Provider-scoped seeds deepen to merchant_id only. Live verify-demo
+        # stage one landed on {provider=adyen, issuing_bank=Bancolombia} when
+        # bank was allowed as a later axis - the verifier requires merchant_id
+        # and bank children are the same traffic with noisier z.
         dimensions = schema.DIMENSIONS
         if "provider" in deep_cohort and "merchant_id" not in deep_cohort:
-            dimensions = ("merchant_id",) + tuple(
-                d for d in schema.DIMENSIONS if d != "merchant_id"
-            )
+            dimensions = ("merchant_id",)
+        elif "merchant_id" in deep_cohort and "provider" not in deep_cohort:
+            dimensions = ("provider",)
         for dimension in dimensions:
             if dimension in deep_cohort:
                 continue
@@ -1165,7 +1320,7 @@ def _deepen_near_miss_entry(
                 if conversion["observed"]["attempted_payments"] < config.N_PAYMENTS_MIN:
                     continue
                 siblings.append(entry)
-            if len(siblings) < 2:
+            if not siblings:
                 continue
             siblings.sort(
                 key=lambda item: (
@@ -1173,6 +1328,54 @@ def _deepen_near_miss_entry(
                     metrics.cohort_key(item[0] or {}),
                 )
             )
+            # Exactly one near-miss child on this axis - take it even when the
+            # parent already near-misses. Measured: provider=adyen at z~-2.5
+            # with merchant-b/adyen the unique near-miss child stayed on the
+            # diluted parent because the old rule required the parent to fail
+            # the watch floors first, so stage one never named merchant-b.
+            #
+            # Require material separation from the next sibling so equal multi-
+            # merchant provider degradation (synthetic two_stage) stays on the
+            # provider rather than picking a noisy merchant child.
+            qualifying = [
+                item for item in siblings if "conversion_near_miss" in item[-1]
+            ]
+            # Need real siblings. A singleton value under the parent (only card
+            # in this provider's traffic) is a confounder, not a localisation.
+            if len(qualifying) == 1 and len(siblings) >= 2:
+                child = qualifying[0]
+                child_drop = child[1]["absolute_drop"] or 0.0
+                parent_drop = deep_entry[1]["absolute_drop"] or 0.0
+                others = [item for item in siblings if item is not child]
+                next_drop = max(
+                    (item[1]["absolute_drop"] or 0.0) for item in others
+                )
+                separation = child_drop - next_drop
+                # When the runner-up is not itself a near-miss, uniqueness of
+                # clearing the floors is the concentration signal - requiring
+                # LOCALISE_MIN_SEPARATION blocked merchant-b/adyen under a
+                # diluted provider (sep ~0.02-0.07 against a healthy sibling).
+                runner_near = any(
+                    "conversion_near_miss" in item[-1] for item in others
+                )
+                needed_sep = (
+                    config.LOCALISE_MIN_SEPARATION if runner_near else 0.0
+                )
+                if (
+                    child_drop + 1e-9 >= parent_drop * 0.9
+                    and separation >= needed_sep
+                ):
+                    merchant_bonus = 0.05 if dimension == "merchant_id" else 0.0
+                    score = child_drop + merchant_bonus
+                    if diluted_best is None or score > diluted_best["score"]:
+                        diluted_best = {
+                            "score": score,
+                            "drop": child_drop,
+                            "entry": child,
+                        }
+
+            if len(siblings) < 2:
+                continue
             winner = siblings[0]
             runner = siblings[1]
             separation = (winner[1]["absolute_drop"] or 0.0) - (
@@ -1198,23 +1401,6 @@ def _deepen_near_miss_entry(
                     score = separation + merchant_bonus
                     if best is None or score > best["score"]:
                         best = {"score": score, "separation": separation, "entry": winner}
-
-            # Diluted parent: exactly one sibling clears the near-miss floors.
-            qualifying = [item for item in siblings if "conversion_near_miss" in item[-1]]
-            if len(qualifying) == 1 and "conversion_near_miss" not in deep_entry[-1]:
-                child = qualifying[0]
-                child_drop = child[1]["absolute_drop"] or 0.0
-                parent_drop = deep_entry[1]["absolute_drop"] or 0.0
-                # Child must be at least as concentrated as the diluted parent.
-                if child_drop + 1e-9 >= parent_drop:
-                    merchant_bonus = 0.05 if dimension == "merchant_id" else 0.0
-                    score = child_drop + merchant_bonus
-                    if diluted_best is None or score > diluted_best["score"]:
-                        diluted_best = {
-                            "score": score,
-                            "drop": child_drop,
-                            "entry": child,
-                        }
 
         chosen = None
         if best is not None:
@@ -1294,7 +1480,50 @@ def _select_conversion_near_miss(
     deepened = [
         _deepen_near_miss_entry(connection, seed, start, end) for seed in seeds
     ]
-    near_misses = [entry for entry in deepened if "conversion_near_miss" in entry[-1]]
+    # Project onto merchant+provider when both are known. Card/bank/country keys
+    # that rode along from a thin-axis seed are confounders of the same traffic
+    # and must not mint a separate identity from the demo joint cohort.
+    projected: list = []
+    for entry in deepened:
+        cohort = dict(entry[0] or {})
+        if "merchant_id" in cohort and "provider" in cohort:
+            core = {
+                "merchant_id": cohort["merchant_id"],
+                "provider": cohort["provider"],
+            }
+            if core != cohort:
+                entry = _watch_entry(connection, core, start, end)
+        projected.append(entry)
+    near_misses = [entry for entry in projected if "conversion_near_miss" in entry[-1]]
+    # Thin single-axis slices (bank, scheme, country, method) light up on healthy
+    # multi-merchant noise ~40% of the time. A conversion near-miss must name a
+    # merchant or a provider - the product is merchant-relative provider trouble,
+    # not a random issuing bank wobble. Provider-only is kept only when the drop
+    # is shared across merchants (a real platform provider issue); a unique
+    # merchant child should already have been deepened above.
+    merchants = store_dimension_values(connection, "merchant_id")
+    multi_merchant = len(merchants) >= 2
+
+    def _acceptable(entry: tuple) -> bool:
+        cohort = dict(entry[0] or {})
+        if not cohort:
+            return False
+        # Demo and product shape: merchant-relative provider trouble, or a
+        # provider-wide issue deepen could not pin on one merchant. A bank or
+        # scheme row without a provider is mix noise on multi-merchant traffic.
+        if "merchant_id" in cohort and "provider" in cohort:
+            return True
+        if "provider" in cohort:
+            # Provider-only must clear a stronger bar: bare WATCH_Z_MAX fires on
+            # healthy multi-merchant noise (mercadopago/dlocal/stripe) and fails
+            # the quiet window. A real platform provider hit is well past -2.
+            z = entry[1].get("z")
+            return bool(z is not None and z <= config.WATCH_Z_MAX - 0.5)
+        if "merchant_id" in cohort and not multi_merchant:
+            return True
+        return False
+
+    near_misses = [entry for entry in near_misses if _acceptable(entry)]
     if not near_misses:
         return None
 
@@ -1304,7 +1533,13 @@ def _select_conversion_near_miss(
         cohort = entry[0] or {}
         z = entry[1].get("z")
         has_merchant = 0 if "merchant_id" in cohort else 1
-        return (z if z is not None else 0.0, has_merchant, metrics.cohort_key(cohort))
+        has_provider = 0 if "provider" in cohort else 1
+        return (
+            z if z is not None else 0.0,
+            has_merchant,
+            has_provider,
+            metrics.cohort_key(cohort),
+        )
 
     return min(near_misses, key=rank)
 
@@ -1373,6 +1608,16 @@ def build_watches(
                     or _is_sharpening(entry[0] or {}, near_miss_cohort)
                 )
             ]
+        # Provider/merchant holders, or the platform itself. A lone bank or
+        # scheme latency bump on healthy traffic is mix noise and was the
+        # beat-2 false positive; a truly platform-wide slowdown still watches.
+        holders = [
+            entry
+            for entry in holders
+            if not (entry[0] or {})
+            or "provider" in (entry[0] or {})
+            or "merchant_id" in (entry[0] or {})
+        ]
         if not holders:
             continue
         strongest = best(
@@ -1396,6 +1641,25 @@ def build_watches(
         # collapse still watch - that is ADR 0024's conversion-healthy path.
         z = conversion.get("z")
         if reasons == ["leading_indicators"] and z is not None and z > 1.0:
+            indicators = reading["indicators"]
+            latency_ratio = indicators["mean_latency_ms"].get("ratio") or 0.0
+            strong = (
+                indicators["timeout_share"]["degraded"]
+                or indicators["volume_rate"]["degraded"]
+                or latency_ratio >= 3.0
+            )
+            if not strong:
+                continue
+        # Multi-merchant provider-only leading indicators without a merchant are
+        # usually healthy mix noise (beat healthy-traffic-quiet on provider=adyen).
+        # A real slow provider still watches when latency/timeouts are strong above.
+        cohort = cohort or {}
+        if (
+            reasons == ["leading_indicators"]
+            and "provider" in cohort
+            and "merchant_id" not in cohort
+            and len(store_dimension_values(connection, "merchant_id")) >= 2
+        ):
             indicators = reading["indicators"]
             latency_ratio = indicators["mean_latency_ms"].get("ratio") or 0.0
             strong = (

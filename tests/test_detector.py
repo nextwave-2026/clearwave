@@ -891,13 +891,13 @@ class WatchTests(unittest.TestCase):
         connection, sweep = self._sweep(events)
         self.assertIsNone(sweep["incident"], sweep)
         self.assertGreaterEqual(len(sweep["watches"]), 1, sweep)
-        # The verifier's injected-cohort check is merchant-b OR adyen. A
-        # deepened child that still names one of those is the demo beat.
+        # Stage one requires merchant-relative: merchant-b must be on the row,
+        # not only a diluted provider=adyen parent.
         injected = [
             watch
             for watch in sweep["watches"]
             if (watch.get("affected_cohort") or {}).get("merchant_id") == "merchant-b"
-            or (watch.get("affected_cohort") or {}).get("provider") == "adyen"
+            and (watch.get("affected_cohort") or {}).get("provider") == "adyen"
         ]
         self.assertGreaterEqual(
             len(injected),
@@ -908,6 +908,126 @@ class WatchTests(unittest.TestCase):
             any(w.get("lifecycle_state") == "watching" for w in injected),
             injected,
         )
+
+    def test_live_healthy_history_does_not_watch_thin_axis_noise(self):
+        """Bank/scheme conversion wobbles on healthy multi-merchant traffic
+        must not open a watch - that is beat healthy-traffic-quiet."""
+        from datetime import datetime, timezone
+
+        as_of = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+        false_positives = []
+        for seed in range(12):
+            events = list(
+                synthetic.iter_live_healthy_history(
+                    hours=8.0,
+                    per_merchant_per_minute=20,
+                    seed=seed,
+                    as_of=as_of,
+                )
+            )
+            _, sweep = self._sweep(events, persist=False)
+            thin = [
+                watch.get("affected_cohort")
+                for watch in sweep["watches"]
+                if "provider" not in (watch.get("affected_cohort") or {})
+            ]
+            if thin or sweep["incident"] is not None:
+                false_positives.append(
+                    {
+                        "seed": seed,
+                        "incident": None
+                        if sweep["incident"] is None
+                        else sweep["incident"].get("affected_cohort"),
+                        "thin_watches": thin,
+                        "watches": [
+                            w.get("affected_cohort") for w in sweep["watches"]
+                        ],
+                    }
+                )
+        self.assertEqual(false_positives, [], false_positives)
+
+    def test_joint_merchant_provider_incident_is_found_when_axes_alone_do_not_qualify(self):
+        """localise must reach merchant-b/adyen even when neither axis alone clears Z_MIN."""
+        from datetime import datetime, timedelta, timezone
+        from worker.helpers.payment import BASELINE_DECLINE_PROBABILITY
+
+        as_of = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+        events = list(
+            synthetic.iter_live_healthy_history(
+                hours=8.0,
+                per_merchant_per_minute=20,
+                seed=42,
+                as_of=as_of,
+            )
+        )
+        # Hot enough that the joint qualifies while single axes stay below Z_MIN.
+        effective = 0.16 + (1.0 - 0.16) * BASELINE_DECLINE_PROBABILITY
+        rng = __import__("random").Random(99)
+        specs = synthetic._live_merchant_specs()
+        index = 0
+        start_live = as_of + timedelta(minutes=1)
+        for minute in range(5):
+            minute_start = start_live + timedelta(minutes=minute)
+            for spec in specs:
+                for slot in range(30):
+                    index += 1
+                    provider = spec["providers"][slot % len(spec["providers"])]
+                    key = (spec["merchant_id"], provider)
+                    p_dec = (
+                        effective
+                        if key == ("merchant-b", "adyen")
+                        else BASELINE_DECLINE_PROBABILITY
+                    )
+                    approved = rng.random() >= p_dec
+                    payment_method = spec["payment_methods"][
+                        slot % len(spec["payment_methods"])
+                    ]
+                    occurred = minute_start + timedelta(seconds=slot % 60)
+                    event = {
+                        "event_id": f"joint-{index:07d}",
+                        "payment_id": f"pay-joint-{index:07d}",
+                        "attempt_id": f"att-joint-{index:07d}-1",
+                        "attempt_number": 1,
+                        "occurred_at": occurred.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "merchant_id": spec["merchant_id"],
+                        "provider": provider,
+                        "payment_method": payment_method,
+                        "card_network": (
+                            spec["card_networks"][
+                                slot % len(spec["card_networks"])
+                            ]
+                            if payment_method == "card"
+                            else None
+                        ),
+                        "country": spec["country"],
+                        "issuing_bank": spec["banks"][slot % len(spec["banks"])],
+                        "status": "approved" if approved else "declined",
+                        "amount": 10.0,
+                        "currency": spec["currency"],
+                        "latency_ms": 220.0,
+                    }
+                    if not approved:
+                        event["normalized_decline_reason"] = (
+                            "provider_timeout"
+                            if p_dec > BASELINE_DECLINE_PROBABILITY
+                            else "insufficient_funds"
+                        )
+                    events.append(event)
+
+        connection, sweep = self._sweep(events)
+        incident = sweep["incident"]
+        # Barely past Z_MIN stays watching under upgrade hysteresis; either
+        # form is fine so long as the joint is merchant-b/adyen.
+        if incident is None:
+            self.assertGreaterEqual(len(sweep["watches"]), 1, sweep)
+            record = sweep["watches"][0]
+        else:
+            record = incident
+        cohort = record["affected_cohort"]
+        self.assertEqual(cohort.get("merchant_id"), "merchant-b", cohort)
+        self.assertEqual(cohort.get("provider"), "adyen", cohort)
+        # Must not stop on the card confounder.
+        self.assertNotEqual(cohort, {"payment_method": "card"}, cohort)
 
     def test_a_detected_incident_resolves_when_traffic_recovers(self):
         connection, first = self._sweep(synthetic.two_stage_deviation_mild_only())

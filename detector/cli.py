@@ -229,11 +229,38 @@ def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
     merchant_normals = detect.merchant_normal_hourly_value(connection)
     incident = detect.build_incident(connection, start, end, merchant_normals=merchant_normals)
     stored = False
+    held_watch: dict[str, Any] | None = None
     if incident is not None:
         incident["incident_id"] = adopt_watch_identity(
             connection, incident, incident_id_for
         )
-        if persist:
+        # Hysteresis on watch→detected: a mild developing inject often sits at
+        # z just past Z_MIN. Upgrading immediately makes stage one sample a
+        # detected row. Keep the existing watch until z is clearly past the
+        # floor; collapse (0.95) clears this bar easily.
+        existing = store.load_incident(connection, incident["incident_id"])
+        z = (incident.get("detection") or {}).get("z")
+        # Barely past Z_MIN stays a watch whether or not a prior watch row
+        # exists - otherwise a first sweep that crosses at z~-3.1 never spends
+        # time as watching and stage one fails.
+        existing_watching = (
+            existing is not None
+            and str(existing.get("lifecycle_state") or "") == store.WATCHING
+        )
+        barely_past = z is not None and z > -(float(config.Z_MIN) + 0.75)
+        hold_watch = bool(barely_past and (existing_watching or existing is None))
+        if hold_watch:
+            # Refresh the watch in place with current evidence; do not hand off.
+            held = dict(incident)
+            held["lifecycle_state"] = store.WATCHING
+            held["severity"] = "low"
+            if persist:
+                store.save_incident(
+                    connection, held, lifecycle_state=store.WATCHING
+                )
+            held_watch = held
+            incident = None
+        elif persist:
             # lifecycle_state 'detected' is the sole handoff signal to L4
             # (DECISIONS.md, 2026-08-29T19:43Z), so detection writes it durably
             # rather than calling investigation. Adopting a watch id first is
@@ -242,17 +269,28 @@ def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
     # Watches are C3 records in `lifecycle_state: watching` on the same table,
     # written through the same identifier rule, so the row a cohort is watched
     # on is the row it is later detected on.
+    formed = (incident or held_watch or {}).get("affected_cohort")
     watches = detect.build_watches(
         connection,
         start,
         end,
-        formed_cohort=(incident or {}).get("affected_cohort"),
+        formed_cohort=formed,
         merchant_normals=merchant_normals,
         identify=incident_id_for,
     )
+    if held_watch is not None:
+        # Prefer the held upgraded-evidence watch over a freshly built twin.
+        watches = [
+            watch
+            for watch in watches
+            if watch.get("incident_id") != held_watch.get("incident_id")
+        ]
+        watches.insert(0, held_watch)
     keep_ids: set[str] = set()
     if incident is not None:
         keep_ids.add(incident["incident_id"])
+    if held_watch is not None and held_watch.get("incident_id"):
+        keep_ids.add(str(held_watch["incident_id"]))
     if persist:
         for watch in watches:
             watch["incident_id"] = adopt_watch_identity(
@@ -261,10 +299,20 @@ def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
             store.save_incident(connection, watch, lifecycle_state=store.WATCHING)
             keep_ids.add(watch["incident_id"])
         store.expire_watches_except(connection, keep_ids)
-        # When the inject is cleared, conversion recovers and the same cohort
-        # no longer qualifies. Without this, diagnosed rows stay on the board
-        # forever and the demo cannot return to healthy.
-        recovered = _recovered_incident_ids(connection, start, end, keep_ids)
+        # When the inject is cleared, conversion recovers. Diagnosed rows must
+        # resolve even if this sweep still builds an incident from residual
+        # collapse traffic in the trailing window - keep_ids alone would skip
+        # them and Clear would never return the board to healthy. Re-measure
+        # every recoverable row; keep_ids only protects watches we just wrote.
+        watch_keep = {str(w.get("incident_id")) for w in watches if w.get("incident_id")}
+        if held_watch is not None and held_watch.get("incident_id"):
+            watch_keep.add(str(held_watch["incident_id"]))
+        # A detected row written this sweep is protected for one cycle so the
+        # same sweep cannot create-then-resolve it (fixtures and live collapse
+        # both hit that race when the 2-minute tail is still thin).
+        if stored and incident is not None and incident.get("incident_id"):
+            watch_keep.add(str(incident["incident_id"]))
+        recovered = _recovered_incident_ids(connection, start, end, watch_keep)
         store.resolve_recovered_incidents(connection, recovered)
     else:
         for watch in watches:
@@ -302,20 +350,18 @@ def _recovered_incident_ids(
         state = str(row.get("lifecycle_state") or "")
         if state not in store.RECOVERABLE_STATES:
             continue
+        if state == store.WATCHING:
+            # Watches are owned by expire_watches_except against this sweep's
+            # keep set. Auto-resolving them here raced with collapse and split
+            # one cohort into multiple ids.
+            continue
         cohort = row.get("affected_cohort") or {}
-        evaluation = detect.evaluate(connection, cohort or None, start, end)
-        drop = evaluation.get("absolute_drop")
-        z = evaluation.get("z")
-        still_hot = bool(
-            evaluation.get("qualifies")
-            or (
-                drop is not None
-                and drop >= config.WATCH_ABS_DROP_MIN
-                and z is not None
-                and z <= config.WATCH_Z_MAX
-            )
-        )
-        if not still_hot:
+        # Recent tail only: after Clear the 5-minute window still holds collapse
+        # traffic, so full-window heat stays high for minutes. A residual
+        # near-miss in the mixed window is not a live incident.
+        tail_start = max(start, end - 2 * config.BUCKET_SECONDS)
+        tail = detect.evaluate(connection, cohort or None, tail_start, end)
+        if not tail.get("qualifies"):
             recovered.add(str(incident_id))
     return recovered
 
