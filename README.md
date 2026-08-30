@@ -85,6 +85,12 @@ Use `.venv/bin/python`, not system `python3`. Do not run `--mode anomaly`, syste
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the settled product architecture and current demo
 runtime.
 
+## Decision log
+
+[`docs/decision-log.md`](docs/decision-log.md) is deliverable 5: every major decision, the
+alternative rejected, why, and what it cost - indexed over the full ADRs in
+[`docs/adr/`](docs/adr/README.md) and the raw, timestamped [`DECISIONS.md`](DECISIONS.md).
+
 ## Pre-existing components
 
 This repository incorporates a preparation kit that was **authored before the event**, in its own

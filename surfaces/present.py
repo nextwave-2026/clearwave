@@ -239,7 +239,7 @@ def merchant_health(incidents: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """
     grouped: dict[tuple[Any, ...], list[Mapping[str, Any]]] = {}
     for incident in incidents:
-        if _is_watch(incident):
+        if _is_watch_record(incident):
             continue
         grouped.setdefault(_health_group_key(incident), []).append(incident)
     health = []
@@ -292,6 +292,19 @@ def _is_watch(incident: Mapping[str, Any]) -> bool:
     return _state(incident) == WATCHING_STATE
 
 
+def _is_watch_record(incident: Mapping[str, Any]) -> bool:
+    """Exclude an expired watch from incident cost history.
+
+    Expiring a watch changes its lifecycle state to ``resolved`` in place, but
+    keeps the detector's ``detection.watch`` explanation on the C3 record.
+    That record never had realised incident money or a source incident for the
+    history section. A promoted watch replaces that block when it becomes an
+    incident, so it remains eligible here with its measured money.
+    """
+    detection = _mapping(incident.get("detection"))
+    return _is_watch(incident) or isinstance(detection.get("watch"), Mapping)
+
+
 def _state(incident: Mapping[str, Any]) -> str:
     return str(incident.get("lifecycle_state", "")).strip().lower()
 
@@ -299,7 +312,10 @@ def _state(incident: Mapping[str, Any]) -> str:
 def _narrative_available(investigation: Mapping[str, Any] | None) -> bool:
     if investigation is None:
         return False
-    return investigation.get("outcome") != "agent_unavailable"
+    outcome = investigation.get("outcome")
+    if not outcome:
+        return False
+    return outcome != "agent_unavailable"
 
 
 def _result_body(investigation: Mapping[str, Any] | None) -> dict[str, Any] | None:

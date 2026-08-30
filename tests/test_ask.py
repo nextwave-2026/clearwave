@@ -57,6 +57,17 @@ EMPTY = {
 }
 
 
+#: A store that has observed nothing: every call runs cleanly and returns no
+#: observation. This is what keeps a zero-figure refusal reachable.
+NOTHING_OBSERVED = {
+    "metric_series": {
+        "as_of": "2026-08-30T12:00:00Z",
+        "points": [],
+        "watermark": "2026-08-30T12:00:00Z",
+    },
+}
+
+
 def gateway_for(responses: dict[str, Any] | None = None) -> EvidenceGateway:
     table = MEASURED if responses is None else responses
     return EvidenceGateway(
@@ -158,21 +169,35 @@ class AnswerableQuestionTests(unittest.TestCase):
 
 class HonestRefusalTests(unittest.TestCase):
     def test_a_question_the_tools_cannot_answer_is_refused_without_inventing_a_figure(self):
+        """It still refuses - and now still shows what it did measure.
+
+        The orientation measured platform conversion over the window, so the
+        card is not empty. What it must never do is turn that into an answer:
+        the outcome stays `insufficient_evidence`, the wording still says it
+        cannot answer, and every figure is copied from a query that ran.
+        """
         gateway = gateway_for()
-        client = ScriptedClient(
-            NO_CALLS,
-            answer_turn(
+
+        def final(client):
+            return answer_turn(
                 {
                     "answer": (
                         "I cannot answer that. Nothing here is forecast; the store only measures "
                         "what has already happened."
                     ),
-                    "figures": [],
+                    "figures": [
+                        {
+                            "label": "platform approval conversion, measured",
+                            "value": "0.61",
+                            **cited(gateway, "metric_series"),
+                        }
+                    ],
                     "missing_evidence": ["A forecast of conversion, which no tool produces."],
                     "outcome": "insufficient_evidence",
                 }
-            ),
-        )
+            )
+
+        client = ScriptedClient(NO_CALLS, final)
         result = ask(
             "what will conversion be tomorrow?",
             agent=AskAgent(client, timeout_seconds=5),
@@ -180,8 +205,9 @@ class HonestRefusalTests(unittest.TestCase):
         )
 
         self.assertEqual(result["outcome"], "insufficient_evidence")
-        self.assertEqual(result["figures"], [])
         self.assertTrue(result["missing_evidence"])
+        self.assertIn("cannot answer", result["answer"])
+        self.assertTrue(gateway.verify_citation(result["figures"][0]["query_id"]))
 
     def test_a_cohort_with_no_data_answers_not_observed_rather_than_borrowing(self):
         gateway = gateway_for(EMPTY)
@@ -215,6 +241,75 @@ class HonestRefusalTests(unittest.TestCase):
         self.assertIn("no observed", result["answer"])
         self.assertTrue(gateway.verify_citation(result["figures"][0]["query_id"]))
 
+    def test_a_refusal_that_measured_something_must_still_say_what(self):
+        """The defect this rule exists for.
+
+        A judge asked what revenue was compromised and got "not answerable"
+        on a card with nothing on it, while the board beside it displayed
+        gmv_at_risk for the same window. One screen, two answers. A card that
+        reached the store must show what the store said, even when it cannot
+        settle the question that was asked.
+        """
+        gateway = gateway_for()
+        refusal = {
+            "answer": "I cannot answer that.",
+            "figures": [],
+            "missing_evidence": ["An incident id."],
+            "outcome": "insufficient_evidence",
+        }
+        client = ScriptedClient(
+            tool_turn("cohort_metrics", {"cohort": {}}),
+            NO_CALLS,
+            answer_turn(refusal),
+        )
+        result = ask("how much revenue?", agent=AskAgent(client, timeout_seconds=5), gateway=gateway)
+
+        self.assertEqual(result["outcome"], "insufficient_evidence")
+        self.assertIn("must still list in figures", result["reason"])
+
+    def test_an_honest_refusal_stays_reachable_when_nothing_came_back(self):
+        """Removing empty cards must not remove the honest refusal.
+
+        `docs/challenge.md` scores admitting the evidence is not enough. A
+        question where no call returned anything still refuses with no figures
+        at all - the rule above is conditional on something having been
+        measured, precisely so this stays possible.
+        """
+        gateway = gateway_for(NOTHING_OBSERVED)
+        client = ScriptedClient(
+            NO_CALLS,
+            answer_turn(
+                {
+                    "answer": "Nothing has been observed in this window, so there is nothing to answer from.",
+                    "figures": [],
+                    "missing_evidence": ["Any observed traffic in this window."],
+                    "outcome": "insufficient_evidence",
+                }
+            ),
+        )
+        result = ask("anything?", agent=AskAgent(client, timeout_seconds=5), gateway=gateway)
+
+        self.assertEqual(result["outcome"], "insufficient_evidence")
+        self.assertEqual(result["figures"], [])
+        self.assertNotIn("must still list in figures", result["reason"] or "")
+
+    def test_an_ambiguous_answer_that_measured_something_must_show_it_too(self):
+        gateway = gateway_for()
+        client = ScriptedClient(
+            tool_turn("cohort_metrics", {"cohort": {}}),
+            NO_CALLS,
+            answer_turn(
+                {
+                    "answer": "The evidence supports more than one explanation.",
+                    "figures": [],
+                    "missing_evidence": [],
+                    "outcome": "ambiguous",
+                }
+            ),
+        )
+        result = ask(QUESTION, agent=AskAgent(client, timeout_seconds=5), gateway=gateway)
+        self.assertIn("must still list in figures", result["reason"])
+
     def test_a_refusal_must_name_what_is_missing(self):
         gateway = gateway_for()
         client = ScriptedClient(
@@ -232,6 +327,116 @@ class HonestRefusalTests(unittest.TestCase):
 
         self.assertEqual(result["outcome"], "insufficient_evidence")
         self.assertIn("missing", result["reason"])
+
+
+class MoneyQuestionRoutingTests(unittest.TestCase):
+    """A money question must be able to reach the only money tool.
+
+    `financial_impact` takes a required `incident_id` and `drilldown` takes one
+    too; nothing in the surface produced one for a question with no merchant and
+    no incident. `incident_history` now answers store-wide, and the prompt says
+    to use it for exactly that.
+    """
+
+    def test_the_prompt_tells_the_model_how_to_reach_financial_impact(self):
+        from investigation.ask import ASK_SYSTEM_PROMPT, _TOOL_GUIDE
+
+        self.assertIn("financial_impact", ASK_SYSTEM_PROMPT)
+        self.assertIn("incident_history", ASK_SYSTEM_PROMPT)
+        self.assertIn("omit `merchant_id` entirely", _TOOL_GUIDE)
+        self.assertIn("incident_history {merchant_id?", _TOOL_GUIDE)
+
+    def test_the_prompt_still_forbids_answering_money_from_a_conversion_figure(self):
+        from investigation.ask import ASK_SYSTEM_PROMPT
+
+        self.assertIn("never derive money yourself", _tool_guide())
+        collapsed = " ".join(ASK_SYSTEM_PROMPT.split())
+        self.assertIn("Do not answer a money question from a conversion figure", collapsed)
+
+    def test_the_prompt_forbids_narrowing_financial_impact_to_the_ask_window(self):
+        """Two figures for one incident on one screen is the defect, restated.
+
+        `financial_impact` defaults to the incident's persisted detection
+        window - the figure the board displays. Handed the ask window instead
+        it measures a different interval and returns a different, equally
+        honest number, and the operator reads one on the card and another above
+        it. Both are measured; only one is the incident's own.
+        """
+        from investigation.ask import ASK_SYSTEM_PROMPT
+
+        collapsed = " ".join(ASK_SYSTEM_PROMPT.split())
+        self.assertIn("Call `financial_impact` with the `incident_id` alone and **no `window`**", collapsed)
+        self.assertIn("persisted detection window", collapsed)
+
+    def test_a_money_question_routes_history_then_financial_impact(self):
+        gateway = gateway_for(MONEY)
+
+        def final(client):
+            return answer_turn(
+                {
+                    "answer": "Estimated GMV at risk for the stored incident is 1648.72 USD.",
+                    "figures": [
+                        {
+                            "label": "GMV at risk",
+                            "value": "1648.72",
+                            **cited(gateway, "financial_impact"),
+                        }
+                    ],
+                    "missing_evidence": [],
+                    "outcome": "diagnosed",
+                }
+            )
+
+        client = ScriptedClient(
+            tool_turn("incident_history", {}),
+            tool_turn("financial_impact", {"incident_id": "inc-1"}),
+            NO_CALLS,
+            final,
+        )
+        result = ask(
+            "how much revenue was compromised?",
+            agent=AskAgent(client, timeout_seconds=5),
+            gateway=gateway,
+        )
+
+        self.assertEqual(result["outcome"], "diagnosed")
+        # After the opening orientation: history to find the id, then the money.
+        tools = [entry["tool"] for entry in result["citations"]]
+        self.assertEqual(tools, ["metric_series", "incident_history", "financial_impact"])
+        # The money is copied from the tool, and it verifies back to that call.
+        figure = result["figures"][0]
+        self.assertEqual(figure["value"], "1648.72")
+        self.assertEqual(figure["tool"], "financial_impact")
+        self.assertTrue(gateway.verify_citation(figure["query_id"]))
+
+
+def _tool_guide() -> str:
+    from investigation.ask import _TOOL_GUIDE
+
+    return _TOOL_GUIDE
+
+
+MONEY = {
+    "incident_history": {
+        "as_of": "2026-08-30T12:00:00Z",
+        "merchant_id": None,
+        "incidents": [
+            {
+                "incident_id": "inc-1",
+                "onset": "2026-08-30T11:00:00Z",
+                "lifecycle_state": "diagnosed",
+                "severity": "critical",
+                "cohort": {"provider": "provider-p2"},
+            }
+        ],
+        "recurrence": {"prior_matching_incidents": 1, "lookback_days": None, "pattern": "every stored incident, across all merchants and all dimensions"},
+    },
+    "financial_impact": {
+        "as_of": "2026-08-30T12:00:00Z",
+        "incident_id": "inc-1",
+        "gmv_at_risk": {"amount": 1648.72, "currency": "USD"},
+    },
+}
 
 
 class CitationValidationTests(unittest.TestCase):

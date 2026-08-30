@@ -347,8 +347,19 @@
     );
   }
 
+  function hasMerchantImpact(row) {
+    const financial = row && row.financial_impact;
+    const change = row && row.change;
+    return Boolean(
+      financial && typeof financial === "object" &&
+      financial.loss_per_hour && financial.gmv_at_risk &&
+      change && typeof change === "object" &&
+      typeof change.actual === "number" && typeof change.expected === "number"
+    );
+  }
+
   function renderMerchants(rows) {
-    const list = rows || [];
+    const list = (rows || []).filter(hasMerchantImpact);
     if (!list.length) {
       overviewMerchants.innerHTML = "";
       return;
@@ -653,19 +664,36 @@
     }
     const trail = askCitations(payload.citations, index);
     const missing = askMissing(payload.missing_evidence);
+    const figures = askFigures(payload.figures, index);
     const info = askStateFor(payload);
     if (info) {
+      // A limit is not an empty card. Whatever the engine did measure before it
+      // ran out of answer is shown here under the same heading and the same
+      // citations as on an answered card - a question that could not be settled
+      // still leaves a reader with what the store does say. Nothing extra is
+      // drawn: these are the engine's own asserted figures, and if it asserted
+      // none the block is absent rather than filled in from somewhere.
       return '<article class="ask-turn" data-turn="' + index + '">' + asked +
         '<div class="ask-card is-' + info.tone + '">' +
         "<h4>" + escapeHtml(info.title) + "</h4>" +
         '<p class="ask-lede">' + escapeHtml(info.lede) + "</p>" +
         (payload.answer ? '<p class="ask-detail">' + escapeHtml(payload.answer) + "</p>" : "") +
-        missing + trail + askAsOf(payload) + cited + "</div></article>";
+        askMeasured(payload.figures, index) + missing + trail + askAsOf(payload) + cited +
+        "</div></article>";
     }
     return '<article class="ask-turn" data-turn="' + index + '">' + asked +
       '<div class="ask-card is-answer">' +
       '<p class="ask-answer">' + escapeHtml(payload.answer || "The engine returned no wording for this answer.") + "</p>" +
-      askFigures(payload.figures, index) + trail + askAsOf(payload) + cited + "</div></article>";
+      figures + trail + askAsOf(payload) + cited + "</div></article>";
+  }
+
+  // The same figures, under a heading that says what they are on a card whose
+  // headline is a limit: not the answer, but what was measured on the way to
+  // finding out there was not one.
+  function askMeasured(figures, turn) {
+    const body = askFigures(figures, turn);
+    if (!body) return "";
+    return '<div class="ask-measured"><h5>What it did measure</h5>' + body + "</div>";
   }
 
   function askPendingHtml(question) {
