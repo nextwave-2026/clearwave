@@ -985,11 +985,45 @@ def cohorts_same_episode(
     left: dict[str, Any] | None,
     right: dict[str, Any] | None,
 ) -> bool:
-    """True when one cohort is the other, or a sharpening of it.
+    """True when two cohorts are slices of one underlying problem.
 
-    Localisation deepens as a drop grows. A watch on `{provider: adyen}` and a
-    later incident on `{country: CO, merchant_id: merchant-b, provider: adyen}`
-    are one episode, so they keep one record. Disjoint slices are not.
+    Localisation moves while a drop grows: it deepens, and it also *shifts*,
+    because which dimension separates best changes with the numbers. A watch on
+    `{provider: adyen}`, an incident on `{country: CO, merchant_id: merchant-b,
+    provider: adyen}` and, a sweep later, one on `{issuing_bank: Bancolombia,
+    merchant_id: merchant-b, provider: adyen}` are three readings of the same
+    outage - the root cohort they all agree on is `{merchant_id: merchant-b,
+    provider: adyen}` - and minting a row per reading is what turned one outage
+    into eight incidents and eight phone calls.
+
+    Containment alone cannot say that, and neither can plain agreement. The
+    rehearsal also reported `{issuing_bank: Bancolombia, merchant-b, adyen}`
+    and `{issuing_bank: Banco de Bogota, merchant-b, adyen}` - two *sibling*
+    values of one weak dimension, both degraded because their shared parent is.
+    They contain nothing of each other and they flatly disagree on the issuer,
+    yet they are one outage.
+
+    So the rule weighs the two readings against each other on the dimensions
+    they both name: they are one episode when they agree on at least one and
+    agree on at least as many as they conflict on. Containment is the case with
+    no conflict at all, so every sharpening still matches. Two issuers under one
+    degraded provider agree on the provider and conflict on the issuer, so they
+    collapse. A fault on another merchant *and* another provider conflicts on
+    two while agreeing on at most an incidental issuer or country, so it stays
+    its own incident - and two single-dimension cohorts that differ, `{provider:
+    adyen}` against `{provider: stripe}`, agree on nothing and never collapse.
+
+    The platform-wide cohort agrees with nothing: it names no dimension, and a
+    reading of everything is not evidence about any one slice.
+
+    Two bounds of this rule, stated rather than hidden. Two cohorts that agree
+    on one dimension, conflict on none and are otherwise unrelated - say
+    `{country: CO, provider: adyen}` and `{country: CO, merchant_id: mx-1}` -
+    are read as one episode. So are `{merchant-b, adyen}` and `{merchant-c,
+    adyen}`, which is right when adyen is the fault and wrong when two
+    merchants broke separately on one provider. Nothing in the cohorts
+    themselves separates those cases; doing so needs evidence this function is
+    not given, and the cost of guessing the other way is the eight-row queue.
     """
     first = dict(left or {})
     second = dict(right or {})
@@ -997,7 +1031,9 @@ def cohorts_same_episode(
         return True
     if not first or not second:
         return False
-    return _is_sharpening(first, second) or _is_sharpening(second, first)
+    shared = set(first) & set(second)
+    agreed = sum(first[dimension] == second[dimension] for dimension in shared)
+    return agreed >= 1 and agreed >= len(shared) - agreed
 
 
 def _is_sharpening(general: dict[str, Any], specific: dict[str, Any]) -> bool:

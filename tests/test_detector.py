@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from detector import cli, config, detect, metrics, schema, store  # noqa: E402
+from detector import cli, config, daemon, detect, metrics, schema, store  # noqa: E402
 from tests import synthetic  # noqa: E402
 
 
@@ -955,6 +955,415 @@ class WatchTests(unittest.TestCase):
         hook(None)
         self.assertEqual(len(sink), 1, "the interval has not elapsed again")
 
+
+class LiveIncidentIsReMeasuredTests(unittest.TestCase):
+    """A row a judge is already looking at keeps telling the truth.
+
+    Measured on a full rehearsal before this: the judge pressed Collapse, the
+    detector's own sweeps logged `critical` at 2.35% conversion, and the board
+    went on reading 52.4% for the same cohort. `save_incident` inserted or
+    ignored, then updated only `WHERE lifecycle_state = 'watching'`, so once a
+    row was `detected` no later sweep could rewrite its severity, its
+    conversion or its money. In a 39-minute run nothing was ever stored
+    `critical`.
+    """
+
+    # A mild stage that already clears the detection floors, so the row is
+    # `detected` before the collapse arrives and the second reading has to
+    # rewrite an existing row rather than create one. Sixty payments a minute
+    # at 0.72 is the shape the live demo produced: `high`, then `critical`.
+    ESCALATING = dict(per_minute=30, mild_rate=0.72)
+
+    def _sweep(self, connection):
+        return cli._sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
+
+    def _live(self, connection):
+        return [
+            row
+            for row in store.list_incidents(connection)
+            if row["lifecycle_state"] != store.RESOLVED
+        ]
+
+    def _escalated(self):
+        """A store whose incident has been detected `high` and then deepened."""
+        connection, _, _ = loaded(
+            synthetic.two_stage_deviation_mild_only(**self.ESCALATING)
+        )
+        first = self._sweep(connection)
+        self.assertEqual(first["incident"]["severity"], "high")
+        store.ingest(connection, synthetic.two_stage_deviation(**self.ESCALATING))
+        return connection, first["incident"]["incident_id"]
+
+    def test_a_deepening_fault_rewrites_the_row_the_board_is_showing(self):
+        connection, incident_id = self._escalated()
+        before = store.load_incident(connection, incident_id)
+        second = self._sweep(connection)
+
+        self.assertEqual(second["incident"]["incident_id"], incident_id, "same row")
+        self.assertEqual(second["incident"]["severity"], "critical")
+        after = store.load_incident(connection, incident_id)
+        self.assertEqual(after["severity"], "critical", "the store must carry the new reading")
+        self.assertLess(
+            after["change"]["actual"],
+            before["change"]["actual"],
+            "conversion must fall on the stored record, not only in the sweep log",
+        )
+        self.assertGreater(
+            after["financial_impact"]["loss_per_hour"]["amount"],
+            before["financial_impact"]["loss_per_hour"]["amount"],
+        )
+        self.assertGreater(
+            after["detection"]["severity_score"], before["detection"]["severity_score"]
+        )
+        self.assertGreaterEqual(
+            _epoch(after["persistence"]["last_observed_at"]),
+            _epoch(before["persistence"]["last_observed_at"]),
+        )
+        self.assertEqual(len(self._live(connection)), 1, "one outage, one record")
+
+    def test_critical_reaches_the_store_and_the_read_api(self):
+        """The beat the pitch is built on, end to end through the query path."""
+        connection, incident_id = self._escalated()
+        self._sweep(connection)
+        listed = {row["incident_id"]: row for row in store.list_incidents(connection)}
+        self.assertEqual(listed[incident_id]["severity"], "critical")
+        self.assertEqual(
+            connection.execute(
+                "SELECT severity FROM incident WHERE incident_id = ?", (incident_id,)
+            ).fetchone()["severity"],
+            "critical",
+            "the indexed column the dashboard sorts on must move too",
+        )
+
+    def _easing(self, connection, rate):
+        """Append traffic on the same cohort at a less-bad conversion rate."""
+        tail = synthetic.two_stage_deviation(
+            minutes=96, per_minute=30, mild_rate=rate, collapse_minute=10**6, seed=99
+        )
+        cutoff = (synthetic.BASE + timedelta(minutes=88)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        store.ingest(connection, [event for event in tail if event["occurred_at"] >= cutoff])
+
+    def test_the_board_moves_within_one_daemon_sweep_of_the_collapse(self):
+        """The delay a judge sees is the sweep interval, not minutes.
+
+        The rehearsal that prompted this measured 8 minutes 20 seconds from the
+        Collapse click to the first new row, and it was still `high`. Driven
+        through the daemon's own batch hook at its own default interval, the
+        stored row must carry the new reading after exactly one sweep.
+        """
+        connection, incident_id = self._escalated()
+        now = [0.0]
+        sink: list = []
+        hook = cli._periodic_sweeper(
+            connection, daemon.DEFAULT_DETECT_EVERY_SECONDS, sink, clock=lambda: now[0]
+        )
+        hook(None)
+        self.assertEqual(sink, [], "not due yet")
+        self.assertEqual(store.load_incident(connection, incident_id)["severity"], "high")
+
+        now[0] = daemon.DEFAULT_DETECT_EVERY_SECONDS + 1
+        hook(None)
+        self.assertEqual(len(sink), 1, "one sweep, not several")
+        self.assertEqual(store.load_incident(connection, incident_id)["severity"], "critical")
+
+    def test_an_easing_incident_falls_back_down_the_same_way(self):
+        """The write is symmetric: a lower reading lands as readily as a higher."""
+        connection, incident_id = self._escalated()
+        self._sweep(connection)
+        self.assertEqual(store.load_incident(connection, incident_id)["severity"], "critical")
+
+        self._easing(connection, 0.60)
+        eased = self._sweep(connection)["incident"]
+        self.assertEqual(eased["incident_id"], incident_id, "still the same episode")
+
+        row = store.load_incident(connection, incident_id)
+        self.assertEqual(
+            row["lifecycle_state"], "detected", "a recovery is not a lifecycle move"
+        )
+        self.assertLess(
+            detect.SEVERITY_ORDER.index(row["severity"]),
+            detect.SEVERITY_ORDER.index("critical"),
+            "a row that can only ever get worse is a board that lies",
+        )
+        self.assertGreater(row["change"]["actual"], 0.34, "conversion recovered on the record")
+        self.assertEqual(len(self._live(connection)), 1)
+
+    def test_a_cohort_the_sweep_no_longer_reports_keeps_its_last_reading(self):
+        """The limit of re-measurement, asserted rather than assumed.
+
+        Re-measuring is something a *reading* does. When a fault clears
+        entirely the detector reports nothing for that cohort - correctly, it
+        is not an incident any more - so there is no reading to store and the
+        row keeps what it last said. Closing it is a lifecycle move and belongs
+        to whoever owns the state, not to detection.
+        """
+        connection, incident_id = self._escalated()
+        self._sweep(connection)
+        recovered = []
+        for event in synthetic.healthy(minutes=12, per_minute=60):
+            shifted = dict(event)
+            stamp = datetime.strptime(event["occurred_at"], "%Y-%m-%dT%H:%M:%SZ")
+            shifted["occurred_at"] = (stamp + timedelta(minutes=88)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            shifted["payment_id"] = f"{event['payment_id']}-recovered"
+            shifted["attempt_id"] = f"{event['attempt_id']}-recovered"
+            recovered.append(shifted)
+        store.ingest(connection, recovered)
+
+        self.assertIsNone(self._sweep(connection)["incident"], "nothing left to report")
+        row = store.load_incident(connection, incident_id)
+        self.assertEqual(row["severity"], "critical")
+        self.assertEqual(row["lifecycle_state"], "detected")
+
+    def test_re_measuring_never_moves_a_state_its_owner_set(self):
+        """Being re-measured is not being re-opened."""
+        for state in ("investigating", "diagnosed", "acknowledged"):
+            with self.subTest(state=state):
+                connection, incident_id = self._escalated()
+                with connection:
+                    connection.execute(
+                        "UPDATE incident SET lifecycle_state = ? WHERE incident_id = ?",
+                        (state, incident_id),
+                    )
+                self._sweep(connection)
+                row = store.load_incident(connection, incident_id)
+                self.assertEqual(row["lifecycle_state"], state, "the handoff signal is not ours")
+                self.assertEqual(row["severity"], "critical", "but the measurement still moves")
+
+    def test_a_watching_row_still_upgrades_to_detected(self):
+        connection, _, _ = loaded(synthetic.two_stage_deviation_mild_only())
+        first = self._sweep(connection)
+        self.assertIsNone(first["incident"])
+        watch_id = first["watches"][0]["incident_id"]
+        self.assertEqual(
+            store.load_incident(connection, watch_id)["lifecycle_state"], store.WATCHING
+        )
+        store.ingest(connection, synthetic.two_stage_deviation())
+        second = self._sweep(connection)
+        self.assertEqual(second["incident"]["incident_id"], watch_id)
+        self.assertEqual(
+            store.load_incident(connection, watch_id)["lifecycle_state"], "detected"
+        )
+
+    def test_a_watch_write_can_never_pull_a_detected_row_back_to_watching(self):
+        connection, incident_id = self._escalated()
+        detected = store.load_incident(connection, incident_id)
+        self.assertFalse(
+            store.save_incident(connection, detected, lifecycle_state=store.WATCHING)
+        )
+        self.assertEqual(
+            store.load_incident(connection, incident_id)["lifecycle_state"], "detected"
+        )
+
+    def test_a_resolved_row_is_a_closed_episode_and_is_never_rewritten(self):
+        connection, incident_id = self._escalated()
+        before = store.load_incident(connection, incident_id)
+        store.expire_watches_except(connection, set())
+        with connection:
+            connection.execute(
+                "UPDATE incident SET lifecycle_state = ? WHERE incident_id = ?",
+                (store.RESOLVED, incident_id),
+            )
+        worse = dict(before)
+        worse["severity"] = "critical"
+        self.assertFalse(store.save_incident(connection, worse))
+        row = store.load_incident(connection, incident_id)
+        self.assertEqual(row["lifecycle_state"], store.RESOLVED)
+        self.assertEqual(row["severity"], before["severity"])
+
+    def test_a_mitigated_row_is_closed_too_and_is_never_rewritten(self):
+        """`surfaces/present.py` already calls `mitigated` inactive; so do we."""
+        connection, incident_id = self._escalated()
+        before = store.load_incident(connection, incident_id)
+        with connection:
+            connection.execute(
+                "UPDATE incident SET lifecycle_state = 'mitigated' WHERE incident_id = ?",
+                (incident_id,),
+            )
+        self._sweep(connection)
+        row = store.load_incident(connection, incident_id)
+        self.assertEqual(row["lifecycle_state"], "mitigated")
+        self.assertEqual(row["severity"], before["severity"])
+        self.assertNotIn(
+            incident_id,
+            {record["incident_id"] for record in store.live_incidents(connection)},
+            "a closed episode is not adoptable",
+        )
+
+    def test_a_fault_returning_after_the_episode_gap_is_a_second_incident(self):
+        connection, incident_id = self._escalated()
+        self._sweep(connection)
+        with connection:
+            connection.execute(
+                "UPDATE incident SET lifecycle_state = ? WHERE incident_id = ?",
+                (store.RESOLVED, incident_id),
+            )
+        returning = store.load_incident(connection, incident_id)
+        returning["onset"] = schema.iso_utc(_epoch(returning["onset"]) + 4 * 3600)
+        adopted = cli.adopt_watch_identity(connection, returning, cli.incident_id_for)
+        self.assertNotEqual(adopted, incident_id, "a closed episode is never resurrected")
+
+
+class OneOutageIsOneIncidentTests(unittest.TestCase):
+    """Adjacent slices of one fault are one record, not three to eight.
+
+    Measured on the same rehearsal: one merchant-b/adyen outage produced five
+    `high` incidents in the mild stage and eight by the end, on
+    `{CO, merchant-b, adyen}`, `{Bancolombia, merchant-b, adyen}`,
+    `{Banco de Bogota, merchant-b, adyen}` and `{merchant-b, card, adyen}` -
+    with two of them on the identical cohort key under different ids. The queue
+    read like a broken platform rather than one localised fault.
+    """
+
+    ROOT = {"merchant_id": "merchant-b", "provider": "adyen"}
+    SLICES = (
+        {"country": "CO", **ROOT},
+        {"issuing_bank": "Bancolombia", **ROOT},
+        {"issuing_bank": "Banco de Bogota", **ROOT},
+        {"payment_method": "card", **ROOT},
+    )
+
+    def test_every_slice_of_the_rehearsal_outage_is_one_episode(self):
+        for left in self.SLICES:
+            for right in self.SLICES:
+                with self.subTest(left=left, right=right):
+                    self.assertTrue(detect.cohorts_same_episode(left, right))
+            with self.subTest(left=left, right="root"):
+                self.assertTrue(detect.cohorts_same_episode(self.ROOT, left))
+                self.assertTrue(detect.cohorts_same_episode({"provider": "adyen"}, left))
+
+    def test_a_slice_that_disagrees_more_than_it_agrees_is_a_different_episode(self):
+        for other in (
+            {"country": "CO", "merchant_id": "merchant-c", "provider": "stripe"},
+            {"merchant_id": "merchant-c", "provider": "stripe"},
+            {"provider": "stripe"},
+            {"merchant_id": "merchant-c"},
+        ):
+            with self.subTest(other=other):
+                self.assertFalse(detect.cohorts_same_episode(self.SLICES[0], other))
+
+    def test_the_bound_of_the_rule_is_pinned_rather_than_left_to_be_discovered(self):
+        """Where collapsing is a deliberate choice, not a proven one.
+
+        A cohort that agrees on one dimension and conflicts on one is read as
+        one episode. `{merchant-b, adyen}` and `{merchant-c, adyen}` is right
+        when adyen is the fault and wrong when two merchants broke separately
+        on one provider, and nothing in the cohorts says which. It is pinned
+        here so a later change to the rule has to argue with this line.
+        """
+        self.assertTrue(
+            detect.cohorts_same_episode(self.ROOT, {"merchant_id": "merchant-c", "provider": "adyen"})
+        )
+        self.assertTrue(
+            detect.cohorts_same_episode(
+                {"country": "CO", "provider": "adyen"},
+                {"country": "CO", "merchant_id": "mx-1"},
+            )
+        )
+
+    def test_the_platform_wide_cohort_is_evidence_about_no_slice(self):
+        self.assertFalse(detect.cohorts_same_episode({}, self.ROOT))
+        self.assertFalse(detect.cohorts_same_episode(self.ROOT, {}))
+
+    def test_a_localisation_that_shifts_keeps_one_row(self):
+        """The live shape: the reported cohort deepens and moves between sweeps."""
+        events = synthetic.two_stage_deviation(per_minute=30, mild_rate=0.72)
+        by_minute: dict[str, list] = {}
+        for event in events:
+            by_minute.setdefault(event["occurred_at"], []).append(event)
+        connection = store.connect(":memory:")
+        _OPEN.append(connection)
+
+        cohorts, identifiers = [], []
+        for stamp in sorted(by_minute):
+            store.ingest(connection, by_minute[stamp])
+            incident = cli._sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)[
+                "incident"
+            ]
+            if incident is None or not incident["affected_cohort"]:
+                continue
+            cohorts.append(metrics.cohort_key(incident["affected_cohort"]))
+            identifiers.append(incident["incident_id"])
+
+        self.assertGreater(
+            len(set(cohorts)), 1, "this fixture must actually move its localisation"
+        )
+        self.assertEqual(
+            len(set(identifiers)), 1, "one outage keeps one identifier while it moves"
+        )
+        localised = [
+            row
+            for row in store.list_incidents(connection)
+            if row["lifecycle_state"] != store.RESOLVED and row["affected_cohort"]
+        ]
+        self.assertEqual(len(localised), 1)
+        self.assertEqual(localised[0]["severity"], "critical")
+
+    def test_two_live_rows_can_never_share_one_cohort_key(self):
+        connection, _, _ = loaded(synthetic.two_stage_deviation(per_minute=30, mild_rate=0.72))
+        first = cli._sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)["incident"]
+        # An onset walk is what used to mint the second id on an identical
+        # cohort, and a claimed row is what used to drop out of the match.
+        with connection:
+            connection.execute(
+                "UPDATE incident SET lifecycle_state = 'investigating' WHERE incident_id = ?",
+                (first["incident_id"],),
+            )
+        walked = dict(first)
+        walked["onset"] = schema.iso_utc(_epoch(first["onset"]) + config.BUCKET_SECONDS)
+        self.assertEqual(
+            cli.adopt_watch_identity(connection, walked, cli.incident_id_for),
+            first["incident_id"],
+        )
+
+    def test_two_independent_faults_stay_two_incidents(self):
+        """The bound on collapsing: a second real fault must not disappear."""
+        records = []
+        for merchant, provider in (
+            ("merchant-a", "provider-p2"),
+            ("merchant-b", "provider-p3"),
+        ):
+            alone, _, _ = loaded(synthetic.single_fault(merchant, provider))
+            incident = cli._sweep(alone, config.DETECT_WINDOW_BUCKETS, persist=False)[
+                "incident"
+            ]
+            self.assertIsNotNone(incident, f"{merchant}/{provider} produced no incident")
+            self.assertEqual(incident["affected_cohort"]["merchant_id"], merchant)
+            self.assertEqual(incident["affected_cohort"]["provider"], provider)
+            records.append(incident)
+
+        self.assertFalse(
+            detect.cohorts_same_episode(*(r["affected_cohort"] for r in records)),
+            "different merchant and different provider is a different fault",
+        )
+
+        connection = store.connect(":memory:")
+        _OPEN.append(connection)
+        taken: set = set()
+        for record in records:
+            record["incident_id"] = cli.adopt_watch_identity(
+                connection, record, cli.incident_id_for, taken
+            )
+            taken.add(record["incident_id"])
+            self.assertTrue(store.save_incident(connection, record))
+
+        rows = store.list_incidents(connection)
+        self.assertEqual(len(rows), 2, "two faults, two incidents")
+        self.assertEqual(len({row["incident_id"] for row in rows}), 2)
+        self.assertEqual(
+            {metrics.cohort_key(row["affected_cohort"]) for row in rows},
+            {metrics.cohort_key(record["affected_cohort"]) for record in records},
+        )
+
+    def test_no_two_readings_in_one_sweep_land_on_one_identifier(self):
+        connection, sweep = (
+            lambda c: (c, cli._sweep(c, config.DETECT_WINDOW_BUCKETS, persist=True))
+        )(loaded(synthetic.two_stage_deviation_mild_only())[0])
+        seen = [record["incident_id"] for record in sweep["watches"]]
+        if sweep["incident"] is not None:
+            seen.append(sweep["incident"]["incident_id"])
+        self.assertEqual(len(seen), len(set(seen)))
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

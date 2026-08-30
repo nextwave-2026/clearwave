@@ -89,6 +89,38 @@ what changed and its business priority, not why it changed.
 - `lifecycle_state` is one of `watching`, `detected`, `investigating`, `acknowledged`,
   `mitigated`, or `resolved`.
 
+#### A record is the current reading, not the first one
+
+An incident record describes something happening **now**, so while the episode is open every later
+sweep of the same cohort rewrites it. Rewritten are the *measurement* fields - `severity`,
+`detection.severity_score` and the rest of the `detection` block, `change`, `financial_impact`,
+`blast_radius`, `persistence`, `affected_cohort` and `onset` - on the identifier the board is
+already showing. A fault that deepens says so on that row; a fault that eases falls back down the
+same way. A consumer must not assume any of these figures is stable for the life of the record;
+`persistence.last_observed_at` says how recent the reading is.
+
+`lifecycle_state` is the one field the detector does **not** own, and re-measurement never moves it:
+
+- a row still `watching` is upgraded to `detected` when the floors pass - that upgrade is the whole
+  reason the warning and the incident share one identifier - and a watch write leaves it `watching`;
+- a row that has left `watching` keeps exactly the state its owner set, however far its numbers
+  move. Being re-measured is not being re-opened, and `detected` stays the handoff signal to C4;
+- a watch write can never pull a row that has left `watching` back into it;
+- a row in a closed state - `resolved` or `mitigated`, the pair `surfaces/present.py` already calls
+  inactive - is never rewritten at all, so a fault that returns later is a second incident rather
+  than a resurrection of the first on a row nobody is watching.
+
+Because severity is now a current reading, it can cross a band boundary in both directions on one
+row as the fault moves. A consumer that fires on a band - C5's escalation - must key on the
+transition it has already acted on, not merely on the value it reads.
+
+Adjacent slices of one fault are one record. Two readings are the same episode when the cohort
+dimensions they both name agree on at least one and agree on at least as many as they conflict on
+(`detect.cohorts_same_episode`), so a sharpening, a shifted localisation, and two sibling issuers
+under one degraded provider all keep the first identifier. A fault that conflicts on more than it
+agrees on - another merchant *and* another provider - is its own incident. The platform-wide cohort
+names no dimension and matches nothing.
+
 #### `watching`
 
 A watch is a developing deviation that has **not** crossed the detection floors. It is carried on

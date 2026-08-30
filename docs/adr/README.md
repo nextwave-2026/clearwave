@@ -39,6 +39,7 @@ The layer they describe is documented in [detection-plane.md](../detection-plane
 - [0021 - The canonical model closes the decline vocabulary and preserves the raw code](0021-canonical-vocabulary-with-preserved-raw-code.md)
 - [0023 - Severity is relative to the merchant, and recurrence may promote past the money ceiling](0023-severity-is-relative-to-the-merchant-and-promoted-by-recurrence.md) - supersedes ADR 0016
 - [0024 - Leading indicators warn early, and nothing is predicted](0024-leading-indicators-warn-early-without-prediction.md) - claim-only-detected property superseded by ADR 0025
+- [0026 - An incident record is the current reading, not the first one](0026-an-incident-record-is-the-current-reading.md)
 
 How this plane behaves at Yuno's real volume, and the two changes that would be needed, is in
 [scaling.md](../scaling.md).

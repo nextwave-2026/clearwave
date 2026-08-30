@@ -121,38 +121,64 @@ def incident_id_for(incident: dict[str, Any]) -> str:
     return f"inc-{incident['onset'][:10]}-{digest[:8]}"
 
 
-def adopt_watch_identity(connection, record: dict[str, Any], identify) -> str:
-    """Keep the first-watch id when the picture sharpens or onset walks.
+def _reference_epoch(record: dict[str, Any]) -> int:
+    """When this reading says the cohort was last seen, in epoch seconds."""
+    last_seen = (record.get("persistence") or {}).get("last_observed_at")
+    stamp = last_seen or record.get("onset")
+    return int(schema.parse_timestamp(stamp).timestamp())
+
+
+def adopt_watch_identity(
+    connection,
+    record: dict[str, Any],
+    identify,
+    taken: set[str] | None = None,
+) -> str:
+    """Keep one identifier for one episode, however its localisation moves.
 
     The hash of onset-plus-cohort is the right identifier for a brand-new row.
-    It is the wrong identifier for the next sweep of the same episode: onset
+    It is the wrong identifier for the next reading of the same episode: onset
     drifts as the trailing window eats the incident, and localisation deepens
-    as the drop grows, so hashing again mints a second row. A watching row
-    whose cohort is this one, or a sharpening of it, is the same episode -
-    pin the original id and the original onset so the warning and the incident
-    are one record a judge can point at.
+    and shifts as the drop grows, so hashing again mints a second row for one
+    outage. An open episode whose cohort agrees with this one - see
+    `detect.cohorts_same_episode` - is that same episode: pin its identifier
+    and its onset so the warning, the incident and every later reading are one
+    record a judge can point at, and so `store.save_incident` re-measures that
+    row instead of adding a neighbour to the queue.
+
+    Three bounds keep this from swallowing things it should not. Only episodes
+    still live are adopted, so a `resolved` row is never resurrected. An
+    identifier already claimed by another reading in this same sweep is never
+    handed out twice. And a *neighbouring* cohort - one that agrees without
+    being the same key - is only adopted when the episode was last measured
+    within `RECURRENCE_EPISODE_GAP_SECONDS`, the repository's existing
+    definition of one continuous episode, so a slice that degraded this morning
+    and recovered does not absorb tonight's outage.
+
+    That recency bound deliberately does NOT apply to an exact cohort-key
+    match. A live row already IS this cohort's record; minting a second id for
+    it would put two open rows on one cohort key in the queue, which is the
+    duplicate a judge sees. An exact match is therefore always adopted, and
+    preferred over a merely agreeing one when both are present.
     """
     cohort = record.get("affected_cohort") or {}
-    # Reuse any live episode, not only a watch. Once the row has been
-    # detected, a later sweep with a walked onset used to hash a second id
-    # because the match looked only at `watching`. Resolved rows are a prior
-    # episode and must not be reused.
-    live_states = {
-        store.WATCHING,
-        "detected",
-        "investigating",
-        "diagnosed",
-        "acknowledged",
-    }
-    matches = [
-        existing
-        for existing in store.list_incidents(connection)
-        if existing.get("lifecycle_state") in live_states
-        and detect.cohorts_same_episode(existing.get("affected_cohort"), cohort)
-    ]
+    key = metrics.cohort_key(cohort)
+    since = _reference_epoch(record) - config.RECURRENCE_EPISODE_GAP_SECONDS
+    exact: list[dict[str, Any]] = []
+    agreeing: list[dict[str, Any]] = []
+    for existing in store.live_incidents(connection):
+        if taken is not None and existing.get("incident_id") in taken:
+            continue
+        existing_cohort = existing.get("affected_cohort") or {}
+        if metrics.cohort_key(existing_cohort) == key:
+            exact.append(existing)
+        elif _reference_epoch(existing) >= since and detect.cohorts_same_episode(
+            existing_cohort, cohort
+        ):
+            agreeing.append(existing)
+    matches = exact or agreeing
     if not matches:
         return identify(record)
-    matches.sort(key=lambda item: (item.get("onset") or "", item.get("incident_id") or ""))
     chosen = matches[0]
     record["onset"] = chosen["onset"]
     return chosen["incident_id"]
@@ -228,11 +254,15 @@ def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
     # One aggregate for the whole sweep rather than one per candidate cohort.
     merchant_normals = detect.merchant_normal_hourly_value(connection)
     incident = detect.build_incident(connection, start, end, merchant_normals=merchant_normals)
+    # No two readings in one sweep may land on one identifier: the first to
+    # claim an open episode keeps it, and the rest are their own records.
+    taken: set[str] = set()
     stored = False
     if incident is not None:
         incident["incident_id"] = adopt_watch_identity(
-            connection, incident, incident_id_for
+            connection, incident, incident_id_for, taken
         )
+        taken.add(incident["incident_id"])
         if persist:
             # lifecycle_state 'detected' is the sole handoff signal to L4
             # (DECISIONS.md, 2026-08-29T19:43Z), so detection writes it durably
@@ -253,19 +283,16 @@ def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
     keep_ids: set[str] = set()
     if incident is not None:
         keep_ids.add(incident["incident_id"])
-    if persist:
-        for watch in watches:
-            watch["incident_id"] = adopt_watch_identity(
-                connection, watch, incident_id_for
-            )
+    for watch in watches:
+        watch["incident_id"] = adopt_watch_identity(
+            connection, watch, incident_id_for, taken
+        )
+        taken.add(watch["incident_id"])
+        if persist:
             store.save_incident(connection, watch, lifecycle_state=store.WATCHING)
             keep_ids.add(watch["incident_id"])
+    if persist:
         store.expire_watches_except(connection, keep_ids)
-    else:
-        for watch in watches:
-            watch["incident_id"] = adopt_watch_identity(
-                connection, watch, incident_id_for
-            )
 
     return {
         "incident": incident,
