@@ -136,6 +136,7 @@ Consumer operator detail: `docs/live-ingestion.md`. The copy-pasteable demo runb
 Use `.venv/bin/python` on the host. Do not use `--mode anomaly` or system pip, and do not treat `make live`
 as a one-step demo: it is the consume step alone and starts neither Kafka nor a worker. Host
 `make surfaces-serve` still binds 127.0.0.1; the container binds 0.0.0.0 so the published port works.
+`make verify-demo` drives the whole demo chain against an isolated stack (ports 18082/19092/18081, compose project `clearwave-verify-demo`) and prints an honest PASS/FAIL per beat with measured evidence. It does not touch a live demo on 8082/9092. Exit is non-zero while any beat is red. Do not tune the checks to make it green.
 
 The dashboard's judge toggle is the one thing in `surfaces/` that writes: it calls `worker.inject` to
 publish a start or stop command to W1's control topic, changing a *running* worker with no restart. Never
