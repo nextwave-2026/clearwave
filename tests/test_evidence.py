@@ -366,6 +366,17 @@ class WireProtocolTests(unittest.TestCase):
         cls.directory.cleanup()
 
     def invoke(self, tool: str, payload: str, database: Path | None = None):
+        """
+        Invoke a tool subprocess with the specified JSON payload and database configuration.
+        
+        Parameters:
+            tool (str): Name of the tool script to execute.
+            payload (str): Input payload passed to the subprocess.
+            database (Path | None): Database path to use, or the helper's default database when omitted.
+        
+        Returns:
+            subprocess.CompletedProcess: The completed subprocess result.
+        """
         environment = dict(os.environ)
         environment[store.DB_ENV_VAR] = str(self.database if database is None else database)
         return subprocess.run(

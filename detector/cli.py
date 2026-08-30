@@ -223,6 +223,13 @@ def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the selected event ingestion, seeding, consumption, or detection command.
+    
+    Parameters:
+        argv (list[str] | None): Command-line arguments to parse; uses the process arguments when omitted.
+    
+    Returns:
+        int: Exit status of the command."""
     parser = argparse.ArgumentParser(prog="detector", description=__doc__)
     parser.add_argument("--db", default=None, help="SQLite store path (default: $CLEARWAVE_DB)")
     sub = parser.add_subparsers(dest="command", required=True)

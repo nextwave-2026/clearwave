@@ -169,6 +169,15 @@ def _armed_worker_script(db_path: Path) -> str:
 
 class SignalShutdownTests(unittest.TestCase):
     def _start_armed_worker(self, db_path: Path) -> subprocess.Popen:
+        """
+        Start the armed worker subprocess and wait for it to signal readiness.
+        
+        Parameters:
+        	db_path (Path): Path to the database used by the worker.
+        
+        Returns:
+        	subprocess.Popen: The running worker process after signal handlers are armed.
+        """
         env = os.environ.copy()
         env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
         proc = subprocess.Popen(

@@ -519,6 +519,16 @@ class SignalShutdownTests(unittest.TestCase):
         return proc
 
     def _stop(self, proc: subprocess.Popen, signum: int, label: str) -> str:
+        """Stops a daemon process with the specified signal and returns its captured output.
+        
+        Parameters:
+            proc (subprocess.Popen): The daemon process to stop.
+            signum (int): The signal to send to the process.
+            label (str): A label used in timeout failure messages.
+        
+        Returns:
+            str: The process readiness line followed by its captured standard output.
+        """
         try:
             time.sleep(0.2)
             proc.send_signal(signum)

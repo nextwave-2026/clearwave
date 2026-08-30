@@ -60,12 +60,28 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _stop_server(httpd, thread) -> None:
+    """
+    Stop the HTTP server, wait for its serving thread to finish, and close its socket.
+    """
     httpd.shutdown()
     thread.join(timeout=5)
     httpd.server_close()
 
 
 def _incident(incident_id, severity, onset, merchant="merchant-a", **fields):
+    """
+    Build a representative incident record for tests.
+    
+    Parameters:
+    	incident_id: Identifier for the incident.
+    	severity: Incident severity.
+    	onset: Incident onset timestamp.
+    	merchant: Merchant identifier for the affected cohort.
+    	**fields: Field overrides applied to the generated record.
+    
+    Returns:
+    	dict: A populated incident record.
+    """
     record = {
         "incident_id": incident_id,
         "affected_cohort": {
@@ -1560,6 +1576,16 @@ class ServerHardeningTests(unittest.TestCase):
         self.port = self.httpd.server_address[1]
 
     def _raw_post(self, path, body, content_length_header):
+        """Send a raw POST request to the test server and return its response.
+        
+        Parameters:
+        	path (str): The request path.
+        	body (bytes): The request body.
+        	content_length_header (str): The value of the Content-Length header.
+        
+        Returns:
+        	http.client.HTTPResponse: The server response.
+        """
         import http.client
 
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=2)
