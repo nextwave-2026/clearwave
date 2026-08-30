@@ -11,8 +11,8 @@ Owner: W2 (`andres`). The contract for what a record becomes is
 
 | Path | Command | Needs |
 |---|---|---|
-| **Live** | `python3 -m detector consume --detect` | Kafka, Schema Registry, a running W1 worker |
-| **Offline** | `python3 -m detector seed && python3 -m detector detect` | nothing but Python |
+| **Live** | `.venv/bin/python -m detector consume --detect` | Kafka, Schema Registry, a running W1 worker |
+| **Offline** | `.venv/bin/python -m detector seed && .venv/bin/python -m detector detect` | the project virtualenv |
 
 The offline path is the demo fallback and does not import a Kafka client at any point. If the
 broker will not start on the morning, it is still a complete demonstration of everything the
@@ -21,40 +21,61 @@ doors onto the same normalisation, the same store and the same detection sweep.
 
 ## Running it end to end from a clean checkout
 
+The copy-pasteable demo sequence, including the offline fallback that actually produces a diagnosed incident on the dashboard, is [`docs/demo-sequence.md`](demo-sequence.md). This page is the live consumer. Several commands that used to be written here fail; do not use them.
+
 ```sh
-# 1. Broker, Schema Registry and raul's three merchants (raul's stack).
+# 0. Dependencies. Do not use system pip; it fails with PEP 668 on Homebrew Python.
+make install
+
+# 1. Broker, Schema Registry and raul's three merchants. Use the docker compose
+#    subcommand; standalone docker-compose is not required. Wait for health.
 docker compose up -d kafka schema-registry \
   worker-merchant-a worker-merchant-b worker-merchant-c
 
-# 2. The venv, which is where confluent-kafka lands. Only the consumer needs
-#    it; nothing else in W2 does.
-make install
-
-# 3. Optional: W1's replayable history, streamed rather than held in memory.
+# 2. Optional: W1's replayable history, streamed rather than held in memory.
 export CLEARWAVE_DB=state/clearwave.db
-python3 -m detector ingest /path/to/backfill.jsonl --stream
+.venv/bin/python -m detector ingest /path/to/backfill.jsonl --stream
 
-# 4. Consume for a minute, then detect - one command, live traffic to a C3 record.
+# 3. Consume for a minute, then detect. This is live traffic into the store.
+#    It is not a guaranteed C3 record: healthy 60s traffic returns incident null.
+#    Inject first (below) if you want an incident to detect.
 .venv/bin/python -m detector consume --seconds 60 --detect
 ```
 
-`make e2e` is all four steps in one command (`make e2e BACKFILL=/path/to/backfill.jsonl`
-to include step 3). `make live` is step 4 alone, `make backfill BACKFILL=...` step 3 alone, and
-`make consume` reads until the topics go quiet and stops.
+`make e2e` is steps 1 and 3 in one command, and `make e2e BACKFILL=/path/to/backfill.jsonl`
+includes step 2. `make backfill BACKFILL=...` is step 2 alone; `make live` is step 3 alone -
+it starts neither Kafka nor a worker and does not guarantee an incident. `make consume` reads
+until the topics go quiet and stops. All of these run on `.venv`, which is what `make install`
+populates; only `seed` and `detect` stay on system `python3`, because the broker-free fallback
+needs nothing but the standard library.
 
-The workers run *healthy* traffic until something injects an incident into them. Two ways to do
-that, and neither restarts anything:
+Running a worker on the host instead of in the container works too, with two traps:
+`PYTHONUNBUFFERED=1` is required (the image sets it, a host command does not - an empty log is not
+a dead worker), and `--mode anomaly` does not exist.
 
-- **The dashboard.** `make surfaces-serve`, open http://127.0.0.1:8080, and use the judge toggle
-  in the masthead. On publishes a provider-scoped decline; off publishes the stop command. The
-  target it fires is named in `surfaces/inject.py` and returned in the API response.
-- **The command line.** `python3 -m worker.inject merchant-b --provider adyen --effect decline`,
-  and `python3 -m worker.inject merchant-b --stop` to clear it.
+```sh
+PYTHONUNBUFFERED=1 .venv/bin/python -m worker.worker merchant-a --interval-seconds 0.2
+```
 
-Both publish the same command to the same topic, because the dashboard calls `worker.inject`
-rather than reimplementing it. There is also `python3 -m worker.worker merchant-a --scenario ...`
-(see `worker/cli.py`) for starting a worker that is already running one of the named scenarios,
-but that is a start-up choice, not something you can toggle mid-demo.
+## Injecting an incident
+
+The workers run *healthy* traffic until something injects an incident into them. Two ways, and
+neither restarts anything:
+
+- **The dashboard.** `make surfaces-serve`, open http://127.0.0.1:8080, and use the judge toggle in
+  the masthead. On publishes a provider-scoped decline; off publishes the stop command. The target
+  it fires is named in `surfaces/inject.py` and returned in the API response.
+- **The command line.** `.venv/bin/python -m worker.inject merchant-b --provider adyen --effect
+  decline`, and `.venv/bin/python -m worker.inject merchant-b --stop` to clear it.
+
+Both publish the same command to the same topic, because the dashboard calls `worker.inject` rather
+than reimplementing it. **Inject only after the target worker is publishing.** Injecting first is
+silently lost: `incidents.control` starts from latest with a new consumer group, so a command sent
+before the worker subscribes is never seen.
+
+There is also `python3 -m worker.worker <merchant> --scenario ...` (see `worker/cli.py`) for
+starting a worker that is already running one of the named scenarios, but that is a start-up
+choice, not something you can toggle mid-demo.
 
 The consumer prints what it did. This is a real run, three merchants live, taken while the judge
 toggle was on:

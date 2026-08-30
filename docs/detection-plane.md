@@ -329,12 +329,13 @@ flowchart LR
     Norm -- refused --> DL
 ```
 
-`python3 -m detector consume --detect` is live traffic to a stored C3 record in one command.
-`python3 -m detector seed && python3 -m detector detect` is the same demonstration with no broker
-in the room, and it imports no Kafka client at any point - which is what makes it a real fallback
-rather than a promise. Offsets advance only after the store write is durable, and every event table
-is keyed on `event_id`, so at-least-once delivery is counted exactly once. The operator detail is in
-[`docs/live-ingestion.md`](live-ingestion.md).
+`.venv/bin/python -m detector consume --detect` is live traffic into the same store. It is not a
+guaranteed C3 record: a minute of healthy traffic stores events and returns `incident: null`.
+`.venv/bin/python -m detector seed && .venv/bin/python -m detector detect` is the broker-free
+fallback, and it imports no Kafka client at any point. The copy-pasteable demo sequence is
+[`docs/demo-sequence.md`](demo-sequence.md). Offsets advance only after the store write is durable,
+and every event table is keyed on `event_id`, so at-least-once delivery is counted exactly once.
+The consumer operator detail is in [`docs/live-ingestion.md`](live-ingestion.md).
 
 ## Current state and what is next
 

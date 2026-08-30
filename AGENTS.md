@@ -110,14 +110,18 @@ behaviour is specified in `docs/contracts/evidence-tools.md`.
 
 W2 also consumes W1's three live Kafka topics into that same store (`python3 -m detector consume --detect`).
 The live and file-based paths share one normalisation and one store; the file-based path imports no Kafka
-client and is the broker-free demo fallback. Operator detail: `docs/live-ingestion.md`, and `make e2e`
-runs the whole live chain.
+client and is the broker-free demo fallback. Consumer operator detail: `docs/live-ingestion.md`, and
+`make e2e` runs the whole live chain. The copy-pasteable demo runbook - offline stage path, live Kafka
+caveats, and commands that fail - is `docs/demo-sequence.md`. Use `.venv/bin/python`. Do not use
+`--mode anomaly` or system pip, and do not treat `make live` as a one-step demo: it is the consume
+step alone and starts neither Kafka nor a worker.
 
 The dashboard's judge toggle is the one thing in `surfaces/` that writes: it calls `worker.inject` to
 publish a start or stop command to W1's control topic, changing a *running* worker with no restart. Never
 reimplement that command shape and never let a scenario identifier cross it. What it fires is one named
 constant, `surfaces.inject.INJECTED_INCIDENT`. When the broker is unreachable it must say so rather than
-report a scenario that did not fire.
+report a scenario that did not fire. Inject only after the target worker is publishing - `incidents.control`
+starts from latest, so an earlier command is silently lost.
 
 ## Working conventions
 
