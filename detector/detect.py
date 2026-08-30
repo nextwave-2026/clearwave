@@ -1097,15 +1097,17 @@ def build_watches(
     # through. Different indicators may still name different cohorts, because
     # a slow provider and a routed-around one are two findings, not one.
     # A conversion near-miss already names that traffic: do not also warn on
-    # a slice that merely contains it (merchant-b timeout_share while adyen is
-    # the near-miss).
+    # an equal or broader slice of it (the provider watch, or the platform).
+    # Missing a dimension is not containment - `{country: CO}` is not a
+    # sharpening of `{provider: adyen}`, and suppressing it would hide an
+    # independent latency watch.
     for indicator, best in _INDICATOR_EXTREME.items():
         holders = [entry for entry in candidates if indicator in entry[-2]]
         if near_miss_cohort is not None:
             holders = [
                 entry
                 for entry in holders
-                if not _contains_formed_traffic(entry[0] or {}, near_miss_cohort or {})
+                if not _is_sharpening(entry[0] or {}, near_miss_cohort)
             ]
         if not holders:
             continue

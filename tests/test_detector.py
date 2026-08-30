@@ -772,6 +772,19 @@ class WatchTests(unittest.TestCase):
         self.assertEqual(adopted, watch["incident_id"])
         self.assertEqual(sharper["onset"], watch["onset"])
 
+    def test_a_disjoint_slice_is_not_treated_as_contained_by_a_near_miss(self):
+        near_miss = {"provider": "provider-p2"}
+        # The old containment check treated a missing dimension as contained.
+        self.assertTrue(detect._contains_formed_traffic({"country": "CO"}, near_miss))
+        self.assertFalse(detect._is_sharpening({"country": "CO"}, near_miss))
+        self.assertTrue(
+            detect._is_sharpening(
+                {"provider": "provider-p2"},
+                {"provider": "provider-p2", "country": "CO"},
+            )
+        )
+        self.assertTrue(detect._is_sharpening({"provider": "provider-p2"}, near_miss))
+
     def test_an_onset_walk_does_not_mint_a_second_id(self):
         connection, first = self._sweep(synthetic.two_stage_deviation_mild_only())
         watch = first["watches"][0]
