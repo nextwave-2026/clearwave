@@ -113,17 +113,15 @@
 
   // C4 narrative fields are objects (statement / explanation / action), not
   // strings. String(object) becomes "[object Object]" on the escalation view.
+  // Anything that is not a usable sentence, including an object whose known
+  // keys are present but empty, uses the fallback. Raw JSON is never shown.
   function c4FieldText(value, fallback) {
     if (value == null || value === "") return fallback;
     if (typeof value === "string") return value;
     if (typeof value === "object") {
-      if (typeof value.statement === "string" && value.statement) return value.statement;
-      if (typeof value.explanation === "string" && value.explanation) return value.explanation;
-      if (typeof value.action === "string" && value.action) return value.action;
-      try {
-        const rendered = JSON.stringify(value);
-        if (rendered) return rendered;
-      } catch (err) {}
+      if (typeof value.statement === "string" && value.statement.trim()) return value.statement;
+      if (typeof value.explanation === "string" && value.explanation.trim()) return value.explanation;
+      if (typeof value.action === "string" && value.action.trim()) return value.action;
       return fallback;
     }
     return String(value);
