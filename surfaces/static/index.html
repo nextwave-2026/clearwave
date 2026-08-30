@@ -43,6 +43,7 @@
       <button type="button" class="jump-link on" data-view="overview">Right now</button>
       <button type="button" class="jump-link" data-view="queue">Incident queue</button>
       <button type="button" class="jump-link" data-view="detail">Incident detail</button>
+      <button type="button" class="jump-link" data-view="escalation">Escalation</button>
       <button type="button" class="jump-link" data-view="evidence">Evidence trail</button>
     </div>
   </nav>
@@ -72,6 +73,15 @@
         <span class="who">Six questions a TAM should be able to answer without opening a warehouse.</span>
       </div>
       <div id="detail-board" class="detail-board"></div>
+    </section>
+
+    <section id="view-escalation" class="screen view" data-view="escalation" hidden>
+      <div class="screen-head">
+        <h2>Escalation</h2>
+        <span class="who">Severity routes. Confidence never does.</span>
+      </div>
+      <p class="screen-lede">Every card below is a stored <code>escalation_event</code> row. The binding table is read from the same function the escalator routes on, so the picture cannot drift from the behaviour. Nothing here is a control: the channels already fired.</p>
+      <div id="escalation-board" class="escalation-board"></div>
     </section>
 
     <section id="view-evidence" class="screen view" data-view="evidence" hidden>

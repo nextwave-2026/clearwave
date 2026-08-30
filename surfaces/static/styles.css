@@ -85,7 +85,7 @@ header.mast {
   display: flex;
   align-items: center;
   gap: 20px;
-  padding: 20px 0 18px;
+  padding-block: 20px 18px;
   flex-wrap: wrap;
 }
 
@@ -211,7 +211,7 @@ nav.jump {
   border-bottom: 1px solid var(--line);
 }
 
-.jump-in { display: flex; gap: 2px; overflow-x: auto; padding: 0; }
+.jump-in { display: flex; gap: 2px; overflow-x: auto; }
 
 .jump-link {
   padding: 13px 15px;
@@ -331,7 +331,10 @@ section.screen { padding: 46px 0 48px; }
 
 .badges { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 
-.fig { white-space: nowrap; display: inline-flex; align-items: baseline; gap: 3px; }
+/* Values must be allowed to wrap: a nowrap figure clipped long money and
+   timestamp values out of their own card. The cite dot stays beside the value. */
+.fig { display: inline; }
+.fig > button.cite { margin-left: 3px; vertical-align: middle; }
 
 button.cite {
   all: unset;
@@ -470,7 +473,8 @@ tbody td {
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr.rank-row { transition: background 0.14s ease-out; cursor: pointer; }
 tbody tr.rank-row:hover { background: var(--surface-2); }
-th.num, td.num { text-align: right; padding-right: 0; }
+th.num, td.num { text-align: right; padding-right: 18px; }
+table th:last-child, table td:last-child { padding-right: 0; }
 
 .cohort { font-size: 12.5px; color: var(--ink-2); }
 .cohort b { font-weight: 600; color: var(--ink); }
@@ -596,9 +600,11 @@ th.num, td.num { text-align: right; padding-right: 0; }
   letter-spacing: -0.02em;
   line-height: 1.2;
 }
+.readout dd { overflow-wrap: anywhere; }
 .readout dd small {
   display: block;
   font-size: 11px;
+  overflow-wrap: break-word;
   font-weight: 400;
   color: var(--ink-3);
   letter-spacing: 0;
@@ -610,7 +616,7 @@ th.num, td.num { text-align: right; padding-right: 0; }
 
 .kpis {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(238px, 1fr));
   gap: 12px;
 }
 
@@ -644,7 +650,7 @@ th.num, td.num { text-align: right; padding-right: 0; }
 }
 .kpi dd {
   margin: 0;
-  font-size: 30px;
+  font-size: clamp(20px, 1.75vw, 28px);
   font-weight: 600;
   letter-spacing: -0.035em;
   line-height: 1.02;
@@ -751,3 +757,201 @@ th.num, td.num { text-align: right; padding-right: 0; }
   letter-spacing: 0.09em;
   color: var(--ink-3);
 }
+
+/* ---------------------------------------------------------------- escalation
+   Component rules ported from the TAM mockup (surfaces/static/tam-dashboard.html).
+   The palette already crossed over; this is the component layer that had not. */
+
+figure.chart { margin: 0; }
+figure.chart figcaption { margin-top: 11px; font-size: 11.5px; color: var(--ink-3); }
+figure.chart .fc-top { margin: 0 0 10px; font-size: 11.5px; color: var(--ink-3); }
+.span-full { margin-top: 22px; }
+.panel svg { display: block; }
+.panel .foot { margin: 11px 0 0; font-size: 11.5px; color: var(--ink-3); }
+.panel .foot code {
+  background: var(--ground);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: "Geist Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--lilac-deep);
+}
+
+.of { font-size: 12px; font-weight: 400; color: var(--ink-3); letter-spacing: 0; }
+
+h3.sec {
+  margin: 26px 0 12px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.bindg {
+  font-family: "Geist Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+}
+
+.bind-h { fill: var(--ink-3); font-size: 9.5px; letter-spacing: 0.06em; }
+.bind-l { fill: var(--ink-2); }
+.bind-l.sev-critical { fill: var(--sev-critical); font-weight: 600; }
+.bind-l.sev-high { fill: var(--sev-high); }
+.bind-l.sev-medium { fill: var(--sev-medium); }
+.bind-l.sev-low { fill: var(--sev-low); }
+.bind-dot.off { fill: none; stroke: var(--line); stroke-width: 1.5; }
+.bind-dot.on.sev-critical { fill: var(--sev-critical); }
+.bind-dot.on.sev-high { fill: var(--sev-high); }
+.bind-dot.on.sev-medium { fill: var(--sev-medium); }
+.bind-dot.on.sev-low { fill: var(--sev-low); }
+.bind-here { fill-opacity: 0.09; }
+.bind-here.sev-critical { fill: var(--sev-critical); }
+.bind-here.sev-high { fill: var(--sev-high); }
+.bind-here.sev-medium { fill: var(--sev-medium); }
+.bind-here.sev-low { fill: var(--sev-low); }
+.bind-here-l { font-size: 9.5px; }
+.bind-here-l.sev-critical { fill: var(--sev-critical); }
+.bind-here-l.sev-high { fill: var(--sev-high); }
+.bind-here-l.sev-medium { fill: var(--sev-medium); }
+.bind-here-l.sev-low { fill: var(--sev-low); }
+
+.esc-grid { align-items: start; }
+
+.slackish {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: #0B0B0E;
+  overflow: hidden;
+}
+
+.slackish .bar {
+  padding: 8px 13px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 11.5px;
+  color: var(--ink-3);
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.slackish .msg { display: flex; gap: 11px; padding: 14px 13px; }
+.slackish .msg-body { min-width: 0; flex: 1; }
+.slackish .av {
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  background: var(--yuno-blue);
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+
+.slackish .av .avmark {
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  background:
+    radial-gradient(circle at 25% 25%, #fff 1.8px, transparent 2px),
+    radial-gradient(circle at 75% 25%, #fff 1.8px, transparent 2px),
+    radial-gradient(circle at 25% 75%, #fff 1.8px, transparent 2px),
+    radial-gradient(circle at 75% 75%, #fff 2.6px, transparent 3px);
+}
+
+.slackish .who { font-size: 12.5px; font-weight: 600; margin-bottom: 5px; color: var(--ink); }
+.slackish .who em {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ink-3);
+  background: var(--surface-3);
+  padding: 1.5px 5px;
+  border-radius: 3px;
+  margin-left: 6px;
+  letter-spacing: 0.03em;
+}
+
+.slackish .block { border-left: 3px solid var(--ink-3); padding-left: 12px; font-size: 12.5px; }
+.slackish .block.sev-critical { border-left-color: var(--sev-critical); }
+.slackish .block.sev-high { border-left-color: var(--sev-high); }
+.slackish .block.sev-medium { border-left-color: var(--sev-medium); }
+.slackish .block.sev-low { border-left-color: var(--sev-low); }
+.slackish .block p { margin: 0 0 7px; color: var(--ink-2); }
+.slackish .block p:first-child { color: var(--ink); }
+.slackish .block p:last-child { margin: 0; }
+.slackish .block b { color: var(--ink); }
+.slackish .ctx {
+  font-size: 11px;
+  color: var(--ink-3);
+  margin-top: 9px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.script {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--ground);
+  padding: 16px 17px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink);
+}
+
+.script p { margin: 0 0 11px; }
+.script p:last-child { margin: 0; }
+
+.calls { display: grid; gap: 8px; margin-top: 12px; }
+.call {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  padding: 9px 11px;
+  font-size: 12px;
+}
+
+.call.here { border-color: rgba(255, 77, 94, 0.42); background: #140609; }
+.call .sub { font-size: 10.5px; }
+
+.br { display: flex; flex-wrap: wrap; gap: 8px; }
+.br-i {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  padding: 8px 11px;
+  font-size: 10.5px;
+  color: var(--ink-3);
+  background: var(--surface);
+}
+
+.br-i b { font-size: 17px; font-weight: 600; color: var(--ink); letter-spacing: -0.02em; }
+.br-i em {
+  font-style: normal;
+  font-family: "Geist Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 9.5px;
+  color: var(--ink-3);
+}
+
+.merchants { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+
+@media (max-width: 720px) {
+  .slackish .msg { padding: 12px 11px; }
+  .br-i { flex: 1 1 44%; }
+}
+
+h3.sec .sec-id { text-transform: none; letter-spacing: 0; color: var(--ink-2); }
+
+/* The binding table is a legend, not a hero: let it keep its natural scale
+   instead of stretching one small SVG across a 1440px board. */
+figure.chart.binding { max-width: 760px; }
+
+/* `.mast-in` and `.jump-in` also carry `.wrap`, and a `padding` shorthand on them
+   overrode the wrap gutter: the masthead and the view nav sat flush against the
+   viewport edge while every other row was inset 28px. Both now set block padding
+   only, so the gutter survives. */
+.mast-right, .judge > * { min-width: 0; }
