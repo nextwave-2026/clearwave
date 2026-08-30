@@ -662,12 +662,20 @@
       // still leaves a reader with what the store does say. Nothing extra is
       // drawn: these are the engine's own asserted figures, and if it asserted
       // none the block is absent rather than filled in from somewhere.
+      // A limit that still measured something is not a dead end, and must not
+      // read as one: the card would otherwise headline "not answerable" and
+      // then print the number underneath it. The extra sentence is fixed copy
+      // about where to look, not a claim about any figure.
+      const measured = askMeasured(payload.figures, index);
+      const lede = measured
+        ? info.lede + " What it could measure for this window is below."
+        : info.lede;
       return '<article class="ask-turn" data-turn="' + index + '">' + asked +
         '<div class="ask-card is-' + info.tone + '">' +
         "<h4>" + escapeHtml(info.title) + "</h4>" +
-        '<p class="ask-lede">' + escapeHtml(info.lede) + "</p>" +
+        '<p class="ask-lede">' + escapeHtml(lede) + "</p>" +
         (payload.answer ? '<p class="ask-detail">' + escapeHtml(payload.answer) + "</p>" : "") +
-        askMeasured(payload.figures, index) + missing + trail + askAsOf(payload) + cited +
+        measured + missing + trail + askAsOf(payload) + cited +
         "</div></article>";
     }
     return '<article class="ask-turn" data-turn="' + index + '">' + asked +

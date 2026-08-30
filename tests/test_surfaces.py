@@ -2061,6 +2061,26 @@ class AskPanelPageTests(unittest.TestCase):
         self.assertRegex(self.css, r"\.ask-spin \{")
         self.assertIn('aria-live="polite"', self.html)
 
+    def test_a_card_that_measured_something_never_renders_as_a_dead_end(self):
+        """The captain's defect, held in the page.
+
+        A revenue question refused on an empty card while the board header
+        beside it showed gmv_at_risk for the same window. Every outcome now
+        renders the engine's own figures, and a limit that carries them says
+        where to look instead of reading as a dead end.
+        """
+        turn = self.js[self.js.index("function askTurnHtml"):self.js.index("function askPendingHtml")]
+        # Figures are drawn on the limit branch, not only on the answered one.
+        self.assertIn("askMeasured(payload.figures, index)", turn)
+        self.assertIn("What it did measure", self.js)
+        self.assertIn("What it could measure for this window is below.", turn)
+        self.assertRegex(self.css, r"\.ask-measured \{")
+        # And they are the engine's asserted figures: the page never lifts a
+        # value out of a citation payload to fill the block in.
+        measured = self.js[self.js.index("function askMeasured"):self.js.index("function askPendingHtml")]
+        self.assertIn("askFigures(figures, turn)", measured)
+        self.assertNotIn("citations", measured)
+
     def test_the_transcript_keeps_the_thread_and_each_answer_keeps_its_own_cites(self):
         self.assertIn("askTurns", self.js)
         # A turn's citations carry its index, so an old answer still cites the
