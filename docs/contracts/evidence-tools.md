@@ -230,21 +230,34 @@ A false result is valid and must still include the cross-tabulation.
 
 ## 8. `incident_history`
 
-**Purpose:** Return prior incidents for a merchant or filtered cohort so recurrence is visible.
+**Purpose:** Return prior incidents for a merchant, a filtered cohort, or the whole store, so
+recurrence is visible and a stored `incident_id` can be discovered.
 
 **Input:**
 
-- `merchant_id` (string, required).
+- `merchant_id` (string, optional) - omit it, or send `null`, to answer across every merchant.
+  A present but empty or non-string value is still refused as `invalid_input`: a caller that meant
+  to name a merchant and got it wrong must hear so rather than silently receive a store-wide answer.
 - `cohort` (object, optional) - additional filters.
 - `window` (object, optional) - lookback interval.
 
-**Output fields:** `merchant_id`, `cohort_filter`, `incidents` (each prior incident summary), and
-`recurrence` (matching count, lookback and pattern).
+**Output fields:** `merchant_id` (echoed, `null` when omitted), `cohort_filter`, `incidents` (each
+prior incident summary, carrying `incident_id`, `onset`, `lifecycle_state`, `severity` and `cohort`),
+and `recurrence` (matching count, lookback and pattern).
 
-**Example call:**
+Omitting `merchant_id` is the only route in this surface from "no cohort" to a stored `incident_id`,
+and therefore the only way a question scoped to all traffic can reach `drilldown` (section 9) or
+`financial_impact` (section 10), both of which require one. Naming a merchant behaves exactly as it
+did before this was added.
+
+**Example calls:**
 
 ```json
 {"merchant_id":"merchant-a","cohort":{"provider":"provider-p2","country":"CO"}}
+```
+
+```json
+{}
 ```
 
 **Example response:**

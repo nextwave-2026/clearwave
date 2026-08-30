@@ -249,6 +249,29 @@ def reclaim_expired_claims(
     return reclaimed
 
 
+def next_result_version(connection: sqlite3.Connection, incident_id: str) -> int:
+    """Return the version ``persist_result`` will allocate when version is omitted.
+
+    Live trail writes and the end-of-run write must share this number for one
+    run. Re-investigation therefore lands on a new version because a stored
+    result already occupies the previous one.
+    """
+    prepare(connection)
+    return _next_version(connection, incident_id)
+
+
+class InFlightInvestigation(dict):
+    """Live trail for a run that has not yet written a C4 result.
+
+    Falsy on purpose: ``surfaces.store.ensure_escalation`` treats any truthy
+    mapping as a completed diagnosis (``isinstance(result, Mapping) and
+    bool(result)``). A half-written run must not page Slack or the phone.
+    """
+
+    def __bool__(self) -> bool:
+        return False
+
+
 def append_trail_entry(
     connection: sqlite3.Connection,
     incident_id: str,
@@ -392,40 +415,49 @@ def read_result(
     incident_id: str,
     version: int | str | None = None,
 ) -> dict[str, Any] | None:
-    """Read one result, including all persisted trail entries in order."""
-    if version is None:
-        row = connection.execute(
-            "SELECT * FROM investigation_result "
-            "WHERE incident_id = ? ORDER BY result_version DESC LIMIT 1",
-            (incident_id,),
-        ).fetchone()
-    else:
+    """Read one result, including all persisted trail entries in order.
+
+    While a claim is held and no C4 row exists for the run in progress, this
+    returns the live trail for that run's version together with ``claimed_at``
+    as ``started_at``. The object is falsy so escalation cannot fire from it.
+    """
+    if version is not None:
         row = connection.execute(
             "SELECT * FROM investigation_result "
             "WHERE incident_id = ? AND result_version = ?",
             (incident_id, _version_number(version)),
         ).fetchone()
+        if row is None:
+            return None
+        return _result_from_row(connection, row)
+
+    claimed = connection.execute(
+        "SELECT claimed_at FROM investigation_claim WHERE incident_id = ?",
+        (incident_id,),
+    ).fetchone()
+    if claimed is not None:
+        result_version = _next_version(connection, incident_id)
+        return InFlightInvestigation(
+            {
+                "incident_id": incident_id,
+                "version": result_version,
+                "outcome": None,
+                "result": None,
+                "started_at": claimed["claimed_at"],
+                "completed_at": None,
+                "duration_ms": None,
+                "trail": _trail_entries(connection, incident_id, result_version),
+            }
+        )
+
+    row = connection.execute(
+        "SELECT * FROM investigation_result "
+        "WHERE incident_id = ? ORDER BY result_version DESC LIMIT 1",
+        (incident_id,),
+    ).fetchone()
     if row is None:
         return None
-
-    entries = connection.execute(
-        """SELECT sequence, query_id, tool, parameters, response, timestamp,
-                  duration_ms, outcome, executed
-           FROM evidence_trail
-           WHERE incident_id = ? AND result_version = ?
-           ORDER BY sequence ASC""",
-        (incident_id, row["result_version"]),
-    ).fetchall()
-    return {
-        "incident_id": row["incident_id"],
-        "version": row["result_version"],
-        "outcome": row["outcome"],
-        "result": json.loads(row["result"]),
-        "started_at": row["started_at"],
-        "completed_at": row["completed_at"],
-        "duration_ms": row["duration_ms"],
-        "trail": [_trail_row(entry) for entry in entries],
-    }
+    return _result_from_row(connection, row)
 
 
 load_result = read_result
@@ -481,6 +513,33 @@ def _entries(trail: Any) -> list[Mapping[str, Any]]:
     if hasattr(trail, "entries"):
         return [dict(entry) for entry in trail.entries]
     return [dict(entry) for entry in trail]
+
+
+def _result_from_row(connection: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "incident_id": row["incident_id"],
+        "version": row["result_version"],
+        "outcome": row["outcome"],
+        "result": json.loads(row["result"]),
+        "started_at": row["started_at"],
+        "completed_at": row["completed_at"],
+        "duration_ms": row["duration_ms"],
+        "trail": _trail_entries(connection, row["incident_id"], row["result_version"]),
+    }
+
+
+def _trail_entries(
+    connection: sqlite3.Connection, incident_id: str, result_version: int
+) -> list[dict[str, Any]]:
+    entries = connection.execute(
+        """SELECT sequence, query_id, tool, parameters, response, timestamp,
+                  duration_ms, outcome, executed
+           FROM evidence_trail
+           WHERE incident_id = ? AND result_version = ?
+           ORDER BY sequence ASC""",
+        (incident_id, result_version),
+    ).fetchall()
+    return [_trail_row(entry) for entry in entries]
 
 
 def _trail_row(row: sqlite3.Row) -> dict[str, Any]:

@@ -80,10 +80,13 @@ Build a monitoring and diagnosis system that:
 May include (not limited to): estimating the money cost of each incident; comparison against
 expected historical behavior; memory of past incidents to recognize repeats.
 
-## Trial by fire
+## Trial by fire - published brief, corrected for the confirmed judging format
 
-The judges will inject live an incident the team never rehearsed (a new combination of
-dimensions) - the system must detect and diagnose it correctly in front of everyone.
+The published brief said:
+
+> The judges will inject live an incident the team never rehearsed (a new combination of dimensions) - the system must detect and diagnose it correctly in front of everyone.
+
+The captain subsequently confirmed the judging format directly with the judges: the team controls the demo data, and judges operate the browser controls rather than supplying an unrehearsed incident. We preserve the published rule above as history, but it is not a constraint on this demonstration.
 
 ## Expected results
 
@@ -131,8 +134,10 @@ different statements; those are in the next section.
 protocols are free - draw inspiration from existing ones or design your own - but you must be able
 to defend every choice.
 
-**SYS.C - Trial by fire.** Judges will operate your system live, with an unrehearsed input, in
-front of everyone. It must react correctly without the team touching anything.
+**SYS.C - Trial by fire - corrected judging format.** Judges operate the system live in front of
+everyone, while the team controls the prepared demo data. The browser interaction must work without
+the team taking over. The published brief's earlier "unrehearsed input" wording is preserved in the
+Trial by fire section above as a corrected historical statement.
 
 ## How the jury evaluates
 
