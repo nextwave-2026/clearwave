@@ -213,6 +213,21 @@ header.mast {
 
 .prov-in b { color: var(--ink-2); font-weight: 500; }
 
+/* The ingestion line answers "is this actually live?". It is provenance, not a
+   business metric, so it sits at the frame edge in the same quiet register as
+   the store and source line above it - one hairline apart, never a card, and
+   never above the money. */
+.prov-ingest {
+  border-top: 1px dashed var(--line-soft);
+  padding-top: 8px;
+  gap: 18px;
+}
+
+.prov-ingest .cite { margin-left: 4px; }
+.prov-ingest .pv { color: var(--ink-2); }
+.prov-ingest .pv-warn { color: var(--sev-medium); }
+.prov-ingest .pv-quiet { color: var(--ink-3); }
+
 .sim-note {
   margin: 0;
   padding: 10px 0 12px;
