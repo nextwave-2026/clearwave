@@ -114,7 +114,7 @@ header.mast {
 .mast-right {
   margin-left: auto;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 16px;
   flex-wrap: wrap;
 }
@@ -200,42 +200,154 @@ header.mast {
   text-align: right;
 }
 
-.prov { border-bottom: 1px solid var(--line-soft); background: var(--surface); }
+/* The freshness stamp. All that survives of the provenance band: one line in
+   the masthead answering "is this board live?", in the reader's own zone, with
+   the cite dot the figure always carried. It reads as a subtitle to the product
+   name, so it costs the masthead no width and the controls stay on one row
+   beside it, and its dot is always in the layout - an in-flight read changes
+   only how the dot looks, so the masthead never reflows. */
+.mast-id { display: grid; gap: 6px; min-width: 0; }
 
-.prov-in {
+.fresh {
   display: flex;
-  gap: 26px;
-  padding: 9px 0;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding-left: 33px;
   font-size: 11.5px;
   color: var(--ink-3);
+  min-width: 0;
 }
 
-.prov-in b { color: var(--ink-2); font-weight: 500; }
-
-/* The ingestion line answers "is this actually live?". It is provenance, not a
-   business metric, so it sits at the frame edge in the same quiet register as
-   the store and source line above it - one hairline apart, never a card, and
-   never above the money. */
-.prov-ingest {
-  border-top: 1px dashed var(--line-soft);
-  padding-top: 8px;
-  gap: 18px;
+.fresh-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--good);
+  flex: none;
+  transition: background 160ms ease;
 }
 
-.prov-ingest .cite { margin-left: 4px; }
-.prov-ingest .pv { color: var(--ink-2); }
-.prov-ingest .pv-warn { color: var(--sev-medium); }
-.prov-ingest .pv-quiet { color: var(--ink-3); }
+.fresh-dot.is-waiting { background: var(--ink-3); }
+.fresh-dot.is-bad { background: var(--sev-critical); }
 
-.sim-note {
-  margin: 0;
-  padding: 10px 0 12px;
-  color: var(--ink-3);
-  font-size: 12px;
-  line-height: 1.45;
+body.is-fetching .fresh-dot { animation: fresh-pulse 900ms ease-in-out infinite; }
+
+@keyframes fresh-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+.fresh-v b { color: var(--ink); font-weight: 500; font-size: 12px; }
+.fresh-v .fresh-z { color: var(--ink-3); }
+.fresh-v .fresh-q { color: var(--ink-2); }
+.fresh-v .cite { margin-left: 5px; }
+
+/* The disclaimer the provenance band carried. It is a stated assumption, so it
+   stays reachable - one closed line at the foot of the page rather than a
+   paragraph across the top of the board. */
+.foot {
+  margin: 40px auto 28px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 10px;
+}
+
+.foot .disclose { border: 0; background: transparent; border-radius: 0; }
+.foot .disclose > summary { padding: 6px 0; font-size: 11px; }
+.foot .disclose > .disclose-body { border-top: 0; padding: 0 0 8px; }
+
+/* ---------------------------------------------------------------- loading
+
+   Skeletons in the board's own shapes, not a spinner in an empty frame: the
+   reader sees where the money band and the trend are going to be while the
+   store is still answering. Greyed, never animated into looking like content,
+   and replaced wholesale the moment a read lands. */
+.skel { display: grid; gap: 14px; }
+
+.skel-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+
+.skel-card {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
   background: var(--surface);
-  border-bottom: 1px solid var(--line-soft);
+}
+
+.skel-l {
+  display: block;
+  height: 11px;
+  border-radius: var(--r-sm);
+  background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
+  background-size: 220% 100%;
+  animation: skel-sweep 1400ms ease-in-out infinite;
+  animation-delay: calc(var(--i, 0) * 90ms);
+}
+
+.skel-l.w-25 { width: 25%; }
+.skel-l.w-30 { width: 30%; }
+.skel-l.w-40 { width: 40%; }
+.skel-l.w-55 { width: 55%; }
+.skel-l.tall { height: 26px; }
+
+/* The chart placeholder is a flat block: a sweep across something this tall
+   bands into panels and reads as content that failed to draw. */
+.skel-l.chart {
+  height: 150px;
+  background: var(--surface-2);
+  animation: none;
+}
+
+@keyframes skel-sweep {
+  0% { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skel-l, .skel-spin, .judge-spin { animation: none; }
+  body.is-fetching .fresh-dot { animation: none; opacity: 0.55; }
+}
+
+.skel-note {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.skel-spin,
+.judge-spin {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  border-top-color: var(--yuno-blue-lift);
+  animation: skel-spin 700ms linear infinite;
+  flex: none;
+}
+
+.judge-spin { display: inline-block; vertical-align: -1px; margin-right: 7px; }
+
+@keyframes skel-spin { to { transform: rotate(360deg); } }
+
+/* A read that failed says so. A loader that never stops is the board claiming
+   to be busy when it has given up. */
+.loadfail {
+  padding: 22px 20px;
+  border: 1px solid var(--sev-critical);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.loadfail h3 { margin: 0 0 8px; font-size: 15px; color: var(--sev-critical); }
+.loadfail p { margin: 6px 0 0; color: var(--ink-2); font-size: 13px; max-width: 70ch; }
+
+@media (max-width: 860px) {
+  .skel-row { grid-template-columns: 1fr; }
+  .fresh { padding-left: 0; }
 }
 
 nav.jump {
@@ -448,6 +560,15 @@ button.cite.on { background: var(--yuno-blue); color: #fff; }
   letter-spacing: 0.08em;
   color: var(--ink-3);
   white-space: nowrap;
+}
+
+/* In the citation drawer the stored value is the record. Where it is an
+   instant, the reader's own clock is set beside it - never in place of it. */
+.cite-local {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--ink-3);
 }
 
 .drawer-body dd { margin: 0; font-size: 12px; word-break: break-all; }
@@ -900,6 +1021,7 @@ td.num .mini { margin-top: 8px; min-width: 96px; }
 }
 
 .disclose-body p { margin: 10px 0 0; max-width: 78ch; }
+
 .disclose-body code {
   font-family: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-size: 11px;
@@ -1042,21 +1164,6 @@ td.num .mini { margin-top: 8px; min-width: 96px; }
   .ctx { flex-wrap: wrap; gap: 4px 10px; }
   .trend-strip-head { flex-wrap: wrap; gap: 4px 12px; }
 }
-
-/* The provenance band left the board so the money is the first thing under the
-   masthead. Nothing on it was deleted: every figure, and the simulated-data
-   disclaimer, is one click away here, and each keeps the cite dot it had. */
-.prov-disclose {
-  margin: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.prov-disclose > summary { padding: 7px 0; font-size: 11px; }
-.prov-disclose > .disclose-body { border-top: 0; padding: 0 0 10px; }
-.prov-disclose .prov-in { padding-block: 6px; }
-.prov-disclose .sim-note { margin: 8px 0 0; }
 
 /* The escalation ladder as one line. The tab it replaced is gone; the stored
    outcomes it showed are not, and they still read as an account of what fired

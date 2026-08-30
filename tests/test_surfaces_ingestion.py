@@ -123,24 +123,38 @@ class PageDoesNotComputeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.script = (STATIC / "app.js").read_text(encoding="utf-8")
-        start = cls.script.index("function renderIngestion()")
+        start = cls.script.index("function renderFreshness()")
         cls.render = cls.script[start : cls.script.index("\n  }\n", start)]
 
-    def test_every_figure_on_the_strip_names_the_field_it_came_from(self):
-        for field in ("data.accepted", "data.rejected", "dead.count", "data.newest_event_at", "data.watermark"):
-            self.assertIn(field, self.render, f"{field} must be read, not derived")
+    def test_the_stamp_names_the_field_it_came_from(self):
+        self.assertIn("data.newest_event_at", self.render, "the stamp must be read, not derived")
 
-    def test_the_strip_does_no_arithmetic(self):
+    def test_the_stamp_does_no_arithmetic(self):
         """No operator that could turn stored values into a figure of its own."""
         body = re.sub(r'"[^"\n]*"', '""', self.render)
         body = re.sub(r"'[^'\n]*'", "''", body)
         for operator in (" + data.", " - ", " * ", " / ", "Date.now", "new Date"):
             self.assertNotIn(operator, body, f"{operator!r} would be a figure computed in the page")
 
-    def test_every_figure_carries_a_citation(self):
-        for cite in ("ingest-accepted", "ingest-refused", "ingest-newest", "ingest-watermark"):
-            self.assertIn(cite, self.render)
-            self.assertIn('citeId === "' + cite + '"', self.script)
+    def test_the_wall_clock_never_stands_in_for_the_store(self):
+        """The masthead ticker is gone: a live clock beside stale data reads as fresh."""
+        self.assertNotIn("toISOString", self.script)
+        self.assertNotIn('$("clock")', self.script)
+
+    def test_the_stamp_carries_a_citation(self):
+        self.assertIn("ingest-newest", self.render)
+        self.assertIn('citeId !== "ingest-newest"', self.script)
+
+    def test_the_orphaned_ingest_citations_went_with_the_band(self):
+        """The band is gone, so the cites nothing reaches any more are gone too."""
+        for cite in ("ingest-accepted", "ingest-refused", "ingest-watermark"):
+            self.assertNotIn(cite, self.script, f"{cite} is cited from nothing on the board")
+
+    def test_the_readings_the_band_showed_survive_in_the_one_drawer_left(self):
+        """Removing the line must not lose what ingest_health measured."""
+        for field in ("watermark", "lag_seconds", "lateness_grace_seconds", "accepted",
+                      "dead_letter.count", "newest_by_kind"):
+            self.assertIn(field, self.script, f"{field} must still be reachable in the citation")
 
     def test_the_lag_is_never_worded_as_a_wall_clock_age(self):
         """The one wrong reading of lag_seconds, forbidden in the page's words."""
@@ -150,19 +164,110 @@ class PageDoesNotComputeTests(unittest.TestCase):
     def test_duplicates_is_shown_as_unmeasured_rather_than_as_a_number(self):
         self.assertIn("not measured - ", self.script)
 
-    def test_an_unreadable_endpoint_darkens_the_line_instead_of_going_stale(self):
+    def test_an_unreadable_endpoint_darkens_the_stamp_instead_of_going_stale(self):
         self.assertIn("data.unreadable", self.render)
         self.assertIn("could not be read from the store", self.render)
 
-    def test_the_strip_sits_in_the_provenance_frame_and_not_in_the_money(self):
+    def test_the_stamp_sits_in_the_masthead_and_the_band_is_gone(self):
         markup = (STATIC / "index.html").read_text(encoding="utf-8")
-        self.assertIn('id="prov-ingest"', markup)
+        self.assertIn('id="fresh-v"', markup)
         self.assertLess(
-            markup.index('id="prov-ingest"'),
+            markup.index('id="fresh-v"'),
             markup.index('id="overview-board"'),
-            "provenance belongs at the frame edge, above the views and outside the money",
+            "freshness belongs in the masthead, above the views and outside the money",
         )
-        self.assertIn(".prov-ingest", (STATIC / "styles.css").read_text(encoding="utf-8"))
+        self.assertNotIn('class="prov"', markup)
+        self.assertNotIn('id="prov-ingest"', markup)
+        css = (STATIC / "styles.css").read_text(encoding="utf-8")
+        self.assertIn(".fresh-dot", css)
+        self.assertNotIn(".prov-ingest", css)
+        self.assertNotIn(".prov-disclose", css)
+
+    def test_the_simulated_data_statement_is_moved_and_not_deleted(self):
+        """A stated assumption stays reachable behind a disclosure."""
+        markup = (STATIC / "index.html").read_text(encoding="utf-8")
+        self.assertIn("simulated data produced by this project's simulator", markup)
+        self.assertIn("<details", markup[markup.index("<footer") : markup.index("</footer>")])
+
+
+class LocalTimeTests(unittest.TestCase):
+    """Every instant a human reads is written in the viewer's zone, not raw UTC."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.script = (STATIC / "app.js").read_text(encoding="utf-8")
+
+    def test_a_stored_instant_with_no_zone_is_read_as_utc(self):
+        """The store writes UTC. Reading it as local wall time would shift it."""
+        self.assertIn('if (!/(Z|[+-]\\d{2}:?\\d{2})$/.test(text)) text += "Z";', self.script)
+
+    def test_the_formatting_helpers_every_caller_shares_render_locally(self):
+        for helper in ("function localStamp(", "function localClock(", "function localDay(",
+                       "function stampWords("):
+            self.assertIn(helper, self.script)
+        # fmt() is the helper the detail tab and the overview both go through.
+        fmt = self.script[self.script.index("function fmt(value)"):]
+        fmt = fmt[: fmt.index("\n  }\n")]
+        self.assertIn("localStamp(value, true)", fmt)
+
+    def test_the_window_phrase_names_the_readers_zone_rather_than_asserting_utc(self):
+        phrase = self.script[self.script.index("function windowPhrase(window)"):]
+        phrase = phrase[: phrase.index("\n  }\n")]
+        self.assertIn("LOCAL_ZONE", phrase)
+        self.assertNotIn('"UTC"', phrase)
+        self.assertNotIn('" UTC"', phrase)
+
+    def test_the_citation_drawer_still_shows_the_stored_string(self):
+        """Provenance keeps the raw value; the local reading only sits beside it."""
+        drawer = self.script[self.script.index("function openCite(citeId)"):]
+        drawer = drawer[: drawer.index("\n  }\n")]
+        self.assertIn("escapeHtml(pretty(row[1]))", drawer)
+        self.assertIn("cite-local", drawer)
+
+
+class LoadingStateTests(unittest.TestCase):
+    """An empty board and a broken one must not look the same."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.script = (STATIC / "app.js").read_text(encoding="utf-8")
+        cls.css = (STATIC / "styles.css").read_text(encoding="utf-8")
+
+    def test_the_first_paint_draws_the_board_in_its_own_shapes(self):
+        for name in ("skeletonOverview", "skeletonQueue", "skeletonDetail", "skeletonEvidence"):
+            self.assertIn("function " + name + "(", self.script)
+        self.assertIn("Reading the store...", self.script)
+        self.assertIn(".skel-card", self.css)
+
+    def test_the_skeletons_are_painted_before_the_first_read(self):
+        boot = self.script[self.script.index("  renderAskExamples();"):]
+        self.assertLess(boot.index("paintLoading()"), boot.index("refresh()"))
+
+    def test_a_refresh_never_blanks_a_populated_board(self):
+        refresh = self.script[self.script.index("  function refresh() {"):]
+        refresh = refresh[: refresh.index("\n  }\n")]
+        self.assertIn("if (!state.loaded) paintLoadFailure", refresh)
+        self.assertIn("setFetching(true)", refresh)
+        self.assertIn("setFetching(false)", refresh)
+
+    def test_a_failed_read_says_so_rather_than_spinning_forever(self):
+        self.assertIn("function paintLoadFailure(", self.script)
+        self.assertIn("The board could not read the store", self.script)
+        self.assertIn(".loadfail", self.css)
+
+    def test_the_in_flight_cue_cannot_shift_the_layout(self):
+        """The dot is always in the masthead; a read only changes how it looks."""
+        markup = (STATIC / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="fresh-dot"', markup)
+        self.assertIn("body.is-fetching .fresh-dot", self.css)
+
+    def test_the_trigger_and_the_ask_both_show_they_are_working(self):
+        self.assertIn("judge-spin", self.script)
+        self.assertIn("ask-spin", self.script)
+        self.assertIn(".judge-spin", self.css)
+
+    def test_motion_is_dropped_where_the_reader_asked_for_none(self):
+        self.assertIn("prefers-reduced-motion", self.css)
 
 
 if __name__ == "__main__":
