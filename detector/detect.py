@@ -781,7 +781,20 @@ def watch_floors(evaluation: dict[str, Any], trajectory: int) -> dict[str, Any]:
         # z -1.0 not, which was the binding tuning target.
         "statistically_real": bool(z is not None and z <= config.WATCH_Z_MAX),
         "materially_large": bool(drop is not None and drop >= config.WATCH_ABS_DROP_MIN),
-        "worsening": trajectory == config.WATCH_TRAJECTORY,
+        # Sustained near-miss (trajectory 0) must still watch once the signal is
+        # strong: a mild inject that has filled the whole detect window has
+        # matching halves, so requiring trajectory == +1 went silent after a
+        # few minutes. Recovering dips stay refused. Flat noise at the bare
+        # WATCH_Z_MAX edge stays refused - only a clearly sustained drop
+        # (half a sigma past the watch floor) rides trajectory 0.
+        "worsening": bool(
+            trajectory == 1
+            or (
+                trajectory == 0
+                and z is not None
+                and z <= config.WATCH_Z_MAX - 0.5
+            )
+        ),
     }
     return floors
 
@@ -1082,6 +1095,220 @@ def _watch_candidates(
     return localised
 
 
+def _watch_entry(
+    connection: sqlite3.Connection,
+    cohort: dict[str, Any] | None,
+    start: int,
+    end: int,
+) -> tuple:
+    """One cohort read in the build_watches candidate shape."""
+    conversion = evaluate(connection, cohort, start, end)
+    reading = leading_indicators(connection, cohort, start, end)
+    series = metrics.timeseries(connection, cohort, start, end)
+    trajectory = trajectory_of(series)
+    floors = watch_floors(conversion, trajectory)
+    degraded = [] if conversion["qualifies"] else _degraded_names(reading)
+    reasons: list[str] = []
+    if all(floors.values()):
+        reasons.append("conversion_near_miss")
+    if degraded:
+        reasons.append("leading_indicators")
+    return (
+        dict(cohort) if cohort else None,
+        conversion,
+        reading,
+        floors,
+        trajectory,
+        degraded,
+        reasons,
+    )
+
+
+def _deepen_near_miss_entry(
+    connection: sqlite3.Connection,
+    seed_entry: tuple,
+    start: int,
+    end: int,
+) -> tuple:
+    """Sharpen a near-miss seed the way localise sharpens an incident.
+
+    Two descents are allowed:
+    * contrast separation: a child axis concentrates the drop against siblings
+    * diluted parent: the parent fails the watch floors but exactly one child
+      on a dimension passes them - the merchant-b/adyen case under a shared
+      provider that also serves healthy merchants
+    """
+    deep_entry = seed_entry
+    deep_cohort = dict(seed_entry[0] or {})
+    for _ in range(config.LOCALISE_MAX_DEPTH):
+        best = None
+        diluted_best = None
+        # Provider-scoped seeds deepen merchant_id first. The product is
+        # merchant-relative; bank/card children of a provider inject are usually
+        # the same traffic with a noisier z, and the verifier requires merchant_id.
+        dimensions = schema.DIMENSIONS
+        if "provider" in deep_cohort and "merchant_id" not in deep_cohort:
+            dimensions = ("merchant_id",) + tuple(
+                d for d in schema.DIMENSIONS if d != "merchant_id"
+            )
+        for dimension in dimensions:
+            if dimension in deep_cohort:
+                continue
+            siblings = []
+            for value in store_dimension_values(connection, dimension):
+                child = dict(deep_cohort)
+                child[dimension] = value
+                entry = _watch_entry(connection, child, start, end)
+                conversion = entry[1]
+                if conversion["absolute_drop"] is None:
+                    continue
+                if conversion["observed"]["attempted_payments"] < config.N_PAYMENTS_MIN:
+                    continue
+                siblings.append(entry)
+            if len(siblings) < 2:
+                continue
+            siblings.sort(
+                key=lambda item: (
+                    -(item[1]["absolute_drop"] or 0.0),
+                    metrics.cohort_key(item[0] or {}),
+                )
+            )
+            winner = siblings[0]
+            runner = siblings[1]
+            separation = (winner[1]["absolute_drop"] or 0.0) - (
+                runner[1]["absolute_drop"] or 0.0
+            )
+            if (
+                separation >= config.LOCALISE_MIN_SEPARATION
+                and "conversion_near_miss" in winner[-1]
+            ):
+                parent_z = deep_entry[1]["z"]
+                winner_z = winner[1]["z"]
+                if (
+                    winner_z is not None
+                    and parent_z is not None
+                    and winner_z > parent_z + 0.25
+                ):
+                    pass
+                else:
+                    # Prefer merchant_id when separations tie: the product is
+                    # merchant-relative, and bank/card children of a provider
+                    # inject are usually mix noise on the same traffic.
+                    merchant_bonus = 0.05 if dimension == "merchant_id" else 0.0
+                    score = separation + merchant_bonus
+                    if best is None or score > best["score"]:
+                        best = {"score": score, "separation": separation, "entry": winner}
+
+            # Diluted parent: exactly one sibling clears the near-miss floors.
+            qualifying = [item for item in siblings if "conversion_near_miss" in item[-1]]
+            if len(qualifying) == 1 and "conversion_near_miss" not in deep_entry[-1]:
+                child = qualifying[0]
+                child_drop = child[1]["absolute_drop"] or 0.0
+                parent_drop = deep_entry[1]["absolute_drop"] or 0.0
+                # Child must be at least as concentrated as the diluted parent.
+                if child_drop + 1e-9 >= parent_drop:
+                    merchant_bonus = 0.05 if dimension == "merchant_id" else 0.0
+                    score = child_drop + merchant_bonus
+                    if diluted_best is None or score > diluted_best["score"]:
+                        diluted_best = {
+                            "score": score,
+                            "drop": child_drop,
+                            "entry": child,
+                        }
+
+        chosen = None
+        if best is not None:
+            chosen = best["entry"]
+        elif diluted_best is not None:
+            chosen = diluted_best["entry"]
+        if chosen is None:
+            break
+        deep_entry = chosen
+        deep_cohort = dict(deep_entry[0] or {})
+    return deep_entry
+
+
+def _select_conversion_near_miss(
+    connection: sqlite3.Connection,
+    start: int,
+    end: int,
+    candidates: list,
+    formed_cohort: dict[str, Any] | None,
+) -> tuple | None:
+    """One conversion near-miss entry, or None.
+
+    Starts from single-axis candidates that already near-miss, and from diluted
+    single-axis parents that only show a material drop, then deepens. Picks the
+    strongest resulting conversion_near_miss so one inject stays one row.
+    """
+    seeds: list = []
+    seen_keys: set[str] = set()
+
+    def add_seed(entry: tuple) -> None:
+        cohort = entry[0] or {}
+        key = metrics.cohort_key(cohort)
+        if key in seen_keys:
+            return
+        if _contains_formed_traffic(cohort, formed_cohort):
+            return
+        seen_keys.add(key)
+        seeds.append(entry)
+
+    for entry in candidates:
+        if "conversion_near_miss" in entry[-1]:
+            add_seed(entry)
+
+    # Diluted provider parents only. A provider is shared across merchants, so a
+    # mild inject on merchant-b/adyen is diluted by merchant-c's healthy adyen
+    # traffic and never clears WATCH_Z_MAX on provider=adyen alone. Seeding every
+    # dimension here reintroduced bank/card noise as conversion near-misses and
+    # smothered real leading-indicator watches; provider is the multi-tenant
+    # dilution surface the demo actually hits.
+    for value in store_dimension_values(connection, "provider"):
+        cohort = {"provider": value}
+        if _contains_formed_traffic(cohort, formed_cohort):
+            continue
+        entry = _watch_entry(connection, cohort, start, end)
+        if "conversion_near_miss" in entry[-1]:
+            # Already in candidates; deepen happens via that seed.
+            continue
+        conversion = entry[1]
+        drop = conversion.get("absolute_drop")
+        if drop is None or drop < config.WATCH_ABS_DROP_MIN:
+            continue
+        if conversion["observed"]["attempted_payments"] < config.N_PAYMENTS_MIN:
+            continue
+        if conversion.get("qualifies"):
+            continue
+        # Must be directionally bad. Ordinary mix noise on a healthy provider
+        # sits near z=0 and must not be deepened into a bank near-miss that
+        # then competes with a real leading-indicator watch.
+        z = conversion.get("z")
+        if z is None or z > -1.0:
+            continue
+        add_seed(entry)
+
+    if not seeds:
+        return None
+
+    deepened = [
+        _deepen_near_miss_entry(connection, seed, start, end) for seed in seeds
+    ]
+    near_misses = [entry for entry in deepened if "conversion_near_miss" in entry[-1]]
+    if not near_misses:
+        return None
+
+    # Strongest z wins; prefer a merchant-scoped cohort on a tie so the demo
+    # points at merchant-b/adyen rather than a platform-wide dilution.
+    def rank(entry: tuple):
+        cohort = entry[0] or {}
+        z = entry[1].get("z")
+        has_merchant = 0 if "merchant_id" in cohort else 1
+        return (z if z is not None else 0.0, has_merchant, metrics.cohort_key(cohort))
+
+    return min(near_misses, key=rank)
+
+
 def build_watches(
     connection: sqlite3.Connection,
     start: int,
@@ -1103,132 +1330,22 @@ def build_watches(
     # traffic - the provider, and also the country, the bank and the merchant
     # it happens to be diluted into. Only the strongest is reported, which is
     # the same instinct `localise` applies to an incident: name the cohort the
-    # deviation is concentrated in, not every slice it leaks into. Localisation
-    # itself cannot do the job here, because a deviation small enough to be a
-    # near-miss is by definition too small to clear its separation rule.
+    # deviation is concentrated in, not every slice it leaks into.
+    #
+    # Mild inject is often invisible as a single-axis near-miss: merchant-c's
+    # healthy adyen traffic dilutes provider=adyen below WATCH_Z_MAX while the
+    # joint {merchant_id: merchant-b, provider: adyen} clears every floor.
+    # Seeds therefore include diluted parents that show a material drop, and
+    # deepening may descend into a unique watch-qualifying child the way
+    # localise descends into a unique incident-qualifying child.
     keep: list = []
-    near_misses = [entry for entry in candidates if "conversion_near_miss" in entry[-1]]
     near_miss_cohort = None
-    if near_misses:
-        # One degradation shows up on every axis it touches. Pick the strongest
-        # single-axis near-miss, then fold in every other near-miss axis that
-        # does not conflict and still near-misses as a joint slice. That is how
-        # a mild provider inject becomes one `{merchant_id, provider}` watch
-        # instead of separate card / country / provider rows.
-        ordered = sorted(
-            near_misses,
-            key=lambda e: (e[1]["z"], metrics.cohort_key(e[1]["cohort"])),
-        )
-        # Start from the strongest single-axis near-miss that already passed.
-        chosen_near_miss = ordered[0]
-        joint_cohort = dict(ordered[0][0] or {})
-        for entry in ordered[1:]:
-            other = dict(entry[0] or {})
-            if not other or not cohorts_compatible(joint_cohort, other):
-                continue
-            candidate = {**joint_cohort, **other}
-            conversion = evaluate(connection, candidate, start, end)
-            series = metrics.timeseries(connection, candidate, start, end)
-            trajectory = trajectory_of(series)
-            floors = watch_floors(conversion, trajectory)
-            if not all(floors.values()):
-                continue
-            # Prefer the joint when it is at least as concentrated as the seed.
-            seed_z = ordered[0][1]["z"]
-            if conversion["z"] is None or seed_z is None:
-                continue
-            if conversion["z"] > seed_z + 0.25:
-                continue
-            reading = leading_indicators(connection, candidate, start, end)
-            degraded = [] if conversion["qualifies"] else _degraded_names(reading)
-            reasons = ["conversion_near_miss"]
-            if degraded:
-                reasons.append("leading_indicators")
-            joint_cohort = candidate
-            chosen_near_miss = (
-                candidate,
-                conversion,
-                reading,
-                floors,
-                trajectory,
-                degraded,
-                reasons,
-            )
-        # Deepen the near-miss the way localise deepens an incident: a child
-        # axis earns a place only when it concentrates the drop against its
-        # siblings. This is what turns `{provider: adyen}` into the
-        # merchant-relative `{merchant_id: merchant-b, provider: adyen}` the
-        # demo points at, without inventing dimensions that do not separate.
-        deep_cohort = dict(chosen_near_miss[0] or {})
-        deep_entry = chosen_near_miss
-        for _ in range(config.LOCALISE_MAX_DEPTH):
-            best = None
-            for dimension in schema.DIMENSIONS:
-                if dimension in deep_cohort:
-                    continue
-                siblings = []
-                for value in store_dimension_values(connection, dimension):
-                    child = dict(deep_cohort)
-                    child[dimension] = value
-                    conversion = evaluate(connection, child, start, end)
-                    if conversion["absolute_drop"] is None:
-                        continue
-                    if conversion["observed"]["attempted_payments"] < config.N_PAYMENTS_MIN:
-                        continue
-                    series = metrics.timeseries(connection, child, start, end)
-                    trajectory = trajectory_of(series)
-                    floors = watch_floors(conversion, trajectory)
-                    siblings.append((child, conversion, trajectory, floors))
-                if len(siblings) < 2:
-                    continue
-                siblings.sort(
-                    key=lambda item: (
-                        -(item[1]["absolute_drop"] or 0.0),
-                        metrics.cohort_key(item[0]),
-                    )
-                )
-                winner_child, winner_conv, winner_traj, winner_floors = siblings[0]
-                runner = siblings[1][1]
-                separation = (winner_conv["absolute_drop"] or 0.0) - (
-                    runner["absolute_drop"] or 0.0
-                )
-                if separation < config.LOCALISE_MIN_SEPARATION:
-                    continue
-                if not all(winner_floors.values()):
-                    # A child can concentrate the drop before every watch floor
-                    # holds on the child itself; keep the parent in that case.
-                    continue
-                parent_z = deep_entry[1]["z"]
-                if winner_conv["z"] is None or parent_z is None:
-                    continue
-                if winner_conv["z"] > parent_z + 0.25:
-                    continue
-                if best is None or separation > best["separation"]:
-                    reading = leading_indicators(connection, winner_child, start, end)
-                    degraded = (
-                        [] if winner_conv["qualifies"] else _degraded_names(reading)
-                    )
-                    reasons = ["conversion_near_miss"]
-                    if degraded:
-                        reasons.append("leading_indicators")
-                    best = {
-                        "separation": separation,
-                        "entry": (
-                            winner_child,
-                            winner_conv,
-                            reading,
-                            winner_floors,
-                            winner_traj,
-                            degraded,
-                            reasons,
-                        ),
-                    }
-            if best is None:
-                break
-            deep_entry = best["entry"]
-            deep_cohort = dict(deep_entry[0] or {})
-        keep.append(deep_entry)
-        near_miss_cohort = dict(deep_entry[0] or {})
+    near_miss_entry = _select_conversion_near_miss(
+        connection, start, end, candidates, formed_cohort
+    )
+    if near_miss_entry is not None:
+        keep.append(near_miss_entry)
+        near_miss_cohort = dict(near_miss_entry[0] or {})
 
     # The same dilution happens to a leading indicator, and worse: a slow
     # provider makes its merchant, its country, its card scheme and every bank
@@ -1243,10 +1360,18 @@ def build_watches(
     for indicator, best in _INDICATOR_EXTREME.items():
         holders = [entry for entry in candidates if indicator in entry[-2]]
         if near_miss_cohort is not None:
+            # Suppress only slices of the same traffic (sharpening / equal), not
+            # every orthogonally compatible cohort. Orthogonal same-episode is
+            # right for incident identity, but here it let a bank near-miss
+            # erase a real provider latency watch.
             holders = [
                 entry
                 for entry in holders
-                if not cohorts_same_episode(entry[0] or {}, near_miss_cohort)
+                if not (
+                    (entry[0] or {}) == near_miss_cohort
+                    or _is_sharpening(near_miss_cohort, entry[0] or {})
+                    or _is_sharpening(entry[0] or {}, near_miss_cohort)
+                )
             ]
         if not holders:
             continue

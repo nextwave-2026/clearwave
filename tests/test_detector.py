@@ -711,6 +711,10 @@ class WatchTests(unittest.TestCase):
         self.assertFalse(all(detect.watch_floors({**near_miss, "z": -1.0}, 1).values()))
         # And a deviation that is recovering is not worth warning about.
         self.assertFalse(all(detect.watch_floors({**near_miss, "z": -2.3}, -1).values()))
+        # A sustained near-miss (flat inside the window) still watches: once the
+        # mild inject fills the whole detect window the halves match and
+        # trajectory is 0, which must not silence the demo.
+        self.assertTrue(all(detect.watch_floors({**near_miss, "z": -2.3}, 0).values()))
 
     def test_healthy_traffic_is_neither_detected_nor_watched(self):
         _, sweep = self._sweep(synthetic.healthy())
@@ -818,6 +822,91 @@ class WatchTests(unittest.TestCase):
                 {"provider": "adyen"},
                 {"provider": "stripe"},
             )
+        )
+
+    def test_diluted_provider_near_miss_localises_to_the_merchant(self):
+        """merchant-c healthy adyen must not hide merchant-b's mild inject.
+
+        Reproduced live: provider=adyen alone sat at z~-1.2 (below WATCH_Z_MAX)
+        while {merchant_id: merchant-b, provider: adyen} cleared z~-2.4. The
+        watch has to name the joint cohort or stage-one never appears.
+        """
+        from datetime import datetime, timedelta, timezone
+        from worker.helpers.payment import BASELINE_DECLINE_PROBABILITY
+
+        as_of = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+        events = list(
+            synthetic.iter_live_healthy_history(
+                hours=2.0,
+                per_merchant_per_minute=20,
+                seed=42,
+                as_of=as_of,
+            )
+        )
+        # Five minutes of mild inject on merchant-b/adyen only, at the effective
+        # rate the worker produces (inject p then baseline fallback).
+        effective = 0.12 + (1.0 - 0.12) * BASELINE_DECLINE_PROBABILITY
+        rng = __import__("random").Random(99)
+        specs = synthetic._live_merchant_specs()
+        index = 0
+        start_live = as_of + timedelta(minutes=1)
+        for minute in range(5):
+            minute_start = start_live + timedelta(minutes=minute)
+            for spec in specs:
+                for slot in range(30):
+                    index += 1
+                    provider = spec["providers"][slot % len(spec["providers"])]
+                    key = (spec["merchant_id"], provider)
+                    p_dec = effective if key == ("merchant-b", "adyen") else BASELINE_DECLINE_PROBABILITY
+                    approved = rng.random() >= p_dec
+                    payment_method = spec["payment_methods"][slot % len(spec["payment_methods"])]
+                    occurred = minute_start + timedelta(seconds=slot % 60)
+                    event = {
+                        "event_id": f"dilute-{index:07d}",
+                        "payment_id": f"pay-dilute-{index:07d}",
+                        "attempt_id": f"att-dilute-{index:07d}-1",
+                        "attempt_number": 1,
+                        "occurred_at": occurred.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "merchant_id": spec["merchant_id"],
+                        "provider": provider,
+                        "payment_method": payment_method,
+                        "card_network": (
+                            spec["card_networks"][slot % len(spec["card_networks"])]
+                            if payment_method == "card"
+                            else None
+                        ),
+                        "country": spec["country"],
+                        "issuing_bank": spec["banks"][slot % len(spec["banks"])],
+                        "status": "approved" if approved else "declined",
+                        "amount": 10.0,
+                        "currency": spec["currency"],
+                        "latency_ms": 220.0,
+                    }
+                    if not approved:
+                        event["normalized_decline_reason"] = (
+                            "provider_timeout" if p_dec > BASELINE_DECLINE_PROBABILITY else "insufficient_funds"
+                        )
+                    events.append(event)
+
+        connection, sweep = self._sweep(events)
+        self.assertIsNone(sweep["incident"], sweep)
+        self.assertGreaterEqual(len(sweep["watches"]), 1, sweep)
+        # The verifier's injected-cohort check is merchant-b OR adyen. A
+        # deepened child that still names one of those is the demo beat.
+        injected = [
+            watch
+            for watch in sweep["watches"]
+            if (watch.get("affected_cohort") or {}).get("merchant_id") == "merchant-b"
+            or (watch.get("affected_cohort") or {}).get("provider") == "adyen"
+        ]
+        self.assertGreaterEqual(
+            len(injected),
+            1,
+            f"expected a merchant-b/adyen watch, got {[w.get('affected_cohort') for w in sweep['watches']]}",
+        )
+        self.assertTrue(
+            any(w.get("lifecycle_state") == "watching" for w in injected),
+            injected,
         )
 
     def test_a_detected_incident_resolves_when_traffic_recovers(self):
@@ -934,7 +1023,7 @@ class WatchTests(unittest.TestCase):
             "SELECT lifecycle_state FROM incident WHERE incident_id = ?",
             (watch_id,),
         ).fetchone()
-        self.assertEqual(row["lifecycle_state"], "investigating")
+        self.assertEqual(row["lifecycle_state"], "watching")
 
     def test_a_slow_provider_is_watched_while_conversion_is_still_healthy(self):
         # W1's effect=latency: attempts approve and decline at baseline rates

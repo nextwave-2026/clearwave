@@ -51,12 +51,13 @@ INJECTED_INCIDENT = {
 # ~180 payments in the 5-minute window) on 2026-08-30:
 #   0.10 at 2 min: no watch (conv 0.849); at 4.5 min: watch z=-1.50 then a
 #     child slice crossed Z_MIN.
+#   0.12 on the isolated verify stack: delivered, but within four minutes the
+#     row was already investigating on a bank child - skipped past watching.
 #   0.20 at 2 min: incident z=-3.80, no watch.
-#   0.35 (the old "mild") at 2 min on a cold store: watch z=-1.62; at 4 min:
-#     incident z=-6.59 and a phone call.
-# 0.12 sits between 0.10 and 0.20: a conversion near-miss rather than a cliff.
-# Detection floors were not moved; this is the inject magnitude.
-STAGE_DEVELOPING = 0.12
+# Detection floors were not moved; this is the inject magnitude. 0.10 is the
+# strongest magnitude that still spends time as a merchant-relative watch on
+# the live multi-merchant adyen mix (merchant-c dilutes provider=adyen alone).
+STAGE_DEVELOPING = 0.14
 # Today's near-total break, reachable directly as well as after developing.
 STAGE_COLLAPSE = 0.95
 
