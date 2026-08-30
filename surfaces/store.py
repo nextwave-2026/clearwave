@@ -31,6 +31,22 @@ SEVERITY_RANK = {
     "low": 3,
 }
 
+# The lifecycle states at or beyond `detected`, which is the point at which
+# detection has committed to calling a deviation an incident. Anything before
+# it - today only `watching` - is a warning the detector deliberately chose not
+# to report, and no channel may ever fire for one.
+#
+# This is an allowlist rather than a `!= "watching"` check because the
+# guarantee has to hold for a state nobody has invented yet: a new pre-detection
+# state added later stays silent by default instead of silently paging. Until
+# now nothing checked the state at all - a watch could not page only because
+# the investigation daemon claims `detected` and so never gives a watch the C4
+# result `ensure_escalation` gates on. That is a chain of conventions, which is
+# the caveat ADR 0024 records against itself. This makes it structural.
+ESCALATABLE_STATES = frozenset(
+    {"detected", "investigating", "diagnosed", "acknowledged", "mitigated", "resolved"}
+)
+
 ESCALATION_SCHEMA = """
 CREATE TABLE IF NOT EXISTS escalation_event (
     incident_id TEXT NOT NULL,
@@ -130,8 +146,11 @@ def ensure_escalation(
 
     Repeat reads return the recorded outcomes. A detected incident with no
     investigation result is left untouched so a later read can fire one
-    complete message. Already-sent rows are never rewritten.
+    complete message. Already-sent rows are never rewritten. A row that has not
+    reached `detected` is refused outright, before anything is read or fired.
     """
+    if not _is_escalatable(incident):
+        return []
     incident_id = str(incident.get("incident_id", ""))
     existing = load_escalation(connection, incident_id)
     if existing:
@@ -232,6 +251,11 @@ def acknowledge_call(connection: sqlite3.Connection, incident_id: str) -> bool:
             (incident_id,),
         )
     return cursor.rowcount == 1
+
+
+def _is_escalatable(incident: Mapping[str, Any]) -> bool:
+    """A watch never escalates, whatever else is true about the row."""
+    return str(incident.get("lifecycle_state", "")).strip().lower() in ESCALATABLE_STATES
 
 
 def _has_investigation_result(result: Mapping[str, Any] | None) -> bool:

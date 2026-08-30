@@ -6,6 +6,7 @@
     selectedId: null,
     overview: null,
     queue: [],
+    watches: [],
     merchants: [],
     escalations: null,
     calls: [],
@@ -18,6 +19,9 @@
   const queueBoard = document.getElementById("queue-board");
   const detailBoard = document.getElementById("detail-board");
   const escalationBoard = document.getElementById("escalation-board");
+  const overviewRail = document.getElementById("overview-watch-rail");
+  const overviewMerchants = document.getElementById("overview-merchants");
+  const queueRail = document.getElementById("queue-watch-rail");
   const evidenceBoard = document.getElementById("evidence-board");
   const judgeStatus = document.getElementById("judge-status");
   const judgeButtons = document.querySelectorAll("#judge-form [data-stage]");
@@ -224,6 +228,7 @@
     const sourceId = data.source_incident_id || "none";
     provSource.innerHTML = "<b>source</b> " + escapeHtml(sourceId);
     if (!headline) {
+      overviewMerchants.innerHTML = "";
       overviewBoard.innerHTML =
         '<p class="empty">No incidents in the store.</p>' +
         '<div class="note warn tight"><h4>Two things this header deliberately does not show</h4>' +
@@ -255,7 +260,10 @@
       "</div>" +
       '<div class="note warn tight"><h4>Two things this header deliberately does not show</h4>' +
       "<p><b>A portfolio total.</b> Adding cited <code>loss_per_hour</code> figures would be a number that exists only here. A real total has to come from W2 as its own cited figure.</p>" +
-      "<p><b>Whose fault it is.</b> Attribution belongs to the investigation. A traffic light that guessed would be the worst thing this dashboard could do.</p></div>" +
+      "<p><b>Whose fault it is.</b> Attribution belongs to the investigation. A traffic light that guessed would be the worst thing this dashboard could do.</p></div>";
+    // Merchant health renders below the warning rail, not inside the same
+    // board, so a developing deviation is read before a per-merchant roll-up.
+    overviewMerchants.innerHTML =
       "<h3>Merchant health</h3>" +
       '<div class="merchants">' + (merchants || '<p class="empty">No merchant incidents in the store.</p>') + "</div>";
     bindCites(overviewBoard);
@@ -322,6 +330,116 @@
     });
     queueBoard.innerHTML = "";
     queueBoard.appendChild(table);
+  }
+
+
+  // ---------------------------------------------------------------------
+  // The warning rail.
+  //
+  // A watch is a developing deviation the detector deliberately chose not to
+  // report: it has not crossed the detection floors, it is forced to `low`, and
+  // nothing pages on it. So it is drawn quietly and apart - never in the
+  // incident queue, never in the "Right now" figures, and never in a severity
+  // colour. Every figure below is copied out of the stored C3 record that
+  // surfaces/present.py:watch_item passed through. Nothing here is computed.
+  // ---------------------------------------------------------------------
+
+  // Stored snake_case keys, shown as words. This renames a key for reading; it
+  // is not a value, and no figure is derived from it.
+  function floorLabel(key) {
+    return String(key).replace(/_/g, " ");
+  }
+
+  function floorChips(floors) {
+    if (!floors || typeof floors !== "object") return "";
+    const keys = Object.keys(floors);
+    if (!keys.length) return "";
+    return '<ul class="floors">' + keys.map(function (key) {
+      const held = floors[key] === true;
+      return '<li class="floor ' + (held ? "held" : "open") + '">' +
+        '<i aria-hidden="true"></i>' + escapeHtml(floorLabel(key)) +
+        '<span class="vh">' + (held ? " met" : " not met") + "</span></li>";
+    }).join("") + "</ul>";
+  }
+
+  // The chips are the stored detection-floor vector. Without saying so, a
+  // lone "has measurement" chip under "Not an incident yet" reads as a reason
+  // it is one.
+  function floorCaption(floors, index) {
+    if (index !== 0 || !floors || typeof floors !== "object" || !Object.keys(floors).length) return "";
+    return '<p class="rail-cap">Detection floors. Dashed is not yet crossed.</p>';
+  }
+
+  function trajectoryLine(watch) {
+    const value = watch.trajectory;
+    if (value === null || value === undefined) return "";
+    const floors = watch.watch_floors || {};
+    const worsening = floors.worsening === true ? " · getting worse" : "";
+    return '<p class="rail-traj">Trajectory ' + escapeHtml(count(value)) + escapeHtml(worsening) + "</p>";
+  }
+
+  function watchRow(watch, index) {
+    const projected = watch.projected_loss_per_hour || null;
+    const reasons = (watch.reasons || []).map(floorLabel).join(", ");
+    return (
+      '<li class="rail-item">' +
+        '<div class="rail-who">' +
+          '<span class="watching"><i aria-hidden="true"></i>watching</span>' +
+          "<b>" + escapeHtml(incidentScope(watch)) + "</b>" +
+          '<span class="sub mono">' + escapeHtml(cohortLine(watch.affected_cohort)) + "</span>" +
+        "</div>" +
+        '<div class="rail-proj">' +
+          "<dt>Projected</dt>" +
+          '<dd><span class="fig">' + escapeHtml(money(projected)) + " / hour if this continues" +
+            citeButton("watch-proj:" + index, "cite projected loss for " + incidentScope(watch)) +
+          "</span></dd>" +
+          "<small>" + escapeHtml(onsetLine(watch)) + "</small>" +
+        "</div>" +
+        '<div class="rail-why">' +
+          "<dt>Not an incident yet</dt>" +
+          floorCaption(watch.detection_floors, index) +
+          floorChips(watch.detection_floors) +
+          trajectoryLine(watch) +
+          (reasons ? '<p class="rail-traj">Watched for ' + escapeHtml(reasons) + "</p>" : "") +
+        "</div>" +
+      "</li>"
+    );
+  }
+
+  function onsetLine(watch) {
+    return watch.onset ? "first seen " + watch.onset : "onset not in store";
+  }
+
+  function watchRail(watches) {
+    const rows = watches || [];
+    const head =
+      '<div class="rail-head">' +
+        "<h3>Watching</h3>" +
+        (rows.length
+          ? '<span class="rail-count">' + escapeHtml(count(rows.length)) +
+            (rows.length === 1 ? " cohort" : " cohorts") + "</span>"
+          : "") +
+      "</div>" +
+      '<p class="rail-lede">Developing deviations that have not crossed the detection floors. ' +
+      "They are not incidents, they are not counted in the figures above, and nothing pages on them.</p>";
+    if (!rows.length) {
+      return '<section class="rail is-quiet" aria-label="Watching">' + head +
+        '<p class="rail-none">Nothing is being watched. A cohort appears here the moment detection ' +
+        "measures it deviating without crossing its floors.</p></section>";
+    }
+    const statement = rows[0].statement;
+    return '<section class="rail" aria-label="Watching">' + head +
+      '<ul class="rail-list">' + rows.map(watchRow).join("") + "</ul>" +
+      (statement ? '<p class="rail-foot">' + escapeHtml(statement) + "</p>" : "") +
+      "</section>";
+  }
+
+  function renderWatchRail() {
+    const markup = watchRail(state.watches);
+    [overviewRail, queueRail].forEach(function (host) {
+      host.innerHTML = markup;
+      bindCites(host);
+    });
   }
 
   function readoutCell(label, value, hint, citeId) {
@@ -777,6 +895,22 @@
         body: { parameters: entry.parameters, response: entry.response },
       };
     }
+    if (citeId && citeId.indexOf("watch-proj:") === 0) {
+      const watch = (state.watches || [])[Number(citeId.slice("watch-proj:".length))];
+      if (!watch) return null;
+      return {
+        title: "Projected loss if this continues",
+        lede: "Copied from the stored watch record. It is a projection the detector published, " +
+          "not money already lost, and nothing on this page recomputed it.",
+        rows: [
+          ["source", watch.incident_id || "not in store"],
+          ["lifecycle_state", watch.lifecycle_state || "not in store"],
+          ["field", "financial_impact.projected_loss_per_hour"],
+          ["value", watch.projected_loss_per_hour == null ? "not in store" : watch.projected_loss_per_hour],
+        ],
+        body: watch.projected_loss_per_hour,
+      };
+    }
     if (citeId && citeId.indexOf("esc-") === 0) return escalationCite(citeId);
     const table = {
       "overview-severity": { title: "Incident severity", field: "incident.severity", value: headline.severity, source: overview.source_incident_id },
@@ -909,12 +1043,14 @@
     ]).then(function (payloads) {
       state.overview = payloads[0];
       state.queue = payloads[1].incidents || [];
+      state.watches = payloads[1].watches || [];
       state.merchants = payloads[2].merchants || [];
       state.calls = payloads[3].calls || [];
       state.escalations = payloads[4];
       if (!state.selectedId && state.queue.length) state.selectedId = state.queue[0].incident_id;
       renderOverview();
       renderQueue();
+      renderWatchRail();
       renderEscalation();
       if (state.selectedId) return loadDetail(state.selectedId);
     }).catch(function (err) {

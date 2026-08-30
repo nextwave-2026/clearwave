@@ -976,3 +976,162 @@ figure.chart.binding { max-width: 760px; }
    viewport edge while every other row was inset 28px. Both now set block padding
    only, so the gutter survives. */
 .mast-right, .judge > * { min-width: 0; }
+
+/* The warning rail.
+
+   A watch is a deviation detection deliberately chose not to report: it has
+   not crossed the floors, its severity is forced to `low`, and nothing pages
+   on it. So it is drawn at the muted end of the palette - `--ink-2`,
+   `--ink-3`, `--sev-low` - and never in a severity colour. It also carries
+   none of the incident vocabulary that signals urgency here: no `--shadow-lift`,
+   no gradient fill, no `.kpi` accent bar, no `.frame` chrome. The board
+   noticing something, not announcing it. */
+
+.rail {
+  margin-top: 34px;
+  margin-bottom: 32px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.rail-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+
+.rail-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.rail-count { font-size: 11.5px; color: var(--ink-3); }
+.rail-lede { margin: 7px 0 16px; max-width: 74ch; font-size: 12.5px; color: var(--ink-3); }
+.rail-none { margin: 0; max-width: 74ch; font-size: 12.5px; color: var(--ink-3); }
+
+/* With nothing to show the rail is a heading and a sentence, deliberately
+   quiet rather than a half-drawn panel. */
+.rail.is-quiet .rail-head h3 { color: var(--ink-3); }
+
+.rail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.rail-item {
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) minmax(190px, 0.95fr) minmax(240px, 1.25fr);
+  gap: 18px 28px;
+  padding: 17px 18px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.rail-item:last-child { border-bottom: 0; }
+
+@media (max-width: 900px) {
+  .rail-item { grid-template-columns: 1fr; gap: 15px; }
+}
+
+.rail-who { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; }
+.rail-who b { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+.rail-who .sub { margin-top: 0; }
+
+/* The badge. A hollow ring rather than the filled, rotated square `.sev` uses,
+   so a watch cannot be mistaken for a severity at a glance. */
+.watching {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 10px 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 100px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.watching i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--sev-low);
+  flex: none;
+  animation: watch-breathe 3.6s ease-in-out infinite;
+}
+
+@keyframes watch-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .watching i { animation: none; }
+}
+
+.rail-proj dt, .rail-why dt {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 8px;
+}
+
+/* Quieter than `.money` on the incident queue by weight and colour: this is a
+   projection, and it must not out-shout a realised figure beside it. */
+.rail-proj dd {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink-2);
+}
+
+.rail-proj small { display: block; margin-top: 6px; font-size: 11px; color: var(--ink-3); }
+
+.floors { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; }
+
+.floor {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: 100px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.floor i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+
+/* A floor already met is settled and recedes. The one still open is why this
+   is not an incident, so it is the brightest thing in the row - and still not
+   a severity colour. */
+.floor.held { border: 1px solid var(--line-soft); color: var(--ink-3); }
+.floor.held i { background: var(--ink-3); }
+.floor.open { border: 1px dashed var(--line); background: var(--surface-2); color: var(--ink); }
+.floor.open i { border: 1.5px solid var(--ink-2); }
+
+.rail-traj { margin: 10px 0 0; font-size: 11.5px; color: var(--ink-3); }
+.rail-foot { margin: 13px 0 0; max-width: 78ch; font-size: 11.5px; color: var(--ink-3); }
+
+.vh {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.rail-cap { margin: -2px 0 8px; font-size: 11px; color: var(--ink-3); }
