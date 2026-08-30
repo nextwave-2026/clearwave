@@ -40,6 +40,20 @@ DECLINE_REASONS = [
 ]
 
 
+# Per-currency minor-unit ranges so every merchant's tickets convert to
+# roughly the same real-money band (USD ~8-120) via detector/config.FX_TO_USD.
+# Severity is bounded by money, therefore the generator must not produce
+# pocket-change incidents for high-denomination currencies.
+CURRENCY_RANGES = {
+    "MXN": (15_000, 220_000),
+    "COP": (3_200_000, 48_000_000),
+    "BRL": (4_300, 65_000),
+}
+
+# Unknown currency falls back to the original range. This fallback is explicit
+# and commented so it reads as a deliberate default, never an oversight.
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
@@ -64,7 +78,10 @@ class PaymentAttemptBuilder:
         payment_id = f"pay_{uuid.uuid4().hex[:16]}"
         city = pick_city(self.merchant.country)
         payment_method = forced.get("payment_method") or random.choice(self.merchant.payment_methods)
-        amount_minor = random.randint(1000, 50000)
+        lo, hi = CURRENCY_RANGES.get(
+            self.merchant.currency, (1000, 50000)
+        )
+        amount_minor = random.randint(lo, hi)
         card_network = forced.get("card_network") or (
             random.choice(CARD_NETWORKS) if payment_method == "card" else None
         )
