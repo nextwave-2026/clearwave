@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS pending_call (
     created_at  TEXT NOT NULL,
     acknowledged INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS escalation_claim (
+    incident_id TEXT PRIMARY KEY,
+    claimed_at  TEXT NOT NULL
+);
 """
 
 
@@ -134,6 +138,26 @@ def ensure_escalation(
         return existing
     if not _has_investigation_result(result):
         return []
+
+    # Atomic claim BEFORE firing any real side effect. Two overlapping HTTP
+    # requests for the same new incident (two browser tabs, or a poll
+    # overlapping a manual refresh - plausible with a judge on the dashboard)
+    # would otherwise both pass the `existing` check above before either
+    # commits a row, and both post to Slack and both call Twilio for the same
+    # incident. SQLite serialises writers on this INSERT (WAL mode +
+    # busy_timeout, set in investigation.store.connect), so exactly one caller
+    # ever gets rowcount == 1. The loser never fires escalate() and returns
+    # whatever is stored right now - possibly still empty on the very first
+    # race - rather than blocking: the dashboard already polls periodically,
+    # so the next read picks up the winner's result. Fewer moving parts than
+    # a bounded wait, and nothing to get wrong under a timeout.
+    with connection:
+        claimed = connection.execute(
+            "INSERT OR IGNORE INTO escalation_claim (incident_id, claimed_at) VALUES (?, ?)",
+            (incident_id, _utc_now()),
+        )
+    if claimed.rowcount == 0:
+        return load_escalation(connection, incident_id)
 
     def enqueue_call(call_id: str, payload: Mapping[str, Any]) -> None:
         record_pending_call(connection, call_id, payload)

@@ -37,6 +37,15 @@ SEVERITY_EMOJI = {"low": "⚪", "medium": "🟡", "high": "🟠", "critical": "�
 SEVERITY_COLOR = {"low": "#94A3B8", "medium": "#EAB308", "high": "#F97316", "critical": "#DC2626"}
 BRAND_ACCENT = "🟣"
 
+# Headroom under Slack's real limits (~3000 chars per mrkdwn section text,
+# 150 for a header's plain_text) - narrative fields are LLM-authored and
+# unbounded (investigation/contracts.py sets no max_length), and Slack
+# rejects the WHOLE message on overflow, which would silently fail the
+# primary channel for a critical incident.
+SECTION_TEXT_LIMIT = 2900
+HEADER_TEXT_LIMIT = 140
+_TRUNCATION_SUFFIX = "…"
+
 CHANNELS_BY_SEVERITY = {
     "low": ("dashboard",),
     "medium": ("dashboard",),
@@ -117,6 +126,16 @@ def notify_slack(
         return _record("slack", "failed", payload, detail=str(exc))
 
 
+def _truncate(text: str | None, limit: int, *, suffix: str = _TRUNCATION_SUFFIX) -> str | None:
+    """Bound text length so Slack never rejects the whole message on overflow."""
+    if text is None:
+        return None
+    text = str(text)
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - len(suffix), 0)].rstrip() + suffix
+
+
 def humanize_id(value: str) -> str:
     """merchant-a -> Merchant A, provider-p2 -> Provider P2. Formatting only, no new data."""
     words = []
@@ -172,7 +191,10 @@ def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": f"{sev_icon} {severity_label}" + (f" · {scope}" if scope else ""),
+                "text": _truncate(
+                    f"{sev_icon} {severity_label}" + (f" · {scope}" if scope else ""),
+                    HEADER_TEXT_LIMIT,
+                ),
                 "emoji": True,
             },
         },
@@ -190,7 +212,7 @@ def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
         change_text = f"*{metric_label}*\n{_pct(expected)}  ➜  *{_pct(actual)}*"
         if cohort_label:
             change_text += f"\n:round_pushpin: `{cohort_label}`"
-        body.append({"type": "section", "text": {"type": "mrkdwn", "text": change_text}})
+        body.append({"type": "section", "text": {"type": "mrkdwn", "text": _truncate(change_text, SECTION_TEXT_LIMIT)}})
         body.append({"type": "divider"})
         summary = f"{sev_icon} {severity_label}: {metric_label} {_pct(expected)} -> {_pct(actual)}"
         if cohort_label:
@@ -213,7 +235,7 @@ def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
     if hypothesis_statement:
         confidence_suffix = f" — _{confidence} confidence_" if confidence else ""
         text = f":mag: *Possible cause*{confidence_suffix}\n{hypothesis_statement}"
-        body.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
+        body.append({"type": "section", "text": {"type": "mrkdwn", "text": _truncate(text, SECTION_TEXT_LIMIT)}})
 
     not_ruled_out = "\n".join(
         f"• {item.get('explanation')}"
@@ -221,18 +243,15 @@ def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(item, Mapping) and item.get("explanation")
     )
     if not_ruled_out:
-        body.append(
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": f":grey_question: *Not ruled out*\n{not_ruled_out}"},
-            }
-        )
+        text = _truncate(f":grey_question: *Not ruled out*\n{not_ruled_out}", SECTION_TEXT_LIMIT)
+        body.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
 
     action_text = action.get("action")
     if action_text:
         urgency = action.get("urgency")
         label = f"Recommended · {urgency}" if urgency else "Recommended"
-        body.append({"type": "section", "text": {"type": "mrkdwn", "text": f":dart: *{label}*\n{action_text}"}})
+        text = _truncate(f":dart: *{label}*\n{action_text}", SECTION_TEXT_LIMIT)
+        body.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
 
     if action_text or hypothesis_statement:
         body.append({"type": "divider"})
@@ -378,7 +397,9 @@ def _pct(ratio: Any) -> str:
 def _money(value: Mapping[str, Any]) -> str:
     amount, currency = value.get("amount"), value.get("currency", "")
     try:
-        return f"${float(amount):,.0f} {currency}".strip()
+        numeric = float(amount)
+        sign = "-" if numeric < 0 else ""
+        return f"{sign}${abs(numeric):,.0f} {currency}".strip()
     except (TypeError, ValueError):
         return "n/a"
 
@@ -390,12 +411,19 @@ def _payload(incident: Mapping[str, Any], result: Mapping[str, Any] | None) -> d
     competing: list[Any] = []
     citations: dict[str, str] = {}
     if isinstance(result, Mapping):
-        nested = result.get("result") if isinstance(result.get("result"), Mapping) else result
-        if isinstance(nested, Mapping):
-            action = nested.get("recommended_next_action")
-            confidence = nested.get("diagnostic_confidence")
-            hypothesis = nested.get("leading_hypothesis")
-            competing = list(nested.get("competing_explanations") or [])
+        # When the investigation could not run, its narrative fields hold
+        # placeholder text like "Causal investigation unavailable: ..."
+        # (investigation/degrade.py). The C5 contract requires these null in
+        # that case rather than passed through as if they were a real
+        # diagnosis - a critical incident must never look like it has a
+        # cause when it does not.
+        if result.get("outcome") != "agent_unavailable":
+            nested = result.get("result") if isinstance(result.get("result"), Mapping) else result
+            if isinstance(nested, Mapping):
+                action = nested.get("recommended_next_action")
+                confidence = nested.get("diagnostic_confidence")
+                hypothesis = nested.get("leading_hypothesis")
+                competing = list(nested.get("competing_explanations") or [])
         citations = _citations_from_trail(result.get("trail"))
     return {
         "incident_id": incident.get("incident_id"),

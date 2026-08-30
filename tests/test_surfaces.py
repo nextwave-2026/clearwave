@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.error
 import urllib.request
 import warnings
 from pathlib import Path
@@ -28,6 +29,8 @@ from surfaces.escalation import (
     twiml_for,
     twilio_provider,
 )
+from surfaces import escalation as escalation_module
+from surfaces.escalation import _money, _truncate
 from surfaces.inject import (
     INJECTED_INCIDENT,
     fire_hidden_incident,
@@ -35,7 +38,14 @@ from surfaces.inject import (
 )
 from surfaces.present import cohort_scope_label, merchant_health
 from surfaces.server import SurfacesApp, make_server
-from surfaces.store import connect, list_incidents, load_escalation
+from surfaces.store import (
+    connect,
+    ensure_escalation,
+    list_incidents,
+    load_escalation,
+    load_incident,
+    load_investigation,
+)
 from worker.helpers.control import CONTROL_TOPIC
 from worker.inject import start_command, stop_command
 
@@ -456,11 +466,78 @@ class SurfacesTests(unittest.TestCase):
         events = self.app.detail("inc-degraded-esc")["escalation"]
         self.assertTrue(events)
         payload = events[0]["payload"]
-        self.assertEqual(
-            payload["leading_hypothesis"]["statement"],
-            "Causal investigation unavailable: agent down",
+        # Escalation still fires on a degraded diagnosis (ADR 0010), but the
+        # placeholder narrative ("Causal investigation unavailable: ...") must
+        # never be sent as if it were a real cause - that would fabricate a
+        # diagnosis for exactly the incident that has none.
+        self.assertIsNone(payload["leading_hypothesis"])
+        self.assertIsNone(payload["diagnostic_confidence"])
+        self.assertIsNone(payload["recommended_next_action"])
+        self.assertEqual(payload["competing_explanations"], [])
+
+    def test_agent_unavailable_detail_and_queue_both_omit_the_raw_narrative(self):
+        # Same leak as above, one layer down: the dashboard's raw investigation
+        # result and the queue's confidence badge must not show the degrade
+        # placeholder either, even though the narrative banner correctly says
+        # it is unavailable.
+        connection = self._seed(_incident("inc-degraded-ui", "critical", "2026-08-29T10:00:00Z"))
+        persist_result(
+            connection,
+            "inc-degraded-ui",
+            {
+                "incident_id": "inc-degraded-ui",
+                "leading_hypothesis": {"statement": "Causal investigation unavailable: agent down"},
+                "diagnostic_confidence": "low",
+            },
+            "agent_unavailable",
+            trail=[_trail_entry()],
         )
-        self.assertEqual(payload["diagnostic_confidence"], "low")
+        detail = self.app.detail("inc-degraded-ui")
+        self.assertFalse(detail["investigation"]["narrative_available"])
+        self.assertIsNone(detail["investigation"]["result"])
+        queue_item = self.app.queue()["incidents"][0]
+        self.assertIsNone(queue_item["diagnostic_confidence"])
+
+    def test_ambiguous_outcome_still_renders_its_real_narrative(self):
+        # The C5 contract nulls narrative fields only for agent_unavailable.
+        # An ambiguous result has a real narrative, just with more caveats -
+        # it must render normally, not be treated as unavailable.
+        connection = self._seed(_incident("inc-ambiguous", "high", "2026-08-29T10:00:00Z"))
+        persist_result(
+            connection,
+            "inc-ambiguous",
+            {
+                "incident_id": "inc-ambiguous",
+                "leading_hypothesis": {"statement": "Provider or issuer, evidence cannot separate them."},
+                "diagnostic_confidence": "low",
+            },
+            "ambiguous",
+            trail=[_trail_entry()],
+        )
+        detail = self.app.detail("inc-ambiguous")
+        self.assertTrue(detail["investigation"]["narrative_available"])
+        self.assertEqual(
+            detail["investigation"]["result"]["leading_hypothesis"]["statement"],
+            "Provider or issuer, evidence cannot separate them.",
+        )
+        self.assertEqual(self.app.queue()["incidents"][0]["diagnostic_confidence"], "low")
+
+    def test_insufficient_evidence_outcome_still_renders_its_real_narrative(self):
+        connection = self._seed(_incident("inc-insufficient", "high", "2026-08-29T10:00:00Z"))
+        persist_result(
+            connection,
+            "inc-insufficient",
+            {
+                "incident_id": "inc-insufficient",
+                "leading_hypothesis": {"statement": "Not enough evidence yet to name a leading cause."},
+                "diagnostic_confidence": "low",
+            },
+            "insufficient_evidence",
+            trail=[_trail_entry()],
+        )
+        detail = self.app.detail("inc-insufficient")
+        self.assertTrue(detail["investigation"]["narrative_available"])
+        self.assertIsNotNone(detail["investigation"]["result"])
 
     def test_channels_for_pins_full_severity_binding_and_unknown_fallback(self):
         # Pins the complete policy (critical and high both phone; low/medium dashboard-only;
@@ -662,6 +739,73 @@ class SlackBlockKitTests(unittest.TestCase):
         self.assertEqual(outcome["status"], "delivered")
         self.assertEqual(captured["url"], "https://hooks.slack.test/x")
         self.assertIn("blocks", captured["message"])
+
+    def test_money_formats_negative_amounts_with_leading_sign(self):
+        self.assertEqual(_money({"amount": -28000.0, "currency": "USD"}), "-$28,000 USD")
+        self.assertEqual(_money({"amount": 28000.0, "currency": "USD"}), "$28,000 USD")
+
+    def test_truncate_helper_leaves_short_text_untouched(self):
+        self.assertEqual(_truncate("short", 100), "short")
+        self.assertIsNone(_truncate(None, 100))
+        self.assertTrue(_truncate("x" * 200, 100).endswith("…"))
+        self.assertLessEqual(len(_truncate("x" * 200, 100)), 100)
+
+    def test_slack_blocks_truncates_a_long_hypothesis_statement(self):
+        # LLM-authored narrative text has no max_length anywhere upstream
+        # (investigation/contracts.py). Slack rejects the whole message over
+        # ~3000 chars per section, silently failing the critical channel.
+        # Shrink the real constant instead of building a 3000-char fixture.
+        original = escalation_module.SECTION_TEXT_LIMIT
+        escalation_module.SECTION_TEXT_LIMIT = 60
+        self.addCleanup(setattr, escalation_module, "SECTION_TEXT_LIMIT", original)
+        payload = {
+            "incident_id": "inc-long",
+            "severity": "critical",
+            "leading_hypothesis": {"statement": "Provider P2 degradation. " * 20},
+        }
+        body = slack_blocks(payload)["attachments"][0]["blocks"]
+        hypothesis_block = next(b for b in body if "Possible cause" in json.dumps(b))
+        text = hypothesis_block["text"]["text"]
+        self.assertLessEqual(len(text), 60)
+        self.assertTrue(text.endswith("…"))
+
+    def test_slack_blocks_truncates_joined_competing_explanations(self):
+        original = escalation_module.SECTION_TEXT_LIMIT
+        escalation_module.SECTION_TEXT_LIMIT = 60
+        self.addCleanup(setattr, escalation_module, "SECTION_TEXT_LIMIT", original)
+        payload = {
+            "incident_id": "inc-long",
+            "severity": "high",
+            "competing_explanations": [
+                {"explanation": "Bank X over-decline cannot be ruled out."},
+                {"explanation": "Deployment regression on the router is also plausible."},
+                {"explanation": "Retry amplification could independently explain the timeout spike."},
+            ],
+        }
+        body = slack_blocks(payload)["attachments"][0]["blocks"]
+        not_ruled_out_block = next(b for b in body if "Not ruled out" in json.dumps(b))
+        text = not_ruled_out_block["text"]["text"]
+        self.assertLessEqual(len(text), 60)
+        self.assertTrue(text.endswith("…"))
+
+    def test_slack_blocks_header_stays_under_the_plain_text_limit(self):
+        original = escalation_module.HEADER_TEXT_LIMIT
+        escalation_module.HEADER_TEXT_LIMIT = 20
+        self.addCleanup(setattr, escalation_module, "HEADER_TEXT_LIMIT", original)
+        payload = {
+            "incident_id": "inc-long-scope",
+            "severity": "critical",
+            "affected_cohort": {
+                "provider": "provider-p2",
+                "country": "CO",
+                "card_network": "mastercard",
+                "payment_method": "card",
+                "issuing_bank": "bank-x",
+            },
+        }
+        body = slack_blocks(payload)["attachments"][0]["blocks"]
+        header_block = next(b for b in body if b["type"] == "header")
+        self.assertLessEqual(len(header_block["text"]["text"]), 20)
 
 
 class TwilioPhoneTests(unittest.TestCase):
@@ -1100,6 +1244,188 @@ class DashboardWiringTests(unittest.TestCase):
         # Containers the page only addresses by id carry no rule by design.
         containers = {"queue-board", "detail-board", "evidence-board", "escalation-board", "is-active"}
         self.assertEqual(sorted(emitted - styled - containers), [])
+
+
+class EscalationRaceTests(unittest.TestCase):
+    """Two overlapping HTTP requests must never fire real channels twice.
+
+    surfaces/server.py runs ThreadingHTTPServer (one thread per connection),
+    and overview()/queue()/detail() all call ensure_escalation() on every
+    request. Without an atomic claim, two requests for the same brand-new
+    critical incident - two browser tabs, or a poll overlapping a manual
+    refresh - could both pass the "not yet escalated" check before either
+    persists a row, posting to Slack and calling Twilio twice for one
+    incident.
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.db = Path(self._tmpdir.name) / "clearwave.db"
+        seed = connect(self.db)
+        insert_incident(seed, _incident("inc-race", "critical", "2026-08-29T10:00:00Z"))
+        persist_result(seed, "inc-race", _diagnosis("inc-race"), "diagnosed", trail=[_trail_entry()])
+        seed.close()
+
+    def test_ensure_escalation_fires_channels_exactly_once_under_concurrent_calls(self):
+        call_count = 0
+        count_lock = threading.Lock()
+
+        def fake_escalate(incident, result, **kwargs):
+            nonlocal call_count
+            with count_lock:
+                call_count += 1
+            return [{"channel": "dashboard", "status": "delivered", "payload": {}}]
+
+        start_barrier = threading.Barrier(2)
+        errors: list[BaseException] = []
+
+        def worker():
+            connection = connect(self.db)
+            try:
+                incident = load_incident(connection, "inc-race")
+                investigation = load_investigation(connection, "inc-race")
+                start_barrier.wait(timeout=5)  # maximise overlap at the claim INSERT
+                ensure_escalation(connection, incident, investigation)
+            except BaseException as exc:  # noqa: BLE001 - surface it to the main thread
+                errors.append(exc)
+            finally:
+                connection.close()
+
+        with patch("surfaces.store.escalate", side_effect=fake_escalate):
+            threads = [threading.Thread(target=worker) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=5)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(call_count, 1, "escalate() must fire exactly once, not once per racing request")
+        final_connection = connect(self.db)
+        self.addCleanup(final_connection.close)
+        self.assertEqual(len(load_escalation(final_connection, "inc-race")), 1)
+
+    def test_repeat_call_after_resolution_never_calls_escalate_again(self):
+        connection = connect(self.db)
+        self.addCleanup(connection.close)
+        incident = load_incident(connection, "inc-race")
+        investigation = load_investigation(connection, "inc-race")
+        first = ensure_escalation(connection, incident, investigation)
+        self.assertTrue(first)
+
+        def failing_escalate(*args, **kwargs):
+            raise AssertionError("escalate() must not be called again for an already-resolved incident")
+
+        with patch("surfaces.store.escalate", side_effect=failing_escalate):
+            second = ensure_escalation(connection, incident, investigation)
+        self.assertEqual(second, first)
+
+    def test_loser_returns_without_firing_and_a_later_read_sees_the_winners_result(self):
+        # Simulates the loser side of the race directly: a claim already
+        # exists (the winner is mid-flight), so this call must not fire
+        # escalate() and must not raise - it returns whatever is stored,
+        # which may still be empty, and self-heals on the next read once the
+        # winner finishes.
+        connection = connect(self.db)
+        self.addCleanup(connection.close)
+        with connection:
+            connection.execute(
+                "INSERT INTO escalation_claim (incident_id, claimed_at) VALUES (?, ?)",
+                ("inc-race", "2026-08-29T10:00:00.000Z"),
+            )
+
+        def failing_escalate(*args, **kwargs):
+            raise AssertionError("the losing caller must never fire escalate()")
+
+        incident = load_incident(connection, "inc-race")
+        investigation = load_investigation(connection, "inc-race")
+        with patch("surfaces.store.escalate", side_effect=failing_escalate):
+            outcome = ensure_escalation(connection, incident, investigation)
+        self.assertEqual(outcome, [])  # nothing persisted yet - the "winner" never actually ran
+
+        # The winner finishes and persists its rows; a later read now sees them.
+        with connection:
+            connection.execute(
+                """INSERT INTO escalation_event
+                   (incident_id, channel, status, payload, detail, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                ("inc-race", "dashboard", "delivered", "{}", None, "2026-08-29T10:00:01.000Z"),
+            )
+        healed = ensure_escalation(connection, incident, investigation)
+        self.assertEqual(len(healed), 1)
+
+
+class ServerHardeningTests(unittest.TestCase):
+    """Defensive handling for a server reachable during a live judge demo."""
+
+    def setUp(self):
+        os.environ["CLEARWAVE_SURFACES_QUIET"] = "1"
+        self.addCleanup(os.environ.pop, "CLEARWAVE_SURFACES_QUIET", None)
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.db = Path(self._tmpdir.name) / "clearwave.db"
+        self.httpd = make_server(self.db, host="127.0.0.1", port=0)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self.httpd.shutdown)
+        self.addCleanup(self.httpd.server_close)
+        self.port = self.httpd.server_address[1]
+
+    def _raw_post(self, path, body, content_length_header):
+        import http.client
+
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=2)
+        try:
+            connection.putrequest("POST", path, skip_accept_encoding=True)
+            connection.putheader("Content-Length", content_length_header)
+            connection.endheaders()
+            connection.send(body)
+            return connection.getresponse()
+        finally:
+            connection.close()
+
+    def test_do_post_rejects_a_non_numeric_content_length(self):
+        response = self._raw_post("/api/trigger", b"{}", "not-a-number")
+        self.assertEqual(response.status, 400)
+
+    def test_do_post_rejects_a_negative_content_length(self):
+        response = self._raw_post("/api/trigger", b"", "-1")
+        self.assertEqual(response.status, 400)
+
+    def test_do_post_rejects_a_content_length_over_the_body_cap(self):
+        from surfaces.server import MAX_BODY_BYTES
+
+        response = self._raw_post("/api/trigger", b"", str(MAX_BODY_BYTES + 1))
+        self.assertEqual(response.status, 400)
+
+    def test_internal_exception_returns_a_clean_500_not_a_broken_connection(self):
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with patch.object(SurfacesApp, "overview", side_effect=RuntimeError("boom")):
+            try:
+                opener.open(f"http://127.0.0.1:{self.port}/api/overview", timeout=2)
+                self.fail("expected an HTTPError with status 500")
+            except urllib.error.HTTPError as exc:
+                self.assertEqual(exc.code, 500)
+                payload = json.loads(exc.read().decode("utf-8"))
+                self.assertIn("error", payload)
+                # No stack trace or internal detail leaks into the response body.
+                self.assertNotIn("boom", json.dumps(payload))
+
+    def test_static_traversal_guard_rejects_a_sibling_directory_sharing_a_prefix(self):
+        from surfaces.server import STATIC_DIR
+
+        sibling = STATIC_DIR.parent / (STATIC_DIR.name + "-evil")
+        sibling.mkdir(exist_ok=True)
+        self.addCleanup(lambda: sibling.rmdir())
+        secret = sibling / "secret.txt"
+        secret.write_text("should never be served", encoding="utf-8")
+        self.addCleanup(secret.unlink)
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        try:
+            opener.open(f"http://127.0.0.1:{self.port}/../{sibling.name}/secret.txt", timeout=2)
+            self.fail("expected a 404")
+        except urllib.error.HTTPError as exc:
+            self.assertEqual(exc.code, 404)
 
 
 if __name__ == "__main__":
