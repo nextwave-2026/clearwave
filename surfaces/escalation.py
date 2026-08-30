@@ -16,6 +16,7 @@ import os
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
+from datetime import datetime
 from typing import Any
 
 from .present import cohort_scope_label
@@ -44,6 +45,10 @@ BRAND_ACCENT = "🟣"
 # primary channel for a critical incident.
 SECTION_TEXT_LIMIT = 2900
 HEADER_TEXT_LIMIT = 140
+# A readability bound, not a Slack one: an LLM-written cause or action that
+# runs to a paragraph is what turns a five-second alert into a wall of text.
+# The full narrative is on the dashboard.
+NARRATIVE_LINE_LIMIT = 240
 _TRUNCATION_SUFFIX = "…"
 
 CHANNELS_BY_SEVERITY = {
@@ -165,22 +170,33 @@ def _money_if_present(value: Any) -> str | None:
     return None if rendered == "n/a" else rendered
 
 
-def _cohort_fields(cohort: Mapping[str, Any]) -> list[dict[str, str]]:
-    labels = (
-        ("merchant_id", "Merchant"),
-        ("provider", "Provider"),
-        ("country", "Country"),
-        ("payment_method", "Payment method"),
-        ("card_network", "Card network"),
-        ("issuing_bank", "Issuing bank"),
-        ("decline_code", "Decline code"),
+def _cohort_line(cohort: Mapping[str, Any], scope: str | None = None) -> str | None:
+    """One scannable line naming the slice: Merchant A · Provider P2 · CO · card.
+
+    A labelled field grid is more complete and slower to read; the same values
+    stay in payload["affected_cohort"] and on the dashboard for whoever needs
+    them spelled out. Whatever the header already names as the scope is left
+    out here, so the reader's eye is never spent twice on one value.
+    """
+    order = (
+        "merchant_id",
+        "provider",
+        "country",
+        "payment_method",
+        "card_network",
+        "issuing_bank",
+        "decline_code",
     )
-    fields = []
-    for key, label in labels:
+    parts = []
+    for key in order:
         value = cohort.get(key)
-        if value:
-            fields.append({"type": "mrkdwn", "text": f"*{label}*\n{_cohort_value(key, value)}"})
-    return fields
+        if not value:
+            continue
+        rendered = _cohort_value(key, value)
+        if scope and rendered in scope:
+            continue
+        parts.append(f"decline: {rendered}" if key == "decline_code" else rendered)
+    return " · ".join(parts) or None
 
 
 def _cohort_value(key: str, value: Any) -> str:
@@ -193,10 +209,19 @@ def _cohort_value(key: str, value: Any) -> str:
 def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Render one Block Kit message. Every figure is read from payload, never computed.
 
-    Severity and diagnostic confidence are kept in separate blocks on purpose
-    (PRD section 11): a CRITICAL incident with LOW confidence must not read as
-    one collapsed score. The severity colour bar lives on the attachment, not
-    the confidence text, so the two never share one visual channel either.
+    Shaped for a five-second read: severity and scope in the header, the metric
+    move and the money on one line under it, cause and next action on a second,
+    and everything an operator does not need in those five seconds - incident
+    id, lifecycle, evidence sources, the no-remediation note - in one grey
+    footer. The previous rendering printed the loss rate, the GMV and the
+    metric move two and three times each across an executive readout, a change
+    section and a field grid. Nothing here is computed differently; the
+    duplicate readouts were removed, not recalculated.
+
+    Severity and diagnostic confidence still render in separate blocks (PRD
+    section 11): a CRITICAL incident with LOW confidence must never read as one
+    collapsed score. The severity colour bar lives on the attachment, so the
+    two never share one visual channel either.
     """
     severity = str(payload.get("severity") or "").lower()
     severity_label = severity.upper() or "UNKNOWN"
@@ -228,10 +253,10 @@ def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
     metric = change.get("metric")
     metric_label = str(metric).replace("_", " ").title() if metric else None
     expected, actual = change.get("expected"), change.get("actual")
-    cohort_label = " / ".join(str(value) for value in cohort.values() if value)
-    cohort_fields = _cohort_fields(cohort)
+    has_change = bool(metric_label) and expected is not None and actual is not None
     merchant = humanize_id(cohort.get("merchant_id")) if cohort.get("merchant_id") else None
     scope = merchant or payload.get("scope_label") or cohort_scope_label(cohort)
+    cohort_line = _cohort_line(cohort, str(scope) if scope else None)
     gmv_at_risk = _money_if_present(financial.get("gmv_at_risk"))
     loss_per_hour = _money_if_present(financial.get("loss_per_hour"))
 
@@ -246,130 +271,95 @@ def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
                 ),
                 "emoji": True,
             },
-        },
-        {
-            "type": "context",
-            "elements": [
-                {"type": "mrkdwn", "text": f"Incident `#{incident_id}`"},
-                {"type": "mrkdwn", "text": f"Lifecycle: *{payload.get('lifecycle_state') or 'unknown'}*"},
-            ],
-        },
+        }
     ]
 
-    summary = f"{severity_label}: {incident_id}"
-    if scope:
-        summary = f"{sev_icon} {severity_label}: {scope}"
-    executive_lines = []
+    # What is happening and what it costs - the lines this alert exists for.
+    headline: list[str] = []
+    if has_change:
+        headline.append(f"*{metric_label} {_pct(expected)} ➜ {_pct(actual)}*")
+    money = []
     if loss_per_hour:
-        executive_lines.append(f"*Loss rate:* {loss_per_hour}/h")
+        money.append(f"*{loss_per_hour}/h* lost")
     if gmv_at_risk:
-        executive_lines.append(f"*GMV at risk:* {gmv_at_risk}")
-    if metric_label and expected is not None and actual is not None:
-        executive_lines.append(f"*{metric_label}:* {_pct(expected)} expected -> *{_pct(actual)} actual*")
-    if confidence:
-        executive_lines.append(f"*Diagnostic confidence:* {confidence}")
-    action_text = action.get("action")
-    if action_text:
-        executive_lines.append(f"*Next action:* {_truncate(str(action_text), 240)}")
-    if executive_lines:
+        money.append(f"{gmv_at_risk} at risk")
+    if payload.get("onset"):
+        money.append(f"since {_clock(payload['onset'])}")
+    if money:
+        headline.append(" · ".join(money))
+    if cohort_line:
+        headline.append(cohort_line)
+    if headline:
         body.append(
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": _truncate(
-                        ":rotating_light: *Executive readout*\n" + "\n".join(executive_lines),
-                        SECTION_TEXT_LIMIT,
-                    ),
+                    "text": _truncate("\n".join(headline), SECTION_TEXT_LIMIT),
                 },
             }
         )
-        body.append({"type": "divider"})
 
-    if metric_label and expected is not None and actual is not None:
-        change_text = f"*{metric_label}*\n{_pct(expected)}  ➜  *{_pct(actual)}*"
-        if cohort_label:
-            change_text += f"\n:round_pushpin: `{cohort_label}`"
-        body.append({"type": "section", "text": {"type": "mrkdwn", "text": _truncate(change_text, SECTION_TEXT_LIMIT)}})
-        body.append({"type": "divider"})
-        summary = f"{sev_icon} {severity_label}: {metric_label} {_pct(expected)} -> {_pct(actual)}"
-        if cohort_label:
-            summary += f" in {cohort_label}"
-        if loss_per_hour:
-            summary += f" | {loss_per_hour}/h"
-
-    if cohort_fields:
-        body.append(
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": "*Affected slice*"},
-                "fields": cohort_fields[:10],
-            }
-        )
-        body.append({"type": "divider"})
-
-    fields = []
-    if gmv_at_risk:
-        fields.append({"type": "mrkdwn", "text": f":moneybag: *GMV at risk*\n{gmv_at_risk}"})
-    if loss_per_hour:
-        fields.append(
-            {"type": "mrkdwn", "text": f":chart_with_downwards_trend: *Loss rate*\n{loss_per_hour}/h"}
-        )
-    if payload.get("onset"):
-        fields.append({"type": "mrkdwn", "text": f":clock3: *Onset (UTC)*\n{payload['onset']}"})
-    if confidence:
-        fields.append({"type": "mrkdwn", "text": f":mag: *Diagnostic confidence*\n{confidence}"})
-    if fields:
-        body.append({"type": "section", "fields": fields})
-        body.append({"type": "divider"})
-
+    # Why, and what to do about it. One block, so the eye lands once.
     hypothesis_statement = hypothesis.get("statement")
+    action_text = action.get("action")
+    diagnosis: list[str] = []
     if hypothesis_statement:
-        confidence_suffix = f" — _{confidence} confidence_" if confidence else ""
-        text = f":mag: *Possible cause*{confidence_suffix}\n{hypothesis_statement}"
-        body.append({"type": "section", "text": {"type": "mrkdwn", "text": _truncate(text, SECTION_TEXT_LIMIT)}})
-
-    not_ruled_out = "\n".join(
-        f"• {item.get('explanation')}"
+        label = f"Likely cause ({confidence} confidence)" if confidence else "Likely cause"
+        diagnosis.append(f"*{label}:* {_truncate(str(hypothesis_statement), NARRATIVE_LINE_LIMIT)}")
+    not_ruled_out = " · ".join(
+        str(item.get("explanation"))
         for item in competing
         if isinstance(item, Mapping) and item.get("explanation")
     )
     if not_ruled_out:
-        text = _truncate(f":grey_question: *Not ruled out*\n{not_ruled_out}", SECTION_TEXT_LIMIT)
-        body.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
-
+        # Kept even in the short form: a leading hypothesis shown alone reads as
+        # a settled cause, which is the fabricated certainty ADR 0007 forbids.
+        diagnosis.append(f"_Not ruled out:_ {_truncate(not_ruled_out, NARRATIVE_LINE_LIMIT)}")
     if action_text:
         urgency = action.get("urgency")
-        label = f"Recommended · {urgency}" if urgency else "Recommended"
-        text = _truncate(
-            f":dart: *{label}*\n{action_text}\n_No automatic remediation was executed._",
-            SECTION_TEXT_LIMIT,
-        )
-        body.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
-
-    if action_text or hypothesis_statement:
-        body.append({"type": "divider"})
-
-    # Reader-facing: which sources were checked, not the raw query_id hashes -
-    # those are audit detail for the dashboard's evidence trail, not a Slack
-    # alert meant for a fast scan. The full citation still lives in
-    # payload["citations"] for whoever needs to trace a claim.
-    if citations:
-        sources = ", ".join(tool.replace("_", " ") for tool in citations)
+        # "Do now" already says urgency: now. Only a different urgency adds a word.
+        suffix = f" _({urgency})_" if urgency and str(urgency).lower() != "now" else ""
+        diagnosis.append(f"*Do now:*{suffix} {_truncate(str(action_text), NARRATIVE_LINE_LIMIT)}")
+    if confidence and not hypothesis_statement:
+        # Confidence never rides on the severity block; with no hypothesis to
+        # attach it to it still gets its own line rather than being dropped.
+        diagnosis.append(f"*Diagnostic confidence:* {confidence}")
+    if diagnosis:
         body.append(
-            {"type": "context", "elements": [{"type": "mrkdwn", "text": f":microscope: Verified against: {sources}"}]}
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": _truncate("\n".join(diagnosis), SECTION_TEXT_LIMIT),
+                },
+            }
         )
+
+    # Everything an operator does not need inside the first five seconds. Tool
+    # names, not the raw query_id hashes - the full citation stays in
+    # payload["citations"] for the dashboard's evidence trail.
+    footer = [f"`#{incident_id}`", str(payload.get("lifecycle_state") or "unknown")]
+    if citations:
+        footer.append("Verified against " + ", ".join(tool.replace("_", " ") for tool in citations))
+    if action_text:
+        # ADR 0029: a message carrying a recommendation says on that same
+        # message that nothing was executed.
+        footer.append("No automatic remediation was executed")
     body.append(
         {
             "type": "context",
             "elements": [
-                {
-                    "type": "mrkdwn",
-                    "text": "✅ Every figure above comes straight from live payment data — nothing estimated or guessed",
-                }
+                {"type": "mrkdwn", "text": _truncate("  ·  ".join(footer), SECTION_TEXT_LIMIT)}
             ],
         }
     )
+
+    summary = f"{sev_icon} {severity_label}: {scope}" if scope else f"{severity_label}: {incident_id}"
+    if has_change:
+        summary += f" · {metric_label} {_pct(expected)} ➜ {_pct(actual)}"
+    if loss_per_hour:
+        summary += f" · {loss_per_hour}/h"
 
     return {
         "channel": os.environ.get(SLACK_CHANNEL_ENV) or DEFAULT_SLACK_CHANNEL,
@@ -377,7 +367,7 @@ def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
         "blocks": [
             {
                 "type": "context",
-                "elements": [{"type": "mrkdwn", "text": f"{BRAND_ACCENT} *Clearwave Control Tower*  ·  Payment Operations Alert"}],
+                "elements": [{"type": "mrkdwn", "text": f"{BRAND_ACCENT} *Clearwave Control Tower*"}],
             }
         ],
         "attachments": [{"color": SEVERITY_COLOR.get(severity, "#94A3B8"), "blocks": body}],
@@ -479,6 +469,20 @@ def _post_twilio_call(account_sid: str, body: bytes, headers: dict[str, str]) ->
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     with urllib.request.urlopen(request, timeout=5) as response:
         response.read()
+
+
+def _clock(onset: Any) -> str:
+    """2026-08-30T02:14:00Z -> 02:14 UTC. Formatting only; unparseable text passes through.
+
+    A full ISO timestamp costs a second of reading to answer "when did this
+    start"; the exact value stays in payload["onset"] and on the dashboard.
+    """
+    text = str(onset)
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text
+    return f"{moment:%H:%M} UTC"
 
 
 def _pct(ratio: Any) -> str:

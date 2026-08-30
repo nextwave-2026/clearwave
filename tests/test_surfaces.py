@@ -916,22 +916,60 @@ class SlackBlockKitTests(unittest.TestCase):
         self.assertIn("112,000", rendered)
         self.assertIn("Merchant A", rendered)
         self.assertIn("$112,000 USD/h", message["text"])
-        self.assertIn("Executive readout", rendered)
-        self.assertIn("Next action", rendered)
-        self.assertIn("Affected slice", rendered)
+        self.assertIn("Do now:", rendered)
         self.assertIn("No automatic remediation was executed", rendered)
         body = message["attachments"][0]["blocks"]
         self.assertEqual(message["attachments"][0]["color"], "#DC2626")
         severity_block = next(b for b in body if b["type"] == "header")
-        hypothesis_block = next(b for b in body if "Possible cause" in json.dumps(b))
-        not_ruled_out_block = next(b for b in body if "Not ruled out" in json.dumps(b))
         self.assertIn("CRITICAL", severity_block["text"]["text"])
         self.assertNotIn("medium", severity_block["text"]["text"])
-        self.assertIn("medium confidence", hypothesis_block["text"]["text"])
-        self.assertNotIn("Bank X over-decline", hypothesis_block["text"]["text"])
-        self.assertIn("Bank X over-decline", not_ruled_out_block["text"]["text"])
+        # Confidence rides with the cause, never with the severity band: a
+        # CRITICAL incident held at LOW confidence must not read as one score.
+        diagnosis = next(b for b in body if "Likely cause" in json.dumps(b))
+        lines = diagnosis["text"]["text"].split("\n")
+        cause_line = next(line for line in lines if "Likely cause" in line)
+        not_ruled_out_line = next(line for line in lines if "Not ruled out" in line)
+        self.assertIn("medium confidence", cause_line)
+        self.assertNotIn("Bank X over-decline", cause_line)
+        self.assertIn("Bank X over-decline", not_ruled_out_line)
 
-    def test_affected_slice_is_labelled_for_fast_tam_triage(self):
+    def test_message_is_short_enough_to_read_in_five_seconds(self):
+        # The regression this guards is the alert growing back: the loss rate,
+        # the GMV and the metric move each used to be restated across an
+        # executive readout, a change section and a labelled field grid, which
+        # is what made the message unreadable at a glance.
+        payload = {
+            "incident_id": "inc-2026-08-29-001",
+            "severity": "critical",
+            "lifecycle_state": "diagnosed",
+            "change": {
+                "metric": "payment_approval_conversion",
+                "expected": 0.92,
+                "actual": 0.64,
+            },
+            "affected_cohort": {"merchant_id": "merchant-a", "provider": "provider-p2"},
+            "financial_impact": {
+                "gmv_at_risk": {"amount": 28000.0, "currency": "USD"},
+                "loss_per_hour": {"amount": 112000.0, "currency": "USD"},
+            },
+            "onset": "2026-08-29T10:00:00Z",
+            "diagnostic_confidence": "medium",
+            "leading_hypothesis": {"statement": "Provider P2 degradation is the leading explanation."},
+            "competing_explanations": [{"explanation": "Bank X over-decline cannot be ruled out."}],
+            "recommended_next_action": {"action": "Investigate Provider P2.", "urgency": "now"},
+            "citations": {"decline_breakdown": "decline_breakdown:q1"},
+        }
+        body = slack_blocks(payload)["attachments"][0]["blocks"]
+        self.assertEqual([b["type"] for b in body], ["header", "section", "section", "context"])
+        text = "\n".join(
+            b["text"]["text"] if b.get("text") else " ".join(e["text"] for e in b["elements"])
+            for b in body
+        )
+        for figure in ("112,000", "28,000", "64.0%", "92.0%", "Merchant A"):
+            self.assertEqual(text.count(figure), 1, f"{figure} is repeated: {text}")
+        self.assertLessEqual(len(text.splitlines()), 8)
+
+    def test_affected_slice_reads_as_one_line(self):
         payload = {
             "incident_id": "inc-slice",
             "severity": "high",
@@ -945,28 +983,25 @@ class SlackBlockKitTests(unittest.TestCase):
                 "decline_code": "provider_timeout",
             },
         }
+        body = slack_blocks(payload)["attachments"][0]["blocks"]
+        section = next(b for b in body if b["type"] == "section")
+        slice_line = next(
+            line for line in section["text"]["text"].split("\n") if "Provider P2" in line
+        )
+        # Merchant A is the header scope and is deliberately not repeated here.
+        self.assertEqual(
+            slice_line,
+            "Provider P2 · CO · cash in store · visa · bank-x · decline: provider timeout",
+        )
+
+    def test_onset_renders_as_a_readable_clock_time(self):
+        payload = {"incident_id": "inc-onset", "severity": "high", "onset": "2026-08-29T10:00:00Z"}
         rendered = json.dumps(slack_blocks(payload))
-        self.assertIn("Affected slice", rendered)
-        for expected in (
-            "Merchant A",
-            "Provider P2",
-            "CO",
-            "cash in store",
-            "visa",
-            "bank-x",
-            "provider timeout",
-        ):
-            self.assertIn(expected, rendered)
-        for label in (
-            "*Merchant*",
-            "*Provider*",
-            "*Country*",
-            "*Payment method*",
-            "*Card network*",
-            "*Issuing bank*",
-            "*Decline code*",
-        ):
-            self.assertIn(label, rendered)
+        self.assertIn("since 10:00 UTC", rendered)
+        self.assertNotIn("2026-08-29T10:00:00Z", rendered)
+        # An onset that is not a timestamp is passed through, never dropped.
+        odd = json.dumps(slack_blocks({"incident_id": "inc-odd", "onset": "unknown"}))
+        self.assertIn("since unknown", odd)
 
     def test_citations_render_as_verified_against_sources(self):
         payload = {
@@ -1029,7 +1064,7 @@ class SlackBlockKitTests(unittest.TestCase):
             "leading_hypothesis": {"statement": "Provider P2 degradation. " * 20},
         }
         body = slack_blocks(payload)["attachments"][0]["blocks"]
-        hypothesis_block = next(b for b in body if "Possible cause" in json.dumps(b))
+        hypothesis_block = next(b for b in body if "Likely cause" in json.dumps(b))
         text = hypothesis_block["text"]["text"]
         self.assertLessEqual(len(text), 60)
         self.assertTrue(text.endswith("…"))

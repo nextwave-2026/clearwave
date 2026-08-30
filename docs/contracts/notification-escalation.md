@@ -119,13 +119,29 @@ One record per channel per incident, persisted by `surfaces/store.py` in the sha
   an Incoming Webhook URL read from `CLEARWAVE_SLACK_WEBHOOK_URL` (channel name from
   `CLEARWAVE_SLACK_CHANNEL`, defaulting to `#control-tower`). The message is one `attachments` entry
   colour-coded by severity (`SEVERITY_COLOR`) wrapping the actual blocks, with a plain brand context
-  block outside the attachment; severity and diagnostic confidence render in separate blocks on
-  purpose, and merchant/provider identifiers are humanised for readability
-  (`surfaces/escalation.py:humanize_id`, e.g. `merchant-a` -> `Merchant A`) without changing the
-  underlying value. When `citations` is non-empty, a trailing context block lists the tool names
-  queried ("Verified against: ..."), so a reader can see the claim was checked without needing the
-  raw `query_id`s - those stay in `payload["citations"]` for the dashboard's evidence trail. No
-  Slack SDK dependency - one `urllib` POST.
+  block outside the attachment.
+
+  The message is shaped for a five-second read and is at most four blocks: a **header**
+  (`{severity emoji} {SEVERITY} · {scope}`), one **section** carrying the metric move, the money and
+  the slice (`*Metric expected ➜ actual*` / `*$X/h* lost · $Y at risk · since HH:MM UTC` / a single
+  cohort line), one **section** carrying the narrative when C4 has produced one (`Likely cause
+  (<confidence>)`, `Not ruled out`, `Do now`), and one grey **context footer** holding what the
+  reader does not need in those five seconds - incident id, lifecycle state, the evidence sources
+  and the no-remediation note. Every figure is still read from the payload and never computed; a
+  figure appears exactly once. A value already named as the header scope is left out of the cohort
+  line rather than repeated. The full cohort, the raw ISO `onset` and the untruncated narrative
+  remain in the payload and on the dashboard.
+
+  Severity and diagnostic confidence never share a block: severity is the header and the colour bar,
+  confidence rides with the cause line. A leading hypothesis is never rendered without the competing
+  explanations beside it (ADR 0007), and a message that carries a recommended action always carries
+  the "No automatic remediation was executed" note (ADR 0029). Merchant/provider identifiers are
+  humanised for readability (`surfaces/escalation.py:humanize_id`, e.g. `merchant-a` ->
+  `Merchant A`) without changing the underlying value. When `citations` is non-empty the footer
+  lists the tool names queried ("Verified against ..."), so a reader can see the claim was checked
+  without needing the raw `query_id`s - those stay in `payload["citations"]` for the dashboard's
+  evidence trail. Narrative lines are bounded twice: `NARRATIVE_LINE_LIMIT` for readability and
+  `SECTION_TEXT_LIMIT` for Slack's own block limit. No Slack SDK dependency - one `urllib` POST.
 - **Phone** (`surfaces/escalation.py:twilio_provider`, `twiml_for`): places one Twilio
   Programmable Voice call via `urllib` against the Calls REST resource, authenticated with HTTP
   Basic Auth from `CLEARWAVE_TWILIO_ACCOUNT_SID` / `CLEARWAVE_TWILIO_AUTH_TOKEN` /
