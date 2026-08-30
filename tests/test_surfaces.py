@@ -34,6 +34,9 @@ from surfaces import escalation as escalation_module
 from surfaces.escalation import _money, _truncate
 from surfaces.inject import (
     INJECTED_INCIDENT,
+    STAGE_COLLAPSE,
+    STAGE_DEVELOPING,
+    acknowledgement,
     fire_hidden_incident,
     injected_incident_command,
 )
@@ -295,8 +298,10 @@ class SurfacesTests(unittest.TestCase):
         self.assertTrue(result["delivered"])
         self.assertTrue(result["fired"])
         self.assertTrue(result["active"])
+        self.assertEqual(result["stage"], "collapse")
         self.assertEqual(published, [start_command("merchant-b", provider="adyen",
-                                                   decline_reason="provider_timeout")])
+                                                   decline_reason="provider_timeout",
+                                                   decline_probability=STAGE_COLLAPSE)])
         self.assertEqual(result["topic"], CONTROL_TOPIC)
         self.assertEqual(result["target"], INJECTED_INCIDENT)
 
@@ -306,8 +311,36 @@ class SurfacesTests(unittest.TestCase):
         self.assertTrue(result["delivered"])
         self.assertFalse(result["fired"])
         self.assertFalse(result["active"])
+        self.assertEqual(result["stage"], "clear")
         self.assertEqual(published, [{"merchant_id": "merchant-b", "action": "stop"}])
         self.assertEqual(published[0], stop_command("merchant-b"))
+
+    def test_developing_stage_publishes_the_mild_probability(self):
+        published = []
+        result = fire_hidden_incident(publisher=published.append, stage="developing")
+        self.assertTrue(result["delivered"])
+        self.assertTrue(result["active"])
+        self.assertEqual(result["stage"], "developing")
+        self.assertEqual(published[0]["decline_probability"], STAGE_DEVELOPING)
+        self.assertEqual(published, [start_command(
+            "merchant-b",
+            provider="adyen",
+            decline_reason="provider_timeout",
+            decline_probability=STAGE_DEVELOPING,
+        )])
+
+    def test_collapse_stage_publishes_the_near_total_break(self):
+        published = []
+        result = fire_hidden_incident(publisher=published.append, stage="collapse")
+        self.assertEqual(result["stage"], "collapse")
+        self.assertEqual(published[0]["decline_probability"], STAGE_COLLAPSE)
+
+    def test_clear_stage_publishes_the_stop_command(self):
+        published = []
+        result = fire_hidden_incident(publisher=published.append, stage="clear")
+        self.assertFalse(result["active"])
+        self.assertEqual(result["stage"], "clear")
+        self.assertEqual(published, [stop_command("merchant-b")])
 
     def test_the_published_command_carries_no_scenario_identifier(self):
         # C6 quarantine: what crosses to W1 is a cohort scope and an effect.
@@ -330,8 +363,17 @@ class SurfacesTests(unittest.TestCase):
         self.assertFalse(result["delivered"])
         self.assertFalse(result["fired"])
         self.assertFalse(result["active"])
+        self.assertEqual(result["stage"], "clear")
+        self.assertEqual(result["requested"], "collapse")
         self.assertIn("no broker", result["error"])
         self.assertIn("Nothing was injected", result["message"])
+
+        developing = fire_hidden_incident(publisher=unreachable, stage="developing")
+        self.assertFalse(developing["delivered"])
+        self.assertFalse(developing["fired"])
+        self.assertEqual(developing["requested"], "developing")
+        self.assertEqual(developing["stage"], "clear")
+        self.assertIn("Nothing was injected", developing["message"])
 
     def test_the_api_carries_the_on_off_intent_and_ignores_everything_else(self):
         published = []
@@ -341,23 +383,61 @@ class SurfacesTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertTrue(on["active"])
+        self.assertEqual(on["stage"], "collapse")
+        self.assertEqual(published[-1]["decline_probability"], STAGE_COLLAPSE)
         status, off = self.app.handle("POST", "/api/judge/trigger", {"active": False})
         self.assertEqual(status, 200)
         self.assertFalse(off["active"])
+        self.assertEqual(off["stage"], "clear")
         self.assertEqual([command["action"] for command in published], ["start", "stop"])
         self.assertNotIn("scenario_id", json.dumps(published))
         # A body-less POST keeps the old "fire it" meaning of this path.
         self.app.handle("POST", "/api/trigger", None)
         self.assertEqual(published[-1]["action"], "start")
+        self.assertEqual(published[-1]["decline_probability"], STAGE_COLLAPSE)
+
+    def test_legacy_boolean_body_still_publishes_the_full_break(self):
+        published = []
+        self.app_publisher(published)
+        _, on = self.app.handle("POST", "/api/trigger", {"active": True})
+        self.assertEqual(on["stage"], "collapse")
+        self.assertEqual(published[-1]["decline_probability"], STAGE_COLLAPSE)
+        self.assertEqual(published[-1], start_command(
+            "merchant-b",
+            provider="adyen",
+            decline_reason="provider_timeout",
+            decline_probability=STAGE_COLLAPSE,
+        ))
+
+    def test_the_api_publishes_each_requested_stage(self):
+        published = []
+        self.app_publisher(published)
+        _, developing = self.app.handle("POST", "/api/trigger", {"stage": "developing"})
+        self.assertEqual(developing["stage"], "developing")
+        self.assertEqual(published[-1]["decline_probability"], STAGE_DEVELOPING)
+        _, collapse = self.app.handle("POST", "/api/trigger", {"stage": "collapse"})
+        self.assertEqual(collapse["stage"], "collapse")
+        self.assertEqual(published[-1]["decline_probability"], STAGE_COLLAPSE)
+        _, cleared = self.app.handle("POST", "/api/trigger", {"stage": "clear"})
+        self.assertEqual(cleared["stage"], "clear")
+        self.assertEqual(published[-1], stop_command("merchant-b"))
 
     def test_the_toggle_state_survives_a_page_reload_and_a_failed_publish(self):
         published = []
         self.app_publisher(published)
-        self.assertFalse(self.app.handle("GET", "/api/trigger")[1]["active"])
-        self.app.handle("POST", "/api/trigger", {"active": True})
+        idle = self.app.handle("GET", "/api/trigger")[1]
+        self.assertFalse(idle["active"])
+        self.assertEqual(idle["stage"], "clear")
+        self.app.handle("POST", "/api/trigger", {"stage": "developing"})
         state = self.app.handle("GET", "/api/trigger")[1]
         self.assertTrue(state["active"])
+        self.assertEqual(state["stage"], "developing")
         self.assertEqual(state["target"], INJECTED_INCIDENT)
+
+        self.app.handle("POST", "/api/trigger", {"stage": "collapse"})
+        collapsed = self.app.handle("GET", "/api/trigger")[1]
+        self.assertEqual(collapsed["stage"], "collapse")
+        self.assertTrue(collapsed["active"])
 
         import surfaces.inject as inject_module
 
@@ -365,10 +445,13 @@ class SurfacesTests(unittest.TestCase):
             raise RuntimeError("broker went away")
 
         inject_module._publish = unreachable
-        failed = self.app.handle("POST", "/api/trigger", {"active": False})[1]
+        failed = self.app.handle("POST", "/api/trigger", {"stage": "clear"})[1]
         self.assertFalse(failed["delivered"])
-        # The stop never landed, so the control must not pretend it is off.
-        self.assertTrue(self.app.handle("GET", "/api/trigger")[1]["active"])
+        self.assertIn("Nothing was injected", failed["message"])
+        # The clear never landed, so the control must not pretend it is off.
+        held = self.app.handle("GET", "/api/trigger")[1]
+        self.assertTrue(held["active"])
+        self.assertEqual(held["stage"], "collapse")
 
     def app_publisher(self, sink):
         """Point the app's injection at a list instead of a broker."""
@@ -570,7 +653,9 @@ class SurfacesTests(unittest.TestCase):
         with opener.open(f"http://127.0.0.1:{port}/", timeout=2) as response:
             page = response.read().decode("utf-8")
         self.assertIn("Control Tower", page)
-        self.assertIn("Fire hidden incident", page)
+        self.assertIn("Developing deviation", page)
+        self.assertIn("Collapse", page)
+        self.assertIn("Clear", page)
         self.assertIn("simulated data produced by this project's simulator", page)
         self.assertIn("Nothing shown represents or implies a real incident", page)
 
@@ -1258,14 +1343,33 @@ class StaticContractTests(unittest.TestCase):
         html = (ROOT / "surfaces" / "static" / "index.html").read_text(encoding="utf-8")
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
         css = (ROOT / "surfaces" / "static" / "styles.css").read_text(encoding="utf-8")
+        self.assertIn('data-stage="developing"', html)
+        self.assertIn('data-stage="collapse"', html)
+        self.assertIn('data-stage="clear"', html)
+        self.assertIn("Developing deviation", html)
+        self.assertIn("Collapse", html)
+        self.assertRegex(html, r'data-stage="clear"[\s\S]*?Clear')
         self.assertIn('aria-pressed="false"', html)
         self.assertIn('data-on="false"', html)
-        self.assertIn("Fire hidden incident", js)
-        self.assertIn("Stop hidden incident", js)
-        self.assertIn('judgeTrigger.setAttribute("aria-pressed"', js)
+        self.assertIn('data-stage', js)
+        self.assertIn('"developing"', js)
+        self.assertIn('"collapse"', js)
+        self.assertIn('"clear"', js)
+        self.assertIn("aria-pressed", js)
         # The on state must be visibly distinct, in the palette already on the
         # board rather than a second visual language.
         self.assertRegex(css, r'\.judge button\[data-on="true"\][^}]*var\(--sev-critical\)')
+
+    def test_judge_acknowledgement_does_not_borrow_detector_words(self):
+        banned = ("detected", "warned", "watching", "incident")
+        for stage in ("developing", "collapse", "clear"):
+            text = acknowledgement(stage).lower()
+            for word in banned:
+                self.assertNotIn(word, text, stage)
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        judge = js[js.index("function renderJudge"):js.index("$(\"drawer-close\")")]
+        for word in ("detected", "warned", "watching", "incident"):
+            self.assertNotIn(word, judge.lower())
 
     def test_the_judge_control_never_upgrades_a_failure_into_a_claim(self):
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")

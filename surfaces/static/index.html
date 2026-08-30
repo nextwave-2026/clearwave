@@ -17,11 +17,21 @@
       </div>
       <div class="mast-right">
         <form id="judge-form" class="judge">
-          <button type="submit" id="judge-trigger" data-on="false" aria-pressed="false">
-            <span class="judge-dot" aria-hidden="true"></span>
-            <span id="judge-label">Fire hidden incident</span>
-          </button>
-          <p id="judge-status" role="status">Judge trigger ready. The scenario stays hidden.</p>
+          <div class="judge-controls" role="group" aria-label="Traffic control">
+            <button type="submit" data-stage="developing" data-on="false" aria-pressed="false">
+              <span class="judge-dot" aria-hidden="true"></span>
+              Developing deviation
+            </button>
+            <button type="submit" data-stage="collapse" data-on="false" aria-pressed="false">
+              <span class="judge-dot" aria-hidden="true"></span>
+              Collapse
+            </button>
+            <button type="submit" data-stage="clear" data-on="true" aria-pressed="true">
+              <span class="judge-dot" aria-hidden="true"></span>
+              Clear
+            </button>
+          </div>
+          <p id="judge-status" role="status">Ready. These controls change merchant-b's traffic. The board will keep showing whatever the store already holds.</p>
         </form>
       </div>
     </div>

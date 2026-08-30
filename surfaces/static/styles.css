@@ -129,6 +129,13 @@ header.mast {
   min-width: min(280px, 100%);
 }
 
+.judge-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .judge button {
   font: inherit;
   cursor: pointer;
@@ -161,8 +168,9 @@ header.mast {
   flex: none;
 }
 
-/* On means an incident is injected right now, so the control reads as armed in
-   the same colour the board already uses for a critical incident. */
+/* On means that stage is live. Collapse uses the critical colour already on
+   the board; developing uses the high-severity token so it reads as armed
+   without looking like a crossed-floor incident. */
 .judge button[data-on="true"] {
   background: var(--sev-critical);
 }
@@ -173,6 +181,19 @@ header.mast {
   border-color: #fff;
   background: #fff;
 }
+
+.judge button[data-stage="developing"][data-on="true"] {
+  background: var(--sev-high);
+}
+
+.judge button[data-stage="developing"][data-on="true"]:hover { background: #F0843A; }
+
+.judge button[data-stage="clear"][data-on="true"] {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+.judge button[data-stage="clear"][data-on="true"]:hover { background: var(--surface-2); }
 
 #judge-status {
   margin: 0;

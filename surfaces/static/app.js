@@ -12,6 +12,7 @@
     calls: [],
     detail: null,
     injected: false,
+    stage: "clear",
   };
 
   const overviewBoard = document.getElementById("overview-board");
@@ -21,8 +22,7 @@
   const escalationBoard = document.getElementById("escalation-board");
   const evidenceBoard = document.getElementById("evidence-board");
   const judgeStatus = document.getElementById("judge-status");
-  const judgeTrigger = document.getElementById("judge-trigger");
-  const judgeLabel = document.getElementById("judge-label");
+  const judgeButtons = document.querySelectorAll("#judge-form [data-stage]");
   const provSource = document.getElementById("prov-source");
   const queueWho = document.getElementById("queue-who");
   const drawer = document.getElementById("drawer");
@@ -1001,29 +1001,33 @@
     });
   });
 
-  // The judge control is a toggle over one named target, not a scenario
+  // The judge control is two stages over one named target, not a scenario
   // picker: the target is decided in surfaces/inject.py and reported back in
-  // every response, so the UI names it rather than choosing it.
-  function targetLabel(payload) {
-    const target = (payload && payload.target) || {};
-    if (!target.merchant_id) return "one live merchant";
-    return target.effect + " on provider " + target.provider + " for " + target.merchant_id;
-  }
+  // every response. The words developing, collapse and clear are the same
+  // vocabulary the API and the adapter use.
+  const JUDGE_STAGES = ["developing", "collapse", "clear"];
 
   function renderJudge(payload) {
-    const active = !!(payload && payload.active);
-    state.injected = active;
-    judgeTrigger.setAttribute("data-on", active ? "true" : "false");
-    judgeTrigger.setAttribute("aria-pressed", active ? "true" : "false");
-    judgeLabel.textContent = active ? "Stop hidden incident" : "Fire hidden incident";
+    const stage = (payload && payload.stage) || ((payload && payload.active) ? "collapse" : "clear");
+    state.stage = stage;
+    state.injected = stage !== "clear";
+    judgeButtons.forEach(function (button) {
+      const on = button.getAttribute("data-stage") === stage;
+      button.setAttribute("data-on", on ? "true" : "false");
+      button.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+  }
+
+  function setJudgeBusy(busy) {
+    judgeButtons.forEach(function (button) {
+      button.disabled = busy;
+    });
   }
 
   function loadJudgeState() {
     return jsonGet("/api/trigger").then(function (payload) {
       renderJudge(payload);
-      judgeStatus.textContent = state.injected
-        ? "An incident is injected: " + targetLabel(payload) + ". Toggle off to clear it."
-        : "Judge trigger ready: " + targetLabel(payload) + ". The scenario stays hidden from detection.";
+      judgeStatus.textContent = payload.message || "The trigger returned no account of what it did.";
     }).catch(function () {
       judgeStatus.textContent = "The judge control could not reach its own server. Nothing is injected.";
     });
@@ -1031,16 +1035,16 @@
 
   $("judge-form").addEventListener("submit", function (event) {
     event.preventDefault();
-    const wanted = !state.injected;
-    judgeTrigger.disabled = true;
-    judgeStatus.textContent = wanted
-      ? "Publishing the incident to W1…"
-      : "Publishing the stop command to W1…";
+    const submitter = event.submitter;
+    const stage = submitter && submitter.getAttribute("data-stage");
+    if (!stage || JUDGE_STAGES.indexOf(stage) === -1) return;
+    setJudgeBusy(true);
+    judgeStatus.textContent = "Sending your change into the live traffic.";
     fetch("/api/trigger", {
       method: "POST",
       cache: "no-store",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ active: wanted }),
+      body: JSON.stringify({ stage: stage }),
     })
       .then(function (response) { return response.json(); })
       .then(function (body) {
@@ -1055,7 +1059,7 @@
         judgeStatus.textContent = "The judge control could not reach its own server. Nothing was injected.";
       })
       .then(function () {
-        judgeTrigger.disabled = false;
+        setJudgeBusy(false);
       });
   });
 

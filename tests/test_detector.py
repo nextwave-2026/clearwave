@@ -477,8 +477,8 @@ class RecurrencePromotesSeverityTests(unittest.TestCase):
 
     Yuno's product owners asked it directly: two low-priority alerts on the
     same cohort in a short period should not stay two low-priority alerts. The
-    count was already measured and already published by `incident_history`;
-    severity simply never asked for it.
+    count is measured over the incident table by the detection plane itself;
+    `incident_history` keeps publishing its own row count separately.
     """
 
     BASE = dict(
@@ -514,29 +514,92 @@ class RecurrencePromotesSeverityTests(unittest.TestCase):
         self.assertEqual(promoted["prior_matching_incidents"], 4)
         self.assertEqual(promoted["recurrence_promotion_bands"], 2)
 
-    def test_the_count_is_the_same_query_incident_history_publishes(self):
-        connection, _, (lo, hi) = loaded(synthetic.with_provider_incident())
-        incident = detect.build_incident(connection, lo + 65 * 60, hi + 60)
-        cohort_key = metrics.cohort_key(incident["affected_cohort"])
-        onset = _epoch(incident["onset"])
-        self.assertEqual(
-            detect.prior_matching_incident_count(connection, cohort_key, onset), 0
-        )
+    def test_a_prior_episode_that_ended_before_the_gap_counts(self):
+        connection, incident, cohort_key, onset = self._store()
+        self.assertEqual(detect.prior_matching_incident_count(connection, cohort_key, onset), 0)
         for offset in (3_600, 7_200):
-            earlier = dict(incident)
-            earlier["incident_id"] = f"inc-earlier-{offset}"
-            earlier["onset"] = schema.iso_utc(onset - offset)
-            store.save_incident(connection, earlier)
-        self.assertEqual(
-            detect.prior_matching_incident_count(connection, cohort_key, onset), 2
-        )
-        # Outside the lookback the same two incidents stop counting.
+            self._save(connection, incident, onset - offset, onset - offset + 600)
+        self.assertEqual(detect.prior_matching_incident_count(connection, cohort_key, onset), 2)
+        # Outside the lookback the same two episodes stop counting.
         self.assertEqual(
             detect.prior_matching_incident_count(
                 connection, cohort_key, onset, lookback_seconds=1_800
             ),
             0,
         )
+
+    def test_one_continuous_injection_counts_as_one_episode_however_many_rows(self):
+        """Onset drifts as the sweep window rolls, so one fault writes several
+        rows. Rows are not episodes: the phone must not ring because one
+        rehearsal left three of them behind."""
+        connection, incident, cohort_key, onset = self._store()
+        # One 18-minute fault, sweeping every few minutes, still running as this
+        # incident onsets: every row's last_seen runs right up to now.
+        for drift in (0, 240, 480):
+            self._save(connection, incident, onset - 1_080 + drift, onset)
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) AS n FROM incident").fetchone()["n"], 3
+        )
+        self.assertEqual(detect.prior_matching_incident_count(connection, cohort_key, onset), 0)
+
+    def test_two_genuinely_separate_faults_still_count_as_two(self):
+        """The fix must not make recurrence unreachable - that would be worse
+        than the bug it fixes."""
+        connection, incident, cohort_key, onset = self._store()
+        for start in (onset - 4 * 3_600, onset - 2 * 3_600):
+            self._save(connection, incident, start, start + 900)
+        self.assertEqual(detect.prior_matching_incident_count(connection, cohort_key, onset), 2)
+        self.assertEqual(
+            detect.severity_of(**self.BASE, prior_matching_incidents=2)["recurrence_promotion_bands"],
+            1,
+        )
+
+    def test_a_row_that_ended_inside_the_gap_is_the_same_episode(self):
+        connection, incident, cohort_key, onset = self._store()
+        inside = onset - config.RECURRENCE_EPISODE_GAP_SECONDS + 60
+        outside = onset - config.RECURRENCE_EPISODE_GAP_SECONDS - 60
+        self._save(connection, incident, onset - 3_600, inside, suffix="inside")
+        self.assertEqual(detect.prior_matching_incident_count(connection, cohort_key, onset), 0)
+        self._save(connection, incident, onset - 3_600, outside, suffix="outside")
+        self.assertEqual(detect.prior_matching_incident_count(connection, cohort_key, onset), 1)
+
+    def test_a_watch_never_promotes_a_later_band(self):
+        """A near-miss we deliberately chose not to page on cannot raise a
+        later severity."""
+        connection, incident, cohort_key, onset = self._store()
+        for offset in (3_600, 7_200):
+            self._save(
+                connection, incident, onset - offset, onset - offset + 600, state="watching"
+            )
+        self.assertEqual(detect.prior_matching_incident_count(connection, cohort_key, onset), 0)
+
+    def test_every_downstream_lifecycle_state_is_a_genuine_prior_recurrence(self):
+        connection, incident, cohort_key, onset = self._store()
+        states = ("detected", "claimed", "investigating", "diagnosed", "mitigated", "resolved")
+        for index, state in enumerate(states):
+            start = onset - (index + 1) * 1_800 - 1_800
+            self._save(connection, incident, start, start + 300, state=state)
+        self.assertEqual(
+            detect.prior_matching_incident_count(connection, cohort_key, onset), len(states)
+        )
+
+    # -- helpers ----------------------------------------------------------
+    def _store(self):
+        connection, _, (lo, hi) = loaded(synthetic.with_provider_incident())
+        incident = detect.build_incident(connection, lo + 65 * 60, hi + 60)
+        return connection, incident, metrics.cohort_key(incident["affected_cohort"]), _epoch(
+            incident["onset"]
+        )
+
+    @staticmethod
+    def _save(connection, incident, onset, last_seen, state="detected", suffix=""):
+        earlier = dict(incident)
+        earlier["incident_id"] = f"inc-earlier-{onset}-{last_seen}-{state}{suffix}"
+        earlier["onset"] = schema.iso_utc(onset)
+        earlier["persistence"] = dict(earlier.get("persistence") or {}) | {
+            "last_observed_at": schema.iso_utc(last_seen)
+        }
+        store.save_incident(connection, earlier, lifecycle_state=state)
 
 
 class MerchantRelativeSeverityTests(unittest.TestCase):

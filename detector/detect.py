@@ -354,16 +354,38 @@ def prior_matching_incident_count(
     cohort_key: str,
     onset_epoch: int,
     lookback_seconds: int = config.RECURRENCE_LOOKBACK_SECONDS,
+    episode_gap_seconds: int = config.RECURRENCE_EPISODE_GAP_SECONDS,
 ) -> int:
-    """How many incidents on this exact cohort already onset inside the lookback.
+    """How many prior *episodes* on this exact cohort fall inside the lookback.
 
-    The same count `incident_history` publishes as
-    `recurrence.prior_matching_incidents`; severity simply never asked for it.
+    Episodes, not rows. Onset is measured from the rolling detect window and the
+    incident id is derived from onset, so one continuous fault drifts into
+    several rows; counting rows would let a single prior rehearsal meet the
+    two-prior promotion threshold. A row counts only when the cohort was quiet
+    between it and this incident - `last_seen_epoch` at least
+    `episode_gap_seconds` before `onset_epoch`.
+
+    A `watching` row never counts: it is a near-miss we chose not to page on.
+    Every other lifecycle state does, because an incident that was investigated,
+    diagnosed, mitigated or resolved is a genuine prior recurrence.
+
+    This is NOT the figure `incident_history` publishes as
+    `recurrence.prior_matching_incidents`. That one is a plain count of the rows
+    it lists over an operator-chosen window and is unchanged by this function.
     """
+    excluded = config.RECURRENCE_EXCLUDED_LIFECYCLE_STATES
+    placeholders = ",".join("?" for _ in excluded)
     row = connection.execute(
         "SELECT COUNT(*) AS n FROM incident "
-        "WHERE cohort_key = ? AND onset_epoch >= ? AND onset_epoch < ?",
-        (cohort_key, onset_epoch - lookback_seconds, onset_epoch),
+        "WHERE cohort_key = ? AND onset_epoch >= ? AND onset_epoch < ? "
+        f"AND last_seen_epoch <= ? AND lifecycle_state NOT IN ({placeholders})",
+        (
+            cohort_key,
+            onset_epoch - lookback_seconds,
+            onset_epoch,
+            onset_epoch - episode_gap_seconds,
+            *excluded,
+        ),
     ).fetchone()
     return int(row["n"] or 0)
 
