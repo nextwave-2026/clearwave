@@ -226,6 +226,48 @@ class SurfacesTests(unittest.TestCase):
         recency = ["inc-recent-low", "inc-mid-high", "inc-old-critical"]
         self.assertNotEqual(api_order, recency)
 
+    def test_same_severity_orders_by_measured_loss_then_gmv(self):
+        connection = self._seed(
+            _incident(
+                "inc-high-small-loss",
+                "high",
+                "2026-08-29T12:00:00Z",
+                financial_impact={
+                    "gmv_at_risk": {"amount": 700.0, "currency": "USD"},
+                    "loss_per_hour": {"amount": 100.0, "currency": "USD"},
+                },
+            ),
+            _incident(
+                "inc-high-large-loss",
+                "high",
+                "2026-08-29T08:00:00Z",
+                financial_impact={
+                    "gmv_at_risk": {"amount": 800.0, "currency": "USD"},
+                    "loss_per_hour": {"amount": 200.0, "currency": "USD"},
+                },
+            ),
+            _incident(
+                "inc-high-same-loss-larger-gmv",
+                "high",
+                "2026-08-29T09:00:00Z",
+                financial_impact={
+                    "gmv_at_risk": {"amount": 900.0, "currency": "USD"},
+                    "loss_per_hour": {"amount": 100.0, "currency": "USD"},
+                },
+            ),
+        )
+        ordered = [item["incident_id"] for item in list_incidents(connection)]
+        self.assertEqual(
+            ordered,
+            [
+                "inc-high-large-loss",
+                "inc-high-same-loss-larger-gmv",
+                "inc-high-small-loss",
+            ],
+        )
+        api_order = [item["incident_id"] for item in self.app.queue()["incidents"]]
+        self.assertEqual(api_order, ordered)
+
     def test_severity_and_confidence_are_independent_values(self):
         connection = self._seed(_incident("inc-split", "critical", "2026-08-29T10:00:00Z"))
         persist_result(
