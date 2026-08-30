@@ -34,10 +34,11 @@ honestly when evidence is insufficient, and recommends an action without executi
 cooperating planes: deterministic detection and agentic investigation. It diagnoses, not remediates;
 severity is independent of diagnostic confidence; and honest uncertainty is required behaviour.
 
-What is still open: the stack, transport, persistence, and the items listed in
-[`docs/ownership.md`](docs/ownership.md). The detection and diagnosis approach is settled by the
-PRD. Do not add a package manifest, lockfile, Dockerfile, or application scaffold until a human
-decides the stack and records it in `DECISIONS.md`.
+The demo stack is now concrete: Python services, Kafka and Schema Registry for live ingestion,
+SQLite as the shared evidence store, a bounded OpenAI investigation loop, and a plain web
+dashboard with Slack and phone escalation adapters. The contracts and remaining non-demo gaps are
+tracked in [`docs/ownership.md`](docs/ownership.md), [`INTERFACES.md`](INTERFACES.md), and
+[`DECISIONS.md`](DECISIONS.md).
 
 ### Product baseline
 
@@ -81,7 +82,8 @@ Use `.venv/bin/python`, not system `python3`. Do not run `--mode anomaly`, syste
 
 ## Architecture
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the settled product architecture; technology choices remain open.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the settled product architecture and current demo
+runtime.
 
 ## Pre-existing components
 
@@ -103,8 +105,9 @@ generated record lives in `LICENCES.md`; run `make licences` before submission.
 
 ## Licence inventory
 
-No third-party dependencies have been added yet. The generated record lives in
-[`LICENCES.md`](LICENCES.md). Run `make licences` before submission; it works offline.
+The generated third-party dependency record lives in [`LICENCES.md`](LICENCES.md). Run the
+licence generator only when dependency manifests change; it uses local package metadata and can
+rewrite the inventory differently on machines with different environments.
 
 ## Team
 

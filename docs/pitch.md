@@ -65,10 +65,8 @@ Have these ready before speaking:
 - Kafka, Schema Registry, all three compose workers, the dashboard, and the investigation daemon are healthy, all pointed at `state/clearwave.db`. Create `state/` before `docker compose up`. Do not give the investigation service the ground-truth volume.
 - Minutes of healthy traffic are already in that store. Consume a healthy baseline before you inject. A store that is already degraded returns `incident: null` correctly, because the trailing hour has no contrast. A consume without `--detect` should already be running against that file so injected traffic lands before the next detect sweep.
 - Browser tab 1 shows the live dashboard with zero active incidents.
-- Terminal 1 contains a consume or detect command, not yet submitted.
-- Terminal 2 contains the injection command below, not yet submitted.
 - Browser tab 2 contains the proven offline diagnosed incident as the fallback.
-- Confirm Path A or Path B with this check. If `python -m worker.inject --help` has no `--decline-probability`, or a rehearsal detect never emitted `lifecycle_state: watching`, you are on Path B.
+- Confirm Path A or Path B with this check. The dashboard must expose `Developing`, `Collapse`, and `Clear`, and a rehearsal detect must emit `lifecycle_state: watching`. Otherwise use Path B.
 
 Do not use `make live` as setup. It starts neither Kafka nor a worker. A worker must publish before injection because the control topic starts from latest. The daemon is `.venv/bin/python -m investigation` or `make investigate-daemon`. If the daemon is not running, the typed fallback is `make investigate DB=state/clearwave.db`. ([operator runbook](demo-sequence.md#live-kafka-path---what-genuinely-works-and-what-does-not), [investigate an already-detected store](demo-sequence.md#investigating-a-store-that-is-already-detected-against))
 
@@ -76,51 +74,27 @@ Do not use `make live` as setup. It starts neither Kafka nor a worker. A worker 
 
 ### 0:00-0:20 - Judge fires a mild deviation
 
-Hand the judge Terminal 2 and this choice card:
+The judge clicks `Developing` in the dashboard. It publishes the mild decline for the fixed live target (`merchant-b` / `adyen`) through W1's `worker.inject`; no scenario identifier crosses the boundary.
 
-| Merchant | Safe provider choices |
-| --- | --- |
-| `merchant-a` | `stripe`, `dlocal` |
-| `merchant-b` | `adyen`, `mercadopago` |
-| `merchant-c` | `stripe`, `adyen`, `dlocal`, `mercadopago` |
-
-The judge changes only the merchant and provider, then presses Enter:
-
-```sh
-.venv/bin/python -m worker.inject merchant-c --provider dlocal --effect decline --decline-probability 0.35
-```
-
-This is an unrehearsed merchant-provider pairing, not a scenario identifier. Expected: the terminal prints `published to incidents.control`, then the chosen worker logs `incident control: now targeting ... with effect=decline`.
-
-**Fallback:** If publish is not acknowledged or no worker reacts within ten seconds, say that the command did not fire. Hand the judge the dashboard toggle. It fires the proven fixed `merchant-b`/`adyen` degradation. If that also reports `delivered: false`, stop the live path and open Browser tab 2.
+**Fallback:** If the dashboard reports `delivered: false`, say that the command did not fire. Stop the live path and open Browser tab 2.
 
 ### 0:20-1:20 - Judge watches the warning
 
-The judge keeps the live dashboard open. After about ninety seconds of degraded traffic, run one detect on the same store:
-
-```sh
-CLEARWAVE_DB=state/clearwave.db .venv/bin/python -m detector detect
-```
+The judge keeps the live dashboard open. The compose detector sweeps the same store every 45 seconds.
 
 Expected: a watching row on the chosen cohort. Unusual for this merchant against its last hour. Not an incident. No Slack. No phone. No model. The daemon must not claim it.
 
-If detect returns `incident: null` and no watching row, say so. Move to the hard inject. Do not rename silence as success.
+If no watching row appears after the expected sweep window, say so. Move to the collapse. Do not rename silence as success.
 
 Spoken line before the next command, then stop talking: the merchant has not called. We are not paging you. We are telling you this is unusual for this merchant against its own hour, and it is getting worse.
 
 ### 1:20-1:30 - Judge fires the collapse
 
-Same merchant, hard inject. Default decline probability is the current hard value. Do not pass `0.35` again.
-
-```sh
-.venv/bin/python -m worker.inject merchant-c --provider dlocal --effect decline
-```
-
-Or the dashboard toggle, which fires `merchant-b`/`adyen`.
+The judge clicks `Collapse` in the dashboard. This keeps the same live target and changes only the injected magnitude.
 
 ### 1:30-3:20 - Judge watches detection and diagnosis
 
-Run detect again, or finish a consume with `--detect`. Expected: the same record upgrades to `detected`. The daemon claims it. Diagnosis appears with nobody typing. Notifications fire once, after that diagnosis exists.
+Expected: the same record upgrades to `detected` on a detector sweep. The daemon claims it. Diagnosis appears with nobody typing. Notifications fire once, after that diagnosis exists.
 
 The screen must show two times on one record: watching first, detected later. That is the beat.
 
@@ -130,33 +104,17 @@ A new narrow cohort can honestly return `incident: null` if it does not meet the
 
 ### 3:20-4:00 - Judge inspects evidence and restores traffic
 
-The judge opens the record and checks that expected conversion is this cohort's trailing hour, not a static threshold. Then leading and competing explanations, qualitative confidence, recommended action, and gateway-issued evidence IDs. Then restore:
-
-```sh
-.venv/bin/python -m worker.inject merchant-c --stop
-```
-
-Use the merchant they selected. Expected: the worker logs `cleared active incident`. If the live path failed earlier, there is nothing to stop.
+The judge opens the record and checks that expected conversion is this cohort's trailing hour, not a static threshold. Then leading and competing explanations, qualitative confidence, recommended action, and gateway-issued evidence IDs. Then the judge clicks `Clear`. Expected: the dashboard acknowledges the clear command and the worker logs `cleared active incident`. If the live path failed earlier, there is nothing to stop.
 
 ### Path B - proven live inject, no watch
 
 Use this if preflight failed the watching check, or if Path A went silent.
 
-### 0:00-0:30 - Judge chooses an unrehearsed cohort
+### 0:00-0:30 - Judge fires the proven collapse
 
-Same choice card. Hard inject only:
+The judge clicks `Collapse` in the dashboard. The running detector service consumes and sweeps continuously; nobody submits a terminal command during the judge-operated path.
 
-```sh
-.venv/bin/python -m worker.inject merchant-c --provider dlocal --effect decline
-```
-
-Then the judge submits Terminal 1:
-
-```sh
-CLEARWAVE_DB=state/clearwave.db .venv/bin/python -m detector consume --seconds 180 --detect
-```
-
-Same publish fallback as Path A: toggle, then Browser tab 2.
+Same publish fallback as Path A: if the dashboard reports `delivered: false`, open Browser tab 2.
 
 ### 0:30-3:20 - Judge watches detection
 
