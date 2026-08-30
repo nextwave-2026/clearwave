@@ -136,9 +136,40 @@ header.mast {
   font-size: 12.5px;
   font-weight: 600;
   padding: 8px 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
 }
 
 .judge button:hover { background: var(--yuno-blue-lift); }
+
+.judge button[disabled] {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.judge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  background: transparent;
+  flex: none;
+}
+
+/* On means an incident is injected right now, so the control reads as armed in
+   the same colour the board already uses for a critical incident. */
+.judge button[data-on="true"] {
+  background: var(--sev-critical);
+}
+
+.judge button[data-on="true"]:hover { background: #FF6B79; }
+
+.judge button[data-on="true"] .judge-dot {
+  border-color: #fff;
+  background: #fff;
+}
 
 #judge-status {
   margin: 0;

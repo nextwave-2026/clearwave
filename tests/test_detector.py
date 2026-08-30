@@ -8,14 +8,17 @@ and honest confounding.
 
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
+import tracemalloc
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from detector import config, detect, metrics, schema, store  # noqa: E402
+from detector import cli, config, detect, metrics, schema, store  # noqa: E402
 from tests import synthetic  # noqa: E402
 
 
@@ -348,6 +351,125 @@ class OnsetTests(unittest.TestCase):
         )
         self.assertEqual(onset, window_start)
         self.assertEqual(sustained, 0)
+
+
+class StreamingIngestTests(unittest.TestCase):
+    """The backfill path: JSON Lines in, batches out, nothing held whole.
+
+    These run on a handful of lines. What they pin is the behaviour that makes
+    a 100,000-line file safe to load, not the size of it.
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.dir = Path(self._tmpdir.name)
+        self.connection = store.connect(":memory:")
+        self.addCleanup(self.connection.close)
+
+    def _jsonl(self, events, name="backfill.jsonl"):
+        path = self.dir / name
+        path.write_text("\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8")
+        return path
+
+    def test_streaming_a_file_stores_exactly_what_loading_it_whole_would(self):
+        events = synthetic.with_provider_incident()
+        path = self._jsonl(events)
+        streamed = store.ingest_stream(self.connection, cli._stream_jsonl(path), batch_size=64)
+        whole = store.connect(":memory:")
+        self.addCleanup(whole.close)
+        loaded_whole = store.ingest(whole, cli._load_events(path))
+        self.assertEqual(streamed, loaded_whole)
+        self.assertEqual(streamed["accepted"], len(events))
+        self.assertEqual(streamed["rejected"], 0)
+
+    def test_the_reader_holds_far_less_than_the_file_it_is_reading(self):
+        # The whole point of the path, measured rather than asserted by eye:
+        # `_load_events` allocates the file plus every parsed dict at once, so
+        # its peak scales with the file. `_stream_jsonl` holds one line.
+        path = self._jsonl(synthetic.healthy() * 4)
+        size = path.stat().st_size
+
+        tracemalloc.start()
+        for _ in cli._stream_jsonl(path):
+            pass
+        streaming_peak = tracemalloc.get_traced_memory()[1]
+        tracemalloc.stop()
+
+        tracemalloc.start()
+        whole = cli._load_events(path)
+        whole_peak = tracemalloc.get_traced_memory()[1]
+        tracemalloc.stop()
+        del whole
+
+        self.assertLess(streaming_peak, size)
+        self.assertGreater(whole_peak, size)
+        self.assertLess(streaming_peak * 10, whole_peak)
+
+    def test_batches_are_durable_before_the_run_finishes(self):
+        # The reason to batch at all: a run interrupted part way leaves the
+        # completed batches in the store rather than losing the lot.
+        events = synthetic.healthy()
+        path = self._jsonl(events)
+        seen = []
+
+        def peek():
+            for record in cli._stream_jsonl(path):
+                seen.append(record)
+                if len(seen) == 40:
+                    self.assertEqual(
+                        self.connection.execute("SELECT COUNT(*) AS n FROM attempt").fetchone()["n"],
+                        20,
+                    )
+                yield record
+
+        store.ingest_stream(self.connection, peek(), batch_size=20)
+        self.assertEqual(len(seen), len(events))
+
+    def test_a_malformed_line_is_dead_lettered_and_the_rest_still_loads(self):
+        events = synthetic.healthy()[:10]
+        path = self.dir / "ragged.jsonl"
+        lines = [json.dumps(event) for event in events]
+        lines.insert(5, "{not json at all")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        summary = store.ingest_stream(self.connection, cli._stream_jsonl(path), batch_size=3)
+        self.assertEqual(summary["accepted"], 10)
+        self.assertEqual(summary["rejected"], 1)
+        reason = self.connection.execute("SELECT reason FROM dead_letter").fetchone()["reason"]
+        self.assertIn("ragged.jsonl:6", reason)
+        self.assertIn("not valid JSON", reason)
+
+    def test_blank_lines_are_skipped_rather_than_rejected(self):
+        events = synthetic.healthy()[:4]
+        path = self.dir / "gappy.jsonl"
+        path.write_text(
+            "\n\n".join(json.dumps(event) for event in events) + "\n\n", encoding="utf-8"
+        )
+        summary = store.ingest_stream(self.connection, cli._stream_jsonl(path))
+        self.assertEqual(summary["accepted"], 4)
+        self.assertEqual(summary["rejected"], 0)
+
+    def test_replaying_the_same_file_adds_nothing(self):
+        path = self._jsonl(synthetic.healthy())
+        first = store.ingest_stream(self.connection, cli._stream_jsonl(path), batch_size=32)
+        second = store.ingest_stream(self.connection, cli._stream_jsonl(path), batch_size=32)
+        self.assertEqual(second["duplicates"], first["accepted"])
+        self.assertEqual(second["stored"], first["stored"])
+
+    def test_the_cli_only_streams_when_asked(self):
+        path = self._jsonl(synthetic.healthy()[:6])
+        db = self.dir / "cli.db"
+        self.assertEqual(cli.main(["--db", str(db), "ingest", str(path), "--stream"]), 0)
+        self.assertEqual(cli.main(["--db", str(db), "ingest", str(path)]), 0)
+        connection = store.connect(db)
+        self.addCleanup(connection.close)
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) AS n FROM attempt").fetchone()["n"], 6
+        )
+
+    def test_a_batch_size_below_one_is_refused_rather_than_silently_fixed(self):
+        with self.assertRaises(ValueError):
+            store.ingest_stream(self.connection, iter([]), batch_size=0)
 
 
 if __name__ == "__main__":

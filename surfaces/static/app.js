@@ -7,6 +7,7 @@
     overview: null,
     queue: [],
     detail: null,
+    injected: false,
   };
 
   const overviewBoard = document.getElementById("overview-board");
@@ -14,6 +15,8 @@
   const detailBoard = document.getElementById("detail-board");
   const evidenceBoard = document.getElementById("evidence-board");
   const judgeStatus = document.getElementById("judge-status");
+  const judgeTrigger = document.getElementById("judge-trigger");
+  const judgeLabel = document.getElementById("judge-label");
   const provSource = document.getElementById("prov-source");
   const queueWho = document.getElementById("queue-who");
   const drawer = document.getElementById("drawer");
@@ -611,21 +614,61 @@
     });
   });
 
+  // The judge control is a toggle over one named target, not a scenario
+  // picker: the target is decided in surfaces/inject.py and reported back in
+  // every response, so the UI names it rather than choosing it.
+  function targetLabel(payload) {
+    const target = (payload && payload.target) || {};
+    if (!target.merchant_id) return "one live merchant";
+    return target.effect + " on provider " + target.provider + " for " + target.merchant_id;
+  }
+
+  function renderJudge(payload) {
+    const active = !!(payload && payload.active);
+    state.injected = active;
+    judgeTrigger.setAttribute("data-on", active ? "true" : "false");
+    judgeTrigger.setAttribute("aria-pressed", active ? "true" : "false");
+    judgeLabel.textContent = active ? "Stop hidden incident" : "Fire hidden incident";
+  }
+
+  function loadJudgeState() {
+    return jsonGet("/api/trigger").then(function (payload) {
+      renderJudge(payload);
+      judgeStatus.textContent = state.injected
+        ? "An incident is injected: " + targetLabel(payload) + ". Toggle off to clear it."
+        : "Judge trigger ready: " + targetLabel(payload) + ". The scenario stays hidden from detection.";
+    }).catch(function () {
+      judgeStatus.textContent = "The judge control could not reach its own server. Nothing is injected.";
+    });
+  }
+
   $("judge-form").addEventListener("submit", function (event) {
     event.preventDefault();
-    judgeStatus.textContent = "Calling W1 injection…";
-    fetch("/api/trigger", { method: "POST", cache: "no-store" })
+    const wanted = !state.injected;
+    judgeTrigger.disabled = true;
+    judgeStatus.textContent = wanted
+      ? "Publishing the incident to W1…"
+      : "Publishing the stop command to W1…";
+    fetch("/api/trigger", {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ active: wanted }),
+    })
       .then(function (response) { return response.json(); })
       .then(function (body) {
-        if (!body.wired) {
-          judgeStatus.textContent = "Injection is not wired. The hidden scenario was not fired.";
-          return;
-        }
-        judgeStatus.textContent = "Hidden incident fired. Detection will not be told which scenario it is.";
+        renderJudge(body);
+        // body.message is the server's own account of what happened, including
+        // the unreachable-broker case. The UI never upgrades a failure into a
+        // claim that a scenario fired.
+        judgeStatus.textContent = body.message || "The trigger returned no account of what it did.";
         refresh();
       })
       .catch(function () {
-        judgeStatus.textContent = "Injection is not wired. The hidden scenario was not fired.";
+        judgeStatus.textContent = "The judge control could not reach its own server. Nothing was injected.";
+      })
+      .then(function () {
+        judgeTrigger.disabled = false;
       });
   });
 
@@ -639,6 +682,7 @@
 
   tick();
   setInterval(tick, 1000);
+  loadJudgeState();
   refresh();
   setInterval(refresh, 2500);
 })();

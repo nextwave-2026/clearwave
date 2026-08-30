@@ -69,7 +69,7 @@ DB=/tmp/clearwave-demo.db
 
 Open `http://127.0.0.1:18080/`. Wait for `Lifecycle after investigate: diagnosed`.
 
-Use `.venv/bin/python`, not system `python3`. Do not run `--mode anomaly`, system `python3 -m pip install -r detector/requirements.txt`, or `make live` as a one-step demo. They fail. The judge button returns `injection is not wired`.
+Use `.venv/bin/python`, not system `python3`. Do not run `--mode anomaly`, system `python3 -m pip install -r detector/requirements.txt`, or `make live` as a one-step demo. They fail. The judge button is a working toggle, but it needs the broker and the compose workers up; with no broker it says so rather than claiming an incident fired.
 
 ## Architecture
 

@@ -67,7 +67,7 @@ What this produced here:
 - Incident cohort `{provider: provider-p2}`, conversion 0.849744 -> 0.52, severity `critical`, GMV at risk USD 1648.72, loss per hour USD 19784.62
 - Investigation `outcome=ambiguous`, `diagnostic_confidence=medium`, `narrative_available=true`
 - Dashboard `GET /api/overview`: `active_incident_count: 1`, `lifecycle_state: diagnosed`
-- `POST /api/trigger` and `POST /api/judge/trigger` still return `{"wired": false, "fired": false, "message": "injection is not wired"}`
+- `POST /api/trigger` and `POST /api/judge/trigger` answer `wired: true`, but with no broker running they report `delivered: false` and say so - this path injects nothing and does not pretend to
 
 This path is the broker-free default `detector seed` scenario (`provider_incident`). It is not Kafka, and it is not the judge clicking Fire hidden incident.
 
@@ -87,9 +87,11 @@ The other two offline generators live in `tests.synthetic` and need hand-written
 
 ### Live Kafka path - what genuinely works, and what does not
 
-Do not open the demo with this path. The Kafka hop is real; the judge trigger is not; a 60-second consume on healthy traffic does not store an incident.
+The Kafka hop is real and the judge trigger now fires through it. A 60-second consume on *healthy* traffic still stores no incident, which is correct: you have to inject something first, and then give detection enough sustained buckets to see it.
 
-This worktree did not start or stop containers. The working hop was observed on a live Docker run: `docker compose up -d kafka schema-registry` brought the broker up; workers published; `.venv/bin/python -m detector consume --seconds 60 --detect` decoded Schema Registry frames and wrote the SQLite store (1319 accepted, 0 rejected, **incident null** on healthy traffic); `.venv/bin/python -m worker.inject merchant-a --provider dlocal --effect decline` dropped merchant-a/dlocal approval from 0.876 to 0.115. A stored C3 with money after that inject was **not** observed in that run.
+Observed on a live Docker run: `docker compose up -d kafka schema-registry` brought the broker up; workers published; `.venv/bin/python -m detector consume --seconds 60 --detect` decoded Schema Registry frames and wrote the SQLite store (1319 accepted, 0 rejected, **incident null** on healthy traffic); `.venv/bin/python -m worker.inject merchant-a --provider dlocal --effect decline` dropped merchant-a/dlocal approval from 0.876 to 0.115. A stored C3 with money after that inject was **not** observed in that run, because 60 seconds is not enough sustained contrast.
+
+A later run with the three compose workers and a longer consume did produce one, through the dashboard toggle: clicked on, `clearwave-worker-merchant-b` logged `incident control: now targeting {'provider': 'adyen'}`, merchant-b/adyen conversion fell from ~90% to 0-18%, `consume --seconds 180 --detect` took 4,254 records with 0 rejected, and detection stored `inc-2026-08-30-715ab9c3` on `{merchant-b, adyen, CO}` at USD 3.89 GMV at risk. Toggled off, conversion recovered and the next sweep returned `incident: null`. **Three minutes of consume, not one**, is what makes the difference.
 
 Corrected order, if the broker is already up:
 
@@ -106,11 +108,11 @@ PYTHONUNBUFFERED=1 .venv/bin/python -m worker.worker merchant-a --interval-secon
 CLEARWAVE_DB=/tmp/clearwave-live.db .venv/bin/python -m detector consume --seconds 60 --detect
 ```
 
-Then point the dashboard at the same `CLEARWAVE_DB`. Expect `incident: null` after 60 seconds unless you already have minutes of event-time contrast. The judge button will still not fire.
+Then point the dashboard at the same `CLEARWAVE_DB`. Expect `incident: null` after 60 seconds unless you already have minutes of event-time contrast; consume for around three minutes after injecting if you want a stored C3. The judge toggle in the masthead is the other way to inject - on publishes the start command, off publishes the stop - and it targets `merchant-b`/`adyen`, so run the compose workers if you use it.
 
 `--mode anomaly` does not exist (`unrecognized arguments: --mode anomaly`). Replacements that do exist: omit incident flags for healthy traffic and inject after the worker is up; or `--incident-provider dlocal --incident-effect decline`; or `--scenario provider-degradation` on **merchant-c** (not merchant-a). `--scenario-duration-seconds` is a C6 timestamp, not a process lifetime. The worker loop does not stop. SIGINT did not stop it in the live run; use `timeout` / SIGTERM until that is fixed.
 
-`make live` is not one step. Its recipe is `python3 -m detector consume --seconds 60 --detect`. It starts neither Kafka nor a worker, hardcodes system `python3` rather than `.venv`, and does not guarantee an incident.
+`make live` is not one step. Its recipe is `.venv/bin/python -m detector consume --seconds 60 --detect`. It runs on the venv, but it starts neither Kafka nor a worker and does not guarantee an incident. `make e2e` is the one that brings the stack up and consumes; it still does not inject for you.
 
 Host worker stdout is block-buffered without `PYTHONUNBUFFERED=1`. The worker image sets this; a host command must too. An empty log is not a dead worker.
 
@@ -132,7 +134,7 @@ More operator detail for the consumer itself: [`docs/live-ingestion.md`](live-in
 | Host worker without `PYTHONUNBUFFERED=1` | empty log while the worker is alive |
 | Inject, then start the worker | command silently lost |
 | `python3 -m investigation.vertical` on system Python | `No module named 'openai'` |
-| Judge **Fire hidden incident** | `injection is not wired` |
+| Judge **Fire hidden incident** with no broker | reports `delivered: false` and injects nothing; start Kafka and the workers first |
 | `investigation.vertical --keep` on a prepared store | reseeds anyway |
 
 ## Simulated demo data
@@ -167,7 +169,7 @@ The guaranteed demo path has exactly three scenarios ([`DECISIONS.md`](../DECISI
 
 Rehearse those three. Remaining scenarios in [`docs/prd.md`](prd.md) section 26 stay documented without a build guarantee. Do not add a fourth guaranteed scenario.
 
-A live run is supposed to fire **one** hidden incident. The judge must not be told which of the three it is ([`docs/prd.md`](prd.md) section 27; W4 owns the trigger control, W1 owns injection). **On this tree that opening move does not work:** `POST /api/trigger` returns `injection is not wired`. Use the offline Operator runbook above, not the judge button, until that seam is closed. The same surface sequence still describes what should appear for whichever of the three is fired.
+A live run is supposed to fire **one** hidden incident. The judge must not be told which of the three it is ([`docs/prd.md`](prd.md) section 27; W4 owns the trigger control, W1 owns injection). The toggle now does fire one, through `worker.inject`, and no scenario identifier crosses the boundary in either direction. Two caveats before you open with it: it needs the broker and the compose workers up, and it needs roughly three minutes of consume afterwards for detection to have the sustained contrast. The offline Operator runbook above remains the safer opening because it needs no broker at all.
 
 | Step | What appears | Which guaranteed scenarios this step is for |
 | --- | --- | --- |
@@ -199,7 +201,7 @@ Implemented on `origin/main` as of this writing, in the owning trees:
 - W1 simulated worker under `worker/`.
 - W2 detector, canonical store, live Kafka consumer, and measured C2 tools under `detector/`. `external_status` remains W3's.
 - W3 investigation core, evidence gateway, agent loop and evaluator under `investigation/` and `evaluator/`. `metric_series` is on the gateway allowlist.
-- W4 dashboard, store, Slack / phone escalation, and a judge-trigger adapter under `surfaces/`. The adapter is present and returns `wired: false`; the button does not fire an incident.
+- W4 dashboard, store, Slack / phone escalation, and a judge-trigger adapter under `surfaces/`. The adapter calls `worker.inject`; the button is a toggle that starts and stops a real incident on a running worker.
 - Offline five-stage slice under `stubs/`.
 
 `INTERFACES.md` on `main` still records C5 as named but not specified.
@@ -219,7 +221,7 @@ From [`docs/ownership.md`](ownership.md) Open decisions, unless a later `DECISIO
 Also still open on `main`, not for W4 to resolve:
 
 - C5 is not yet the current `INTERFACES.md` shape.
-- The judge-trigger seam: W1's `worker.inject` works; W4's adapter still returns `injection is not wired`. Open PR #45 aims to close that seam; it is not on this tree.
+- The judge-trigger seam is closed (PR #45): W4's adapter calls W1's `worker.inject`, and the toggle starts and stops a live incident from the browser.
 - juank's request for a high-value transaction id on C2/C3 (`STATUS.md` 2026-08-29T21:07Z) belongs to andres.
 - No CLI investigates an already-detected store (see Operator runbook).
 - Live `--scenario` does not stop on duration or, in the observed run, on SIGINT.

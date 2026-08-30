@@ -27,37 +27,66 @@ The copy-pasteable demo sequence, including the offline fallback that actually p
 # 0. Dependencies. Do not use system pip; it fails with PEP 668 on Homebrew Python.
 make install
 
-# 1. Broker and Schema Registry (raul's stack). Use the docker compose
-#    subcommand; standalone docker-compose is not required.
-docker compose up -d kafka schema-registry
-# wait until both are healthy
+# 1. Broker, Schema Registry and raul's three merchants. Use the docker compose
+#    subcommand; standalone docker-compose is not required. Wait for health.
+docker compose up -d kafka schema-registry \
+  worker-merchant-a worker-merchant-b worker-merchant-c
 
-# 2. One of raul's merchants, in another shell. --mode anomaly does not exist.
-#    PYTHONUNBUFFERED=1 is required on the host (the image sets it; a host
-#    command does not). An empty log is not a dead worker.
-PYTHONUNBUFFERED=1 .venv/bin/python -m worker.worker merchant-a --interval-seconds 0.2
-
-# 3. Only after that worker is publishing. Injecting first is silently lost:
-#    incidents.control starts from latest with a new consumer group.
-.venv/bin/python -m worker.inject merchant-a --provider dlocal --effect decline
-
-# 4. Consume for a minute, then detect. This is live traffic into the store.
-#    It is not a guaranteed C3 record. Healthy 60s traffic returns incident null.
+# 2. Optional: W1's replayable history, streamed rather than held in memory.
 export CLEARWAVE_DB=state/clearwave.db
+.venv/bin/python -m detector ingest /path/to/backfill.jsonl --stream
+
+# 3. Consume for a minute, then detect. This is live traffic into the store.
+#    It is not a guaranteed C3 record: healthy 60s traffic returns incident null.
+#    Inject first (below) if you want an incident to detect.
 .venv/bin/python -m detector consume --seconds 60 --detect
 ```
 
-`make live` is only step 4, and it hardcodes system `python3` rather than `.venv`. It starts neither Kafka nor a worker, and it does not guarantee an incident. `make consume` reads until the topics go quiet and stops.
+`make e2e` is steps 1 and 3 in one command, and `make e2e BACKFILL=/path/to/backfill.jsonl`
+includes step 2. `make backfill BACKFILL=...` is step 2 alone; `make live` is step 3 alone -
+it starts neither Kafka nor a worker and does not guarantee an incident. `make consume` reads
+until the topics go quiet and stops. All of these run on `.venv`, which is what `make install`
+populates; only `seed` and `detect` stay on system `python3`, because the broker-free fallback
+needs nothing but the standard library.
 
-On healthy traffic the consumer prints something like this (live run: 1319 accepted, incident null):
+Running a worker on the host instead of in the container works too, with two traps:
+`PYTHONUNBUFFERED=1` is required (the image sets it, a host command does not - an empty log is not
+a dead worker), and `--mode anomaly` does not exist.
+
+```sh
+PYTHONUNBUFFERED=1 .venv/bin/python -m worker.worker merchant-a --interval-seconds 0.2
+```
+
+## Injecting an incident
+
+The workers run *healthy* traffic until something injects an incident into them. Two ways, and
+neither restarts anything:
+
+- **The dashboard.** `make surfaces-serve`, open http://127.0.0.1:8080, and use the judge toggle in
+  the masthead. On publishes a provider-scoped decline; off publishes the stop command. The target
+  it fires is named in `surfaces/inject.py` and returned in the API response.
+- **The command line.** `.venv/bin/python -m worker.inject merchant-b --provider adyen --effect
+  decline`, and `.venv/bin/python -m worker.inject merchant-b --stop` to clear it.
+
+Both publish the same command to the same topic, because the dashboard calls `worker.inject` rather
+than reimplementing it. **Inject only after the target worker is publishing.** Injecting first is
+silently lost: `incidents.control` starts from latest with a new consumer group, so a command sent
+before the worker subscribes is never seen.
+
+There is also `python3 -m worker.worker <merchant> --scenario ...` (see `worker/cli.py`) for
+starting a worker that is already running one of the named scenarios, but that is a start-up
+choice, not something you can toggle mid-demo.
+
+The consumer prints what it did. This is a real run, three merchants live, taken while the judge
+toggle was on:
 
 ```json
 {
-  "consumed": {"accepted": 1319, "duplicates": 0, "rejected": 0, "batches": 7,
-               "polled": 1319, "by_topic": {"ops.telemetry": 115, "payments.attempts": 628,
-                                           "payments.closed": 576}},
-  "stored": {"attempt": 628, "closed": 576, "telemetry": 115},
-  "detection": {"incident": null, "stored": false}
+  "consumed": {"accepted": 1836, "duplicates": 0, "rejected": 0, "batches": 10,
+               "polled": 1836, "by_topic": {"ops.telemetry": 159, "payments.attempts": 870,
+                                            "payments.closed": 807}},
+  "stored": {"attempt": 102642, "closed": 2350, "telemetry": 469},
+  "detection": {"incident": {"...": "a C3 record with money attached"}, "stored": true}
 }
 ```
 
@@ -69,6 +98,26 @@ sqlite3 state/clearwave.db "SELECT source, reason, COUNT(*) FROM dead_letter GRO
 
 Everything downstream - the C2 evidence tools, W3's investigation, W4's dashboard - reads the same
 file, located by `CLEARWAVE_DB`. Point them at it and they read the numbers the detector reports.
+
+## Loading a backfill
+
+W1 can hand over a replayable history: one `clearwave.attempt.v1` per line, JSON Lines. The plain
+`ingest` reads a file whole, which is right for the fixtures and wrong for a backfill - 100,000
+lines is 83 MB of text plus 100,000 parsed dicts held at once. `--stream` reads a line at a time
+and writes in batches through the same `write_batch` the consumer uses, so there is one insert
+path, one dead-letter rule and one dedupe rule, not two.
+
+Measured on the 15-day, 100,000-event backfill, same store, same accepted counts either way:
+
+| Path | Peak RSS | Wall clock |
+|---|---|---|
+| `ingest backfill.jsonl` | 572 MB | 3.8 s |
+| `ingest backfill.jsonl --stream` | 29 MB | 6.4 s |
+
+The streaming path trades a little wall clock for a working set that does not grow with the file.
+A line it cannot parse is dead-lettered with its `path:line` and the rest of the file still loads;
+the non-streaming reader refuses the whole file instead, which is the right answer for something
+small enough to fix by hand and the wrong one for 100,000 lines.
 
 ## What the consumer guarantees
 
