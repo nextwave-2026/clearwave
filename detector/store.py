@@ -121,6 +121,13 @@ CREATE INDEX IF NOT EXISTS closed_time ON payment_closed (closed_epoch);
 
 # One record kind per topic W1 publishes. The kind decides which normaliser and
 # which table a record reaches; nothing else in the pipeline branches on topic.
+# The lifecycle state a near-miss is persisted under. It is a state on the C3
+# record rather than a separate store (DECISIONS.md, 2026-08-30T03:59Z): one
+# cohort keeps one record, so the warning and the incident it becomes are the
+# same row. `detected` remains the sole handoff signal to investigation, and a
+# watch is never claimed and never escalated.
+WATCHING = "watching"
+
 KINDS = {
     "attempt": "attempt",
     "telemetry": "telemetry_sample",
@@ -332,6 +339,14 @@ def save_incident(
     (DECISIONS.md, 2026-08-29T19:43Z), so the write must never clobber a state
     another runner has already moved on - hence INSERT OR IGNORE rather than a
     replace.
+
+    A row still in ``watching`` is the single exception, and it is why watches
+    do not need a table of their own (DECISIONS.md, 2026-08-30T03:59Z): one
+    cohort keeps one record, so a watch is updated in place as evidence
+    accumulates and upgraded to ``detected`` on the same identifier when the
+    floors finally pass. The guard is in the UPDATE's own WHERE clause, so a
+    row that has already left ``watching`` - claimed, investigating, diagnosed,
+    resolved - can never be rewritten by a later sweep.
     """
     record = dict(incident)
     record["lifecycle_state"] = lifecycle_state
@@ -340,24 +355,38 @@ def save_incident(
     onset = schema.parse_timestamp(record["onset"])
     last_seen_at = (record.get("persistence") or {}).get("last_observed_at")
     last_seen = schema.parse_timestamp(last_seen_at) if last_seen_at else onset
+    values = (
+        str(record["incident_id"]),
+        record["onset"],
+        json.dumps(record, sort_keys=True, default=str),
+        _cohort_key(record.get("affected_cohort") or {}),
+        str(record.get("severity", "low")),
+        float(detection.get("severity_score") or 0.0),
+        lifecycle_state,
+        int(onset.timestamp()),
+        int(last_seen.timestamp()),
+        str(detection.get("config_version") or "unknown"),
+    )
     with connection:
         cursor = connection.execute(
             """INSERT OR IGNORE INTO incident
                (incident_id, created_at, record, cohort_key, severity, severity_score,
                 lifecycle_state, onset_epoch, last_seen_epoch, config_version)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                str(record["incident_id"]),
-                record["onset"],
-                json.dumps(record, sort_keys=True, default=str),
-                _cohort_key(record.get("affected_cohort") or {}),
-                str(record.get("severity", "low")),
-                float(detection.get("severity_score") or 0.0),
-                lifecycle_state,
-                int(onset.timestamp()),
-                int(last_seen.timestamp()),
-                str(detection.get("config_version") or "unknown"),
-            ),
+            values,
+        )
+        if cursor.rowcount == 1:
+            return True
+        # Only a row still watching may be rewritten, and only into whatever
+        # this sweep now measures - another watch reading, or the upgrade to
+        # detected. Everything else is left exactly as its owner left it.
+        cursor = connection.execute(
+            """UPDATE incident
+                  SET record = ?, cohort_key = ?, severity = ?, severity_score = ?,
+                      lifecycle_state = ?, onset_epoch = ?, last_seen_epoch = ?,
+                      config_version = ?
+                WHERE incident_id = ? AND lifecycle_state = ?""",
+            values[2:] + (values[0], WATCHING),
         )
     return cursor.rowcount == 1
 
