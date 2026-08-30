@@ -46,8 +46,30 @@ defines the four-way work division.
 
 ## Demonstration
 
-Commands and steps a reviewer can follow will land here once the first end-to-end slice exists.
-Nothing to run yet.
+The product is runnable. The copy-pasteable operator sequence - offline stage path and live Kafka path, including commands that fail and must not be used - is in [`docs/demo-sequence.md`](docs/demo-sequence.md).
+
+Safe stage path, from the repository root after `make install`. Two terminals, same `$DB`. Port `18080` avoids a busy `8080`; the product default is `8080`.
+
+Terminal A:
+
+```sh
+DB=/tmp/clearwave-demo.db
+PORT=18080
+rm -f "$DB" "$DB-wal" "$DB-shm"
+CLEARWAVE_SURFACES_QUIET=1 .venv/bin/python -m surfaces.server \
+  --host 127.0.0.1 --port "$PORT" --db "$DB"
+```
+
+Terminal B (requires `OPENAI_API_KEY` in the environment; do not print it):
+
+```sh
+DB=/tmp/clearwave-demo.db
+.venv/bin/python -m investigation.vertical --db "$DB"
+```
+
+Open `http://127.0.0.1:18080/`. Wait for `Lifecycle after investigate: diagnosed`.
+
+Use `.venv/bin/python`, not system `python3`. Do not run `--mode anomaly`, system `python3 -m pip install -r detector/requirements.txt`, or `make live` as a one-step demo. They fail. The judge button returns `injection is not wired`.
 
 ## Architecture
 
