@@ -213,20 +213,18 @@ class SurfacesTests(unittest.TestCase):
             insert_incident(connection, incident, lifecycle_state=incident.get("lifecycle_state", "detected"))
         return connection
 
-    def test_queue_orders_by_business_priority_not_recency(self):
+    def test_queue_leads_with_live_recency_before_closed_history(self):
         connection = self._seed(
             _incident("inc-recent-low", "low", "2026-08-29T12:00:00Z"),
             _incident("inc-old-critical", "critical", "2026-08-29T08:00:00Z"),
             _incident("inc-mid-high", "high", "2026-08-29T11:00:00Z"),
         )
         ordered = [item["incident_id"] for item in list_incidents(connection)]
-        self.assertEqual(ordered, ["inc-old-critical", "inc-mid-high", "inc-recent-low"])
+        self.assertEqual(ordered, ["inc-recent-low", "inc-mid-high", "inc-old-critical"])
         api_order = [item["incident_id"] for item in self.app.queue()["incidents"]]
-        self.assertEqual(api_order, ["inc-old-critical", "inc-mid-high", "inc-recent-low"])
-        recency = ["inc-recent-low", "inc-mid-high", "inc-old-critical"]
-        self.assertNotEqual(api_order, recency)
+        self.assertEqual(api_order, ordered)
 
-    def test_same_severity_orders_by_measured_loss_then_gmv(self):
+    def test_same_severity_uses_recency_before_measured_impact(self):
         connection = self._seed(
             _incident(
                 "inc-high-small-loss",
@@ -260,13 +258,27 @@ class SurfacesTests(unittest.TestCase):
         self.assertEqual(
             ordered,
             [
-                "inc-high-large-loss",
-                "inc-high-same-loss-larger-gmv",
                 "inc-high-small-loss",
+                "inc-high-same-loss-larger-gmv",
+                "inc-high-large-loss",
             ],
         )
         api_order = [item["incident_id"] for item in self.app.queue()["incidents"]]
         self.assertEqual(api_order, ordered)
+
+    def test_a_live_record_leads_over_older_closed_history(self):
+        old = _incident("inc-old-critical", "critical", "2026-08-29T08:00:00Z")
+        old["lifecycle_state"] = "resolved"
+        current = _incident("inc-current-low", "low", "2026-08-30T13:40:00Z")
+        connection = self._seed(old, current)
+        self.assertEqual(
+            [item["incident_id"] for item in list_incidents(connection)],
+            ["inc-current-low", "inc-old-critical"],
+        )
+        self.assertEqual(
+            [item["incident_id"] for item in self.app.queue()["incidents"]],
+            ["inc-current-low", "inc-old-critical"],
+        )
 
     def test_severity_and_confidence_are_independent_values(self):
         connection = self._seed(_incident("inc-split", "critical", "2026-08-29T10:00:00Z"))
@@ -1589,6 +1601,15 @@ class DashboardWiringTests(unittest.TestCase):
         self.assertNotIn("state.queue = overview.incidents", js)
         self.assertIn("state.queue = payloads[1].incidents", js)
 
+    def test_a_delivered_run_cannot_leave_the_detail_on_old_history(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("state.runStartedAt", js)
+        self.assertIn("function selectionForRun()", js)
+        self.assertIn("return null;", js[js.index("function selectionForRun()"):js.index("function syncSelection")])
+        self.assertIn("state.runRecordId = current.incident_id", js)
+        self.assertIn('item.lifecycle_state !== "resolved"', js)
+        self.assertIn("if (state.selectedId !== incidentId) return;", js)
+
     def test_a_count_is_never_rendered_as_a_percentage(self):
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
         # fmt() reads a bare 1 as 100%; blast-radius counts must not go through it.
@@ -1736,7 +1757,7 @@ class RevenueFirstOverviewTests(unittest.TestCase):
         # A chart that renders once and freezes reads as a screenshot on stage.
         self.assertIn('jsonGet("/api/series/" + encodeURIComponent(incidentId))', self.js)
         refresh = self.js[self.js.index("function refresh()"):self.js.index("function loadSeries")]
-        self.assertIn("loadSeries((payloads[0] || {}).source_incident_id);", refresh)
+        self.assertIn("loadSeries(state.selectedId || (payloads[0] || {}).source_incident_id);", refresh)
 
     def test_the_platform_total_refusal_survives_the_business_framing(self):
         self.assertIn("REFUSAL_NOTE", self.js)

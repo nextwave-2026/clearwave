@@ -35,7 +35,7 @@ def overview(
     incidents: list[Mapping[str, Any]],
     investigations: Mapping[str, Mapping[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
-    """Business overview figures, copied from the highest-priority incident."""
+    """Business overview figures, copied from the leading live incident."""
     results = investigations or {}
     active = [incident for incident in incidents if _is_active(incident)]
     headline = active[0] if active else None

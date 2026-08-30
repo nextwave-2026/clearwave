@@ -4,6 +4,11 @@
   const state = {
     view: "overview",
     selectedId: null,
+    // Set only after the judge control confirms delivery. Until the detector
+    // writes a row for this run, keep stale history out of the detail pane.
+    runStartedAt: null,
+    runKnownIds: null,
+    runRecordId: null,
     overview: null,
     queue: [],
     watches: [],
@@ -1083,10 +1088,10 @@
   function renderQueue() {
     if (!state.queue.length) {
       queueBoard.innerHTML = '<p class="empty">No incidents in the store.</p>';
-      queueWho.textContent = "Ordered by severity, then measured loss per hour. Recency is not a ranking.";
+      queueWho.textContent = "No incidents yet. Historical records remain here after a run closes.";
       return;
     }
-    queueWho.textContent = state.queue.length + " in the store · ordered by severity, then measured loss per hour. Recency is not a ranking.";
+    queueWho.textContent = state.queue.length + " in the store · live incidents first, then newest closed history. Nothing is deleted.";
     const table = document.createElement("div");
     table.className = "frame";
     table.innerHTML =
@@ -1850,8 +1855,8 @@
       '<ol class="run-steps">' + AGENT_STEPS.map(function (step) {
         return "<li><b>" + escapeHtml(step[0]) + "</b><span>" + escapeHtml(step[1]) + "</span></li>";
       }).join("") + "</ol>" +
-      '<p class="run-foot">That is the order it runs in, not a live position: the trail is stored in one ' +
-      "write when the run finishes, so the queries appear together. The board polls itself; nothing here " +
+      '<p class="run-foot">That is the order it runs in, not a live position: each query is stored as the ' +
+      "agent makes it, so the trail grows while the run is still open. The board polls itself; nothing here " +
       "needs clicking.</p>" +
       "</div>";
   }
@@ -2104,7 +2109,7 @@
     const banner = statusBanner(incident, investigation);
     if (!trail.length) {
       evidenceBoard.innerHTML = banner + (isInvestigating(incident)
-        ? '<p class="empty">The trail is written in one go when the run finishes.</p>'
+        ? '<p class="empty">No evidence call is stored yet. The trail appears here as the agent makes each call.</p>'
         : '<p class="empty">No evidence trail is stored for this incident.</p>');
       bindCites(evidenceBoard);
       return;
@@ -2756,6 +2761,45 @@
   // /api/incidents, not the active slice the overview header is built from, and
   // merchant health, pending calls and escalation outcomes each come from the
   // endpoint that owns them rather than being re-derived off one payload.
+  function recordId(item) {
+    return item.incident_id;
+  }
+
+  function selectionForRun() {
+    if (state.runRecordId && state.queue.some(function (item) {
+      return item.incident_id === state.runRecordId;
+    })) return state.runRecordId;
+    if (state.runKnownIds) {
+      if (state.stage === "clear") return null;
+      // Incident onsets are event-time bucket starts and can lag the wall clock
+      // by several minutes. New record identity, not onset time, is the run
+      // boundary the surface can actually observe.
+      const current = state.queue.filter(function (item) {
+        return state.runKnownIds.indexOf(item.incident_id) === -1;
+      })[0];
+      if (current) {
+        state.runRecordId = current.incident_id;
+        return current.incident_id;
+      }
+      return null;
+    }
+    if (state.selectedId && state.queue.some(function (item) {
+      return item.incident_id === state.selectedId;
+    })) return state.selectedId;
+    const live = state.queue.filter(function (item) {
+      return item.lifecycle_state !== "resolved" && item.lifecycle_state !== "mitigated";
+    });
+    return live.length ? live[0].incident_id : null;
+  }
+
+  function syncSelection() {
+    const selected = selectionForRun();
+    if (selected !== state.selectedId) {
+      state.selectedId = selected;
+      state.detail = null;
+    }
+  }
+
   function refresh() {
     return Promise.all([
       jsonGet("/api/overview"),
@@ -2777,10 +2821,10 @@
       state.calls = payloads[3].calls || [];
       state.escalations = payloads[4];
       state.ingestion = payloads[5];
-      if (!state.selectedId && state.queue.length) state.selectedId = state.queue[0].incident_id;
+      syncSelection();
       renderIngestion();
       renderOverview();
-      loadSeries((payloads[0] || {}).source_incident_id);
+      loadSeries(state.selectedId || (payloads[0] || {}).source_incident_id);
       renderQueue();
       renderWatchRail();
       renderEscalation();
@@ -2808,6 +2852,9 @@
 
   function loadDetail(incidentId) {
     return jsonGet("/api/incidents/" + encodeURIComponent(incidentId)).then(function (detail) {
+      // A poll can finish after a newer run has been selected. Never let its
+      // late response mix another incident's investigation into this pane.
+      if (state.selectedId !== incidentId) return;
       state.detail = detail;
       renderDetail();
       renderEvidence();
@@ -2858,6 +2905,7 @@
     const submitter = event.submitter;
     const stage = submitter && submitter.getAttribute("data-stage");
     if (!stage || JUDGE_STAGES.indexOf(stage) === -1) return;
+    const runBaseline = state.queue.map(recordId);
     setJudgeBusy(true);
     judgeStatus.textContent = "Sending your change into the live traffic.";
     fetch("/api/trigger", {
@@ -2868,6 +2916,16 @@
     })
       .then(function (response) { return response.json(); })
       .then(function (body) {
+        if (body.delivered && stage !== "clear") {
+          // A developing press starts the run; Collapse continues it. The
+          // row id is learned only from a detector row, never invented by
+          // the control response.
+          if (stage === "developing" || state.stage === "clear" || !state.runStartedAt) {
+            state.runStartedAt = new Date().toISOString();
+            state.runKnownIds = runBaseline;
+            state.runRecordId = null;
+          }
+        }
         renderJudge(body);
         // body.message is the server's own account of what happened, including
         // the unreachable-broker case. The UI never upgrades a failure into a

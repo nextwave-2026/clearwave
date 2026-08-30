@@ -112,7 +112,7 @@ def measurement_session(path: Path | str = DEFAULT_DB) -> Iterator[sqlite3.Conne
 
 
 def list_incidents(connection: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Every C3 record, ordered by severity then measured impact, never recency."""
+    """Every C3 record, with live incidents first and newest readings leading each group."""
     rows = connection.execute(
         "SELECT incident_id, record, lifecycle_state, severity FROM incident"
     ).fetchall()
@@ -342,17 +342,32 @@ def _decode_record(row: sqlite3.Row) -> dict[str, Any] | None:
     return record
 
 
-def _priority_key(incident: Mapping[str, Any]) -> tuple[int, float, float, str]:
+def _priority_key(incident: Mapping[str, Any]) -> tuple[int, int, float, int, float, float, str]:
+    """Lead with what is happening now, then keep recent history easy to find.
+
+    Severity and loss remain useful tie-breakers, but neither can bury a live
+    reading beneath an older closed record. ISO-8601 UTC onsets sort
+    lexicographically, and missing onsets sort after records with one.
+    """
     severity = str(incident.get("severity", "")).lower()
     financial = incident.get("financial_impact")
     if not isinstance(financial, Mapping):
         financial = {}
+    onset = str(incident.get("onset") or "")
     return (
+        0 if _is_live(incident) else 1,
+        0 if onset else 1,
+        -_onset_seconds(onset),
         SEVERITY_RANK.get(severity, 99),
         -_money_amount(financial.get("loss_per_hour")),
         -_money_amount(financial.get("gmv_at_risk")),
         str(incident.get("incident_id", "")),
     )
+
+
+def _is_live(incident: Mapping[str, Any]) -> bool:
+    state = str(incident.get("lifecycle_state", "")).strip().lower()
+    return state not in {"watching", "resolved", "mitigated"}
 
 
 def _money_amount(value: Any) -> float:
@@ -361,6 +376,13 @@ def _money_amount(value: Any) -> float:
     try:
         return float(value.get("amount", 0.0) or 0.0)
     except (TypeError, ValueError):
+        return 0.0
+
+
+def _onset_seconds(value: str) -> float:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError, OverflowError):
         return 0.0
 
 
