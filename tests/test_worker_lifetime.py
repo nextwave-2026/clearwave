@@ -130,58 +130,73 @@ class DurationHonouredTests(unittest.TestCase):
         self.assertTrue(producer.flushed)
 
 
+def _armed_worker_script(db_path: Path) -> str:
+    return textwrap.dedent(
+        f"""
+        from pathlib import Path
+        from worker.ground_truth.runner import ScenarioRun
+        from worker.helpers.merchant import Merchant
+        from worker.runtime import RunStopper
+        from worker.worker import run
+        from tests.test_worker_lifetime import FakeControl, FakeProducer
+
+        class Armed(RunStopper):
+            def arm_signals(self):
+                previous = super().arm_signals()
+                print("ready", flush=True)
+                return previous
+
+        db_path = Path({str(db_path)!r})
+        scenario = ScenarioRun(
+            "provider-degradation", duration_seconds=30, db_path=db_path
+        )
+        run(
+            Merchant("merchant-c"),
+            scenario.incident,
+            interval_seconds=0.05,
+            telemetry_every=0,
+            scenario_run=scenario,
+            duration_seconds=None,
+            producer=FakeProducer(),
+            control=FakeControl(incident=scenario.incident),
+            stopper=Armed(None),
+            install_signal_handlers=True,
+        )
+        print("exited", flush=True)
+        """
+    )
+
+
 class SignalShutdownTests(unittest.TestCase):
+    def _start_armed_worker(self, db_path: Path) -> subprocess.Popen:
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+        proc = subprocess.Popen(
+            [sys.executable, "-u", "-c", _armed_worker_script(db_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+        )
+        ready = ""
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            line = proc.stdout.readline() if proc.stdout is not None else ""
+            if line.startswith("ready"):
+                ready = line
+                break
+            if proc.poll() is not None:
+                rest = proc.stdout.read() if proc.stdout is not None else ""
+                self.fail(f"worker exited before ready: {rest}")
+        self.assertTrue(ready.startswith("ready"), ready)
+        proc.ready_line = ready  # type: ignore[attr-defined]
+        return proc
+
     def test_sigterm_closes_ground_truth_record(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "ground_truth.db"
-            script = textwrap.dedent(
-                f"""
-                from pathlib import Path
-                from worker.ground_truth.runner import ScenarioRun
-                from worker.helpers.merchant import Merchant
-                from worker.worker import run
-                from tests.test_worker_lifetime import FakeControl, FakeProducer
-
-                db_path = Path({str(db_path)!r})
-                scenario = ScenarioRun(
-                    "provider-degradation", duration_seconds=30, db_path=db_path
-                )
-                print("ready", scenario.instance_id, flush=True)
-                run(
-                    Merchant("merchant-c"),
-                    scenario.incident,
-                    interval_seconds=0.05,
-                    telemetry_every=0,
-                    scenario_run=scenario,
-                    duration_seconds=None,
-                    producer=FakeProducer(),
-                    control=FakeControl(incident=scenario.incident),
-                    install_signal_handlers=True,
-                )
-                print("exited", flush=True)
-                """
-            )
-            env = os.environ.copy()
-            env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
-            proc = subprocess.Popen(
-                [sys.executable, "-u", "-c", script],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                env=env,
-            )
+            proc = self._start_armed_worker(db_path)
             try:
-                ready = ""
-                deadline = time.monotonic() + 8
-                while time.monotonic() < deadline:
-                    line = proc.stdout.readline() if proc.stdout is not None else ""
-                    if line.startswith("ready"):
-                        ready = line
-                        break
-                    if proc.poll() is not None:
-                        rest = proc.stdout.read() if proc.stdout is not None else ""
-                        self.fail(f"worker exited before ready: {rest}")
-                self.assertTrue(ready.startswith("ready"), ready)
                 proc.send_signal(signal.SIGTERM)
                 try:
                     out, _ = proc.communicate(timeout=5)
@@ -189,6 +204,7 @@ class SignalShutdownTests(unittest.TestCase):
                     proc.kill()
                     out, _ = proc.communicate()
                     self.fail(f"SIGTERM did not stop the worker: {out}")
+                ready = getattr(proc, "ready_line", "")
                 self.assertEqual(proc.returncode, 0, out)
                 self.assertIn("stopping on SIGTERM", ready + out)
                 self.assertIn("ground truth recorded", ready + out)
@@ -203,53 +219,8 @@ class SignalShutdownTests(unittest.TestCase):
     def test_sigint_closes_ground_truth_record(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "ground_truth.db"
-            script = textwrap.dedent(
-                f"""
-                from pathlib import Path
-                from worker.ground_truth.runner import ScenarioRun
-                from worker.helpers.merchant import Merchant
-                from worker.worker import run
-                from tests.test_worker_lifetime import FakeControl, FakeProducer
-
-                db_path = Path({str(db_path)!r})
-                scenario = ScenarioRun(
-                    "provider-degradation", duration_seconds=30, db_path=db_path
-                )
-                print("ready", scenario.instance_id, flush=True)
-                run(
-                    Merchant("merchant-c"),
-                    scenario.incident,
-                    interval_seconds=0.05,
-                    telemetry_every=0,
-                    scenario_run=scenario,
-                    duration_seconds=None,
-                    producer=FakeProducer(),
-                    control=FakeControl(incident=scenario.incident),
-                    install_signal_handlers=True,
-                )
-                print("exited", flush=True)
-                """
-            )
-            env = os.environ.copy()
-            env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
-            proc = subprocess.Popen(
-                [sys.executable, "-u", "-c", script],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                env=env,
-            )
+            proc = self._start_armed_worker(db_path)
             try:
-                ready = ""
-                deadline = time.monotonic() + 8
-                while time.monotonic() < deadline:
-                    line = proc.stdout.readline() if proc.stdout is not None else ""
-                    if line.startswith("ready"):
-                        ready = line
-                        break
-                    if proc.poll() is not None:
-                        rest = proc.stdout.read() if proc.stdout is not None else ""
-                        self.fail(f"worker exited before ready: {rest}")
                 proc.send_signal(signal.SIGINT)
                 try:
                     out, _ = proc.communicate(timeout=5)
@@ -257,6 +228,7 @@ class SignalShutdownTests(unittest.TestCase):
                     proc.kill()
                     out, _ = proc.communicate()
                     self.fail(f"SIGINT did not stop the worker: {out}")
+                ready = getattr(proc, "ready_line", "")
                 self.assertEqual(proc.returncode, 0, out)
                 self.assertIn("ground truth recorded", ready + out)
                 closed = _closed_record(db_path)
