@@ -31,8 +31,15 @@ backfill:
 # person reproducing this at 03:00: raul's stack, the backfill if they have
 # one, then live traffic through to a stored C3 record. Then `make
 # surfaces-serve` and hit the judge toggle on the dashboard.
+#
+# Detection needs sustained event-time contrast, so this consumes for three
+# minutes, not the sixty seconds `make live` uses. A shorter sweep after an
+# injection reports `incident: null` and looks like a failure when it is only
+# an unfinished run. Override with CONSUME_SECONDS.
+CONSUME_SECONDS ?= 180
+
 e2e:
 	@docker compose up -d kafka schema-registry \
 	  worker-merchant-a worker-merchant-b worker-merchant-c
 	@test -z "$(BACKFILL)" || $(PYTHON) -m detector ingest "$(BACKFILL)" --stream
-	@$(PYTHON) -m detector consume --seconds 60 --detect
+	@$(PYTHON) -m detector consume --seconds $(CONSUME_SECONDS) --detect
