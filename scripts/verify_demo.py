@@ -2,9 +2,11 @@
 """Drive the demo chain against a real stack and print an honest verdict per beat.
 
 A judge pressing a control is the judge acting, never the system noticing.
-Every PASS rests on something this run observed. Failures are reported and
-the remaining beats still run. This script does not tune, skip, or special-case
-a check so the run comes out green.
+Every PASS rests on something this run observed. Product failures are reported
+and the remaining beats still run. If the isolated stack does not come up, or
+surfaces is not answering, the run aborts before any beat so an infrastructure
+problem cannot read as a product result. This script does not tune, skip, or
+special-case a check so the run comes out green.
 """
 
 from __future__ import annotations
@@ -33,6 +35,8 @@ DEFAULT_SURFACES_PORT = 18082
 # must not bind them.
 OCCUPIED_PORTS = frozenset({8080, 8081, 8082, 8090, 9092, 18080})
 FORBIDDEN_PROJECTS = frozenset({"clearwave"})
+BEATS_FAILED_EXIT = 1
+INFRA_EXIT = 2
 
 # Published floors from docs/demo-sequence.md / AGENTS.md, observed in the store.
 BASELINE_NEEDED_BUCKETS = 60
@@ -444,6 +448,19 @@ def text_request(url: str, timeout: float = HTTP_TIMEOUT) -> tuple[int, str]:
         return 0, f"{type(exc).__name__}: {exc}"
 
 
+def abort_infra(reason: str) -> int:
+    """Stop the run before any beat. The message must not look like a beat table."""
+    print(
+        f"verify-demo: isolated stack did not come up ({reason})",
+        flush=True,
+    )
+    print(
+        "verify-demo: aborting before any beat; this is an infrastructure problem, not a product result",
+        flush=True,
+    )
+    return INFRA_EXIT
+
+
 def print_table(beats: list[Beat]) -> None:
     print()
     print(f"{'BEAT':<28} {'RESULT':<6} EVIDENCE")
@@ -625,6 +642,15 @@ class DemoVerifier:
             return f"docker compose up exited {result.returncode}"
         # Give the dashboard one extra poll so the first overview is a real read.
         time.sleep(2)
+        return None
+
+    def surfaces_health(self) -> str | None:
+        status, payload = self.api("GET", "/api/overview")
+        if status != 200:
+            return (
+                "surfaces is not answering GET /api/overview -> "
+                f"{status} {one_line(payload)}"
+            )
         return None
 
     def tear_down(self) -> None:
@@ -1090,7 +1116,7 @@ class DemoVerifier:
         self.beat_no_stale_revenue()
         print_table(self.beats)
         failed = [beat for beat in self.beats if not beat.passed]
-        return 1 if failed else 0
+        return BEATS_FAILED_EXIT if failed else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1140,10 +1166,10 @@ def main(argv: list[str] | None = None) -> int:
                 f"verify-demo: refusing project {args.project!r}; it is the live demo",
                 file=sys.stderr,
             )
-            return 2
+            return INFRA_EXIT
         if DEFAULT_SURFACES_PORT in OCCUPIED_PORTS:
             print("verify-demo: isolated surfaces port collides with a live port", file=sys.stderr)
-            return 2
+            return INFRA_EXIT
     else:
         dashboard = against
         db_path = Path(args.db) if args.db else ROOT / "state" / "clearwave.db"
@@ -1168,7 +1194,10 @@ def main(argv: list[str] | None = None) -> int:
         if isolated:
             error = verifier.bring_up()
             if error:
-                print(f"verify-demo: isolated stack did not come up: {error}", flush=True)
+                return abort_infra(error)
+            error = verifier.surfaces_health()
+            if error:
+                return abort_infra(error)
         return verifier.run_beats()
     except KeyboardInterrupt:
         print("verify-demo: interrupted", file=sys.stderr)

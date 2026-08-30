@@ -434,7 +434,8 @@ def expire_watches_except(connection: sqlite3.Connection, keep_ids: set[str]) ->
     it, leaving the row in `watching` floods the board with warnings that are
     no longer true. The existing save guard still holds: only a row that is
     still watching can be expired this way, so a claimed or diagnosed incident
-    is never touched.
+    is never touched by this path - recovered incidents use
+    `resolve_recovered_incidents` instead.
     """
     rows = connection.execute(
         "SELECT incident_id, record FROM incident WHERE lifecycle_state = ?",
@@ -464,6 +465,65 @@ def expire_watches_except(connection: sqlite3.Connection, keep_ids: set[str]) ->
             )
             expired += cursor.rowcount
     return expired
+
+
+# States that mean "still an open problem". When traffic recovers, these must
+# leave the board - otherwise Clear never returns the demo to healthy.
+RECOVERABLE_STATES = frozenset(
+    {
+        "detected",
+        "investigating",
+        "diagnosed",
+        "acknowledged",
+    }
+)
+
+
+def resolve_recovered_incidents(
+    connection: sqlite3.Connection,
+    recovered_ids: set[str],
+) -> int:
+    """Move open incident rows whose traffic has recovered to resolved.
+
+    Watches already expire through `expire_watches_except`. Detected and
+    diagnosed rows did not: after the judge presses Clear the inject stops,
+    conversion recovers, and the board still showed the old money. Only the
+    ids the sweep has measured as recovered are touched, and only while they
+    still sit in a recoverable state - a mitigated row is already closed.
+    """
+    if not recovered_ids:
+        return 0
+    resolved = 0
+    with connection:
+        for incident_id in sorted(recovered_ids):
+            row = connection.execute(
+                "SELECT record, lifecycle_state FROM incident WHERE incident_id = ?",
+                (incident_id,),
+            ).fetchone()
+            if row is None:
+                continue
+            state = str(row["lifecycle_state"] or "")
+            if state not in RECOVERABLE_STATES:
+                continue
+            try:
+                record = json.loads(row["record"])
+            except (TypeError, ValueError):
+                record = {}
+            if not isinstance(record, dict):
+                record = {}
+            record["lifecycle_state"] = RESOLVED
+            cursor = connection.execute(
+                """UPDATE incident SET record = ?, lifecycle_state = ?
+                     WHERE incident_id = ? AND lifecycle_state = ?""",
+                (
+                    json.dumps(record, sort_keys=True, default=str),
+                    RESOLVED,
+                    incident_id,
+                    state,
+                ),
+            )
+            resolved += cursor.rowcount
+    return resolved
 
 
 def _record_of(row: sqlite3.Row) -> dict[str, Any] | None:

@@ -42,7 +42,7 @@ If any pre-flight condition fails, do not start the live sequence. Use the recov
 
 The three masthead controls are the only controls the judge needs:
 
-- **Developing deviation** publishes a decline probability of **0.12**.
+- **Developing deviation** publishes a decline probability of **0.14**.
 - **Collapse** publishes a decline probability of **0.95**.
 - **Clear** stops the introduced deviation.
 
@@ -80,12 +80,12 @@ The judge clicks **Developing deviation** in the masthead.
 
 **What should appear**
 
-The status text immediately says that the judge started a developing deviation in merchant-b's traffic on provider adyen. The board continues polling the same store. Within the verifier's **240-second** stage-one allowance, a single **Watching** row should appear for the affected cohort, with:
+The status text immediately says that the judge started a developing deviation in merchant-b's traffic on provider adyen. The board continues polling the same store. The verifier allows up to **240 seconds** for stage one. A causal **Watching** row is not currently reliable enough to promise: treat any row already present before the press as unrelated, and use the fallback if no new row appears.
 
 - a stored projected loss per hour labelled **if this continues**;
 - the cohort shown as merchant-b / adyen;
 - the watch reasons and detection-floor chips;
-- a worsening trajectory; and
+- a worsening or strongly sustained trajectory; and
 - no incident in the queue and no active-incident count increase.
 
 A measured example was **USD 2,711.21/hour** against a typical hourly attempted value of **USD 45,950.68**. That is an example from a measured run, not a number to promise on stage; live figures are copied from the current record.
@@ -106,7 +106,7 @@ A developing deviation is visible before the incident floors are crossed. The pr
 
 - First check the judge status text in the browser. If it says Kafka could not be reached, say: "The control did not deliver the input, so this is not evidence about detection." Do not claim that an incident fired. Move to the prepared fallback.
 - If the status confirms delivery but no watch appears after 240 seconds, allow at most one extra 45-second detector sweep if the judges are still engaged. Say: "The input was delivered, but the measured contrast has not produced the watch in this window; I will not relabel silence as success." Then abandon this step and continue with the prepared static evidence tour rather than debugging live.
-- If an incident appears immediately, call it what the board calls it. Do not call it a watch. The 0.12 stimulus or the store conditions did not produce the intended near-miss; press **Clear** only if needed, and move to recovery.
+- If an incident appears immediately, call it what the board calls it. Do not call it a watch. The 0.14 stimulus or the store conditions did not produce the intended near-miss; press **Clear** only if needed, and move to recovery.
 - If an unrelated watch appears, do not attribute it to the judge's action. Restart the clean stack off screen if time allows; otherwise do not use that row as evidence for this sequence.
 
 ### 2. Show prevention and the no-page boundary
@@ -255,7 +255,7 @@ Use the same `CLEARWAVE_DB=state/clearwave.db` for every process. Do not run the
 - severity from business-impact inputs; and
 - escalation routing and paging from the stored severity and lifecycle.
 
-The fixed incident floors are a two-proportion z-score at or below **-3**, an absolute conversion drop of at least **0.02**, at least **30 attempted payments**, and **3 sustained buckets**. The watch is deliberately earlier: z-score at or below **-1.5**, an absolute drop of at least **0.01**, enough volume, and a worsening trajectory, while the incident floors are still open. The clauses are conjunctive; one weak signal is not enough.
+The fixed incident floors are a two-proportion z-score at or below **-3**, an absolute conversion drop of at least **0.02**, at least **30 attempted payments**, and **3 sustained buckets**. The watch is deliberately earlier: z-score at or below **-1.5**, an absolute drop of at least **0.01**, enough volume, and either a worsening or strongly sustained trajectory, while the incident floors are still open. The clauses are conjunctive; one weak signal is not enough.
 
 The live control itself is deterministic too: it targets merchant-b / adyen and publishes the selected stage. That fixed target is the demo input, not a leak of hidden truth. The detector never receives a scenario name, cause, intended magnitude or ground-truth record.
 

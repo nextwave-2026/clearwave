@@ -38,7 +38,7 @@ ClearWave detects deviations from recent merchant behaviour and sibling cohorts.
 
 A platform-wide floor is wrong for every merchant at once: normal conversion may be 0.75 for one and 0.95 for another. Abrupt provider, issuer or method failures still separate from same-window siblings, localising where money is leaking. When all of a merchant's cohorts move together, that comparison keeps us from blaming one provider; it cannot tell us whether the merchant-wide movement is normal for Friday.
 
-The code-model split makes the result defensible. Code decides anomaly, cohort, severity, business impact and paging. The model researches the bounded problem already established; validation rejects claims whose evidence does not identify an executed gateway query. Business impact stays on the same evolving record, and `insufficient_evidence` is an explicit outcome when the observations cannot separate causes. ([detection](detection-plane.md#l2---the-baseline), [investigation](contracts/investigation-result.md))
+The code-model split makes the result defensible. Code decides anomaly, cohort, severity, business impact and paging. High adds Slack, and only critical adds the phone. The model researches the bounded problem already established; validation rejects claims whose evidence does not identify an executed gateway query. Business impact stays on the same evolving record, and `insufficient_evidence` is an explicit outcome when the observations cannot separate causes. ([detection](detection-plane.md#l2---the-baseline), [investigation](contracts/investigation-result.md))
 
 Now the judges take the controls.
 
