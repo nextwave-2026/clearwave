@@ -319,7 +319,7 @@ class SurfacesTests(unittest.TestCase):
             self.assertNotIn("ground_truth", rendered)
             self.assertLessEqual(
                 set(command),
-                {"merchant_id", "action", "scope", "effect", "decline_reason", "latency_ms"},
+                {"merchant_id", "action", "scope", "effect", "decline_reason", "latency_ms", "decline_probability"},
             )
 
     def test_an_unreachable_broker_never_claims_a_scenario_fired(self):
