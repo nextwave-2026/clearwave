@@ -79,7 +79,9 @@ library late at night is the realistic way this goes wrong.
 Regenerate with `python3 -S scripts/licences.py`, not a bare `make licences`. The generator reads licence
 metadata from whatever interpreter runs it, so a machine with packages installed in the system Python emits
 transitive rows CI's clean interpreter will not, and `scripts/ci/licences_current.sh` then fails on an
-inventory that looked right locally.
+inventory that looked right locally. The guard itself runs `make licences`, so it **rewrites `LICENCES.md`
+as a side effect** - run it and then `git add -A` and you commit your machine's inventory without noticing.
+If you changed no dependency, `git checkout origin/main -- LICENCES.md` before committing.
 
 ## Pre-existing intellectual property - do not break this
 
