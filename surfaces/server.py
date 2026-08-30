@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 from detector.store import database_path as shared_database_path
 from investigation.env import load_dotenv
 
-from . import inject, present, store
+from . import escalation, inject, present, store
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MIME = {
@@ -93,6 +93,30 @@ class SurfacesApp:
         """What the control last published, for a page that has just loaded."""
         return inject.describe(active=self.injected)
 
+    def escalations(self) -> dict[str, Any]:
+        """Every stored escalation outcome, with the binding it was routed on."""
+        with store.session(self.db_path) as connection:
+            incidents = store.list_incidents(connection)
+            investigations = _investigations(connection, incidents)
+            recorded: dict[str, list[dict[str, Any]]] = {}
+            for incident in incidents:
+                stored = investigations.get(str(incident.get("incident_id")))
+                recorded[str(incident.get("incident_id"))] = store.ensure_escalation(
+                    connection, incident, stored
+                )
+            calls = store.list_pending_calls(connection)
+            # The picture of the binding is read from the same function escalate
+            # routes on, so it cannot drift from the behaviour it describes.
+            binding = {
+                severity: escalation.channels_for(severity)
+                for severity in present.SEVERITY_LADDER
+            }
+            payload = present.escalations(incidents, recorded, binding, calls)
+            payload["slack_channel"] = (
+                os.environ.get(escalation.SLACK_CHANNEL_ENV) or escalation.DEFAULT_SLACK_CHANNEL
+            )
+            return payload
+
     def pending_calls(self) -> dict[str, Any]:
         with store.session(self.db_path) as connection:
             return {"calls": store.list_pending_calls(connection)}
@@ -112,6 +136,8 @@ class SurfacesApp:
             return 200, self.merchants()
         if method == "GET" and path == "/api/calls":
             return 200, self.pending_calls()
+        if method == "GET" and path == "/api/escalations":
+            return 200, self.escalations()
         if method == "GET" and path.startswith("/api/incidents/"):
             incident_id = path[len("/api/incidents/") :].strip("/")
             if not incident_id:

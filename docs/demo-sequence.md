@@ -71,13 +71,37 @@ What this produced here:
 
 This path is the broker-free default `detector seed` scenario (`provider_incident`). It is not Kafka, and it is not the judge clicking Fire hidden incident.
 
-### There is no command that investigates an already-detected store
+### Investigating a store that is already detected against
 
-Say this plainly rather than discovering it live:
+This is the join from detection to investigation, and it is a product command now. Use it whenever
+the store was written by something other than `investigation.vertical` itself - a live Kafka
+consume, the judge toggle, a store you preloaded before the pitch.
 
-- `python -m detector detect` writes a C3 row and stops.
-- `python -m investigation.vertical` always runs seed then detect then investigate. `--keep` only skips deleting the file first; it still reseeds.
-- There is no CLI that takes a prepared store and runs one investigation against it. The Python function `investigation.vertical.investigate_store` can do that; it is not a product command. Do not start writing Python in front of a judge.
+```sh
+DB=/tmp/clearwave-live.db
+.venv/bin/python -m investigation.vertical --db "$DB" --investigate-only
+# or, to name the incident rather than take the newest detected one:
+.venv/bin/python -m investigation.vertical --db "$DB" --incident-id inc-2026-08-30-715ab9c3
+```
+
+`make investigate DB=/tmp/clearwave-live.db` is the same thing, and takes an optional
+`INCIDENT=inc-...`.
+
+What it does and does not do:
+
+- It **never seeds, never detects, and never resets the store.** It claims one incident that is
+  already `lifecycle_state: detected`, runs the real investigation runner against it, persists C4,
+  and moves that incident to `diagnosed`.
+- With no `--incident-id` it takes the **newest detected** incident (`onset` descending). With one,
+  it takes exactly that incident, or refuses by name and lists what is detected.
+- A store with nothing detected is an error that says so and points at `detector detect`. It does
+  not quietly seed one for you.
+- A store path that does not exist is an error. Investigate-only never creates a store.
+- `--keep` has nothing to do with this. `--keep` still seeds and detects; it only skips deleting the
+  file first. `--investigate-only` is the flag that skips seed and detect.
+
+The default `python3 -m investigation.vertical` behaviour is unchanged: seed, detect, investigate,
+against a store it recreates. The proven stage path in section 1 above is exactly as it was.
 
 ### The other two guaranteed scenarios
 
@@ -92,6 +116,21 @@ The Kafka hop is real and the judge trigger now fires through it. A 60-second co
 Observed on a live Docker run: `docker compose up -d kafka schema-registry` brought the broker up; workers published; `.venv/bin/python -m detector consume --seconds 60 --detect` decoded Schema Registry frames and wrote the SQLite store (1319 accepted, 0 rejected, **incident null** on healthy traffic); `.venv/bin/python -m worker.inject merchant-a --provider dlocal --effect decline` dropped merchant-a/dlocal approval from 0.876 to 0.115. A stored C3 with money after that inject was **not** observed in that run, because 60 seconds is not enough sustained contrast.
 
 A later run with the three compose workers and a longer consume did produce one, through the dashboard toggle: clicked on, `clearwave-worker-merchant-b` logged `incident control: now targeting {'provider': 'adyen'}`, merchant-b/adyen conversion fell from ~90% to 0-18%, `consume --seconds 180 --detect` took 4,254 records with 0 rejected, and detection stored `inc-2026-08-30-715ab9c3` on `{merchant-b, adyen, CO}` at USD 3.89 GMV at risk. Toggled off, conversion recovered and the next sweep returned `incident: null`. **Three minutes of consume, not one**, is what makes the difference.
+
+**Consume a healthy baseline BEFORE you inject, not after.** This is the failure that looks like a
+broken detector and is not one. The baseline is a trailing window on the same cohort
+(`detector/config.py:BASELINE_TRAILING_BUCKETS`), so if the injection was already running when the
+consume started, the whole history detection can see is degraded and there is no contrast in it.
+Observed here: merchant-b/adyen sitting at 0.045 conversion against ~0.87 on every other cohort,
+6111 records consumed with 0 rejected, and `incident: null` - correctly, because nothing *changed*
+inside the window. Healthy consume first, then inject, then keep consuming on the same store.
+
+A run that did produce one, end to end, for the shape to copy: six minutes of healthy traffic into a
+fresh store (`--from-latest`), then `worker.inject merchant-b --provider adyen --effect decline
+--decline-reason provider_timeout`, then six more minutes on the same consume. Detection stored
+`inc-2026-08-30-9797b639` on `{country: CO, merchant-b, adyen}`, conversion 0.653226 -> 0.065217,
+GMV at risk USD 4826.64, loss per hour USD 57919.73, severity `high`. `make investigate DB=...` then
+diagnosed that stored incident, and severity `high` escalated to dashboard, Slack and phone.
 
 Corrected order, if the broker is already up:
 
@@ -112,7 +151,7 @@ Then point the dashboard at the same `CLEARWAVE_DB`. Expect `incident: null` aft
 
 `--mode anomaly` does not exist (`unrecognized arguments: --mode anomaly`). Replacements that do exist: omit incident flags for healthy traffic and inject after the worker is up; or `--incident-provider dlocal --incident-effect decline`; or `--scenario provider-degradation` on **merchant-c** (not merchant-a). `--scenario-duration-seconds` is a C6 timestamp, not a process lifetime. The worker loop does not stop. SIGINT did not stop it in the live run; use `timeout` / SIGTERM until that is fixed.
 
-`make live` is not one step. Its recipe is `.venv/bin/python -m detector consume --seconds 60 --detect`. It runs on the venv, but it starts neither Kafka nor a worker and does not guarantee an incident. `make e2e` is the one that brings the stack up and consumes; it still does not inject for you.
+`make live` is not one step. Its recipe is `.venv/bin/python -m detector consume --seconds 60 --detect`. It runs on the venv, but it starts neither Kafka nor a worker and does not guarantee an incident. `make e2e` is the one that brings the stack up and consumes; it now consumes for three minutes rather than sixty seconds (`CONSUME_SECONDS`, default 180), because sixty is not enough sustained contrast. It still does not inject for you.
 
 Host worker stdout is block-buffered without `PYTHONUNBUFFERED=1`. The worker image sets this; a host command must too. An empty log is not a dead worker.
 
@@ -135,7 +174,7 @@ More operator detail for the consumer itself: [`docs/live-ingestion.md`](live-in
 | Inject, then start the worker | command silently lost |
 | `python3 -m investigation.vertical` on system Python | `No module named 'openai'` |
 | Judge **Fire hidden incident** with no broker | reports `delivered: false` and injects nothing; start Kafka and the workers first |
-| `investigation.vertical --keep` on a prepared store | reseeds anyway |
+| `investigation.vertical --keep` on a prepared store | reseeds anyway; use `--investigate-only` |
 
 ## Simulated demo data
 
@@ -223,7 +262,6 @@ Also still open on `main`, not for W4 to resolve:
 - C5 is not yet the current `INTERFACES.md` shape.
 - The judge-trigger seam is closed (PR #45): W4's adapter calls W1's `worker.inject`, and the toggle starts and stops a live incident from the browser.
 - juank's request for a high-value transaction id on C2/C3 (`STATUS.md` 2026-08-29T21:07Z) belongs to andres.
-- No CLI investigates an already-detected store (see Operator runbook).
 - Live `--scenario` does not stop on duration or, in the observed run, on SIGINT.
 
 ## Where W4 fits

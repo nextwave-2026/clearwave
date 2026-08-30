@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import runpy
 import sys
 import tempfile
@@ -16,8 +17,10 @@ from unittest.mock import patch
 
 from investigation.store import insert_incident, persist_result
 from surfaces.escalation import (
+    DEFAULT_SLACK_CHANNEL,
     TWILIO_ENV_VARS,
     TWILIO_TWIML_URL_ENV,
+    channels_for,
     escalate,
     notify_slack,
     place_call,
@@ -32,7 +35,7 @@ from surfaces.inject import (
 )
 from surfaces.present import cohort_scope_label, merchant_health
 from surfaces.server import SurfacesApp, make_server
-from surfaces.store import connect, list_incidents
+from surfaces.store import connect, list_incidents, load_escalation
 from worker.helpers.control import CONTROL_TOPIC
 from worker.inject import start_command, stop_command
 
@@ -102,6 +105,28 @@ def _trail_entry(sequence=1):
         "duration_ms": 3.0,
         "outcome": "success",
         "executed": True,
+    }
+
+
+def _diagnosis(incident_id, outcome="diagnosed"):
+    return {
+        "incident_id": incident_id,
+        "confirmed_facts": [],
+        "leading_hypothesis": {
+            "statement": "Provider P2 degradation is the leading explanation.",
+            "evidence": [],
+        },
+        "supporting_evidence": [],
+        "competing_explanations": [],
+        "why_ambiguity_exists": {"statement": "Sibling traffic is limited.", "evidence": []},
+        "missing_evidence": [],
+        "diagnostic_confidence": "medium",
+        "recommended_next_action": {
+            "action": "Investigate Provider P2 before broad rerouting.",
+            "urgency": "now",
+            "basis": [],
+        },
+        "outcome": outcome,
     }
 
 
@@ -343,7 +368,14 @@ class SurfacesTests(unittest.TestCase):
         self.addCleanup(setattr, inject_module, "_publish", original)
 
     def test_critical_severity_falls_back_to_dashboard_call_without_telephony(self):
-        self._seed(_incident("inc-call", "critical", "2026-08-29T10:00:00Z"))
+        connection = self._seed(_incident("inc-call", "critical", "2026-08-29T10:00:00Z"))
+        persist_result(
+            connection,
+            "inc-call",
+            _diagnosis("inc-call"),
+            "diagnosed",
+            trail=[_trail_entry()],
+        )
         detail = self.app.detail("inc-call")
         channels = {event["channel"]: event["status"] for event in detail["escalation"]}
         self.assertEqual(channels["dashboard"], "delivered")
@@ -354,6 +386,81 @@ class SurfacesTests(unittest.TestCase):
         ack = self.app.acknowledge_call("inc-call")
         self.assertTrue(ack["acknowledged"])
         self.assertEqual(self.app.pending_calls()["calls"], [])
+
+    def test_dashboard_read_before_diagnosis_does_not_fire_or_record_escalation(self):
+        connection = self._seed(_incident("inc-early", "critical", "2026-08-29T10:00:00Z"))
+        detail = self.app.detail("inc-early")
+        self.assertEqual(detail["escalation"], [])
+        self.assertEqual(load_escalation(connection, "inc-early"), [])
+        self.app.overview()
+        self.app.queue()
+        self.assertEqual(load_escalation(connection, "inc-early"), [])
+
+    def test_read_before_diagnosis_then_diagnosis_fires_once_with_complete_payload(self):
+        # Hazardous demo ordering: the dashboard is already polling when detection
+        # lands, so the first read happens with no C4 result. That read must not
+        # lock an empty notification; the later read after diagnosis is the one
+        # that fires, once, with the complete payload.
+        connection = self._seed(_incident("inc-order", "critical", "2026-08-29T10:00:00Z"))
+        early = self.app.detail("inc-order")
+        self.assertEqual(early["escalation"], [])
+        persist_result(
+            connection,
+            "inc-order",
+            _diagnosis("inc-order"),
+            "diagnosed",
+            trail=[_trail_entry()],
+        )
+        later = self.app.detail("inc-order")
+        events = later["escalation"]
+        self.assertEqual({event["channel"] for event in events}, {"dashboard", "slack", "phone"})
+        for event in events:
+            payload = event["payload"]
+            self.assertEqual(
+                payload["leading_hypothesis"]["statement"],
+                "Provider P2 degradation is the leading explanation.",
+            )
+            self.assertEqual(payload["diagnostic_confidence"], "medium")
+            self.assertEqual(
+                payload["recommended_next_action"]["action"],
+                "Investigate Provider P2 before broad rerouting.",
+            )
+            self.assertIn("cohort_metrics", payload["citations"])
+        self.assertEqual(len(load_escalation(connection, "inc-order")), 3)
+        again = self.app.detail("inc-order")
+        self.assertEqual(
+            [(event["channel"], event["status"], event["payload"]) for event in again["escalation"]],
+            [(event["channel"], event["status"], event["payload"]) for event in events],
+        )
+        self.assertEqual(len(load_escalation(connection, "inc-order")), 3)
+
+    def test_degraded_diagnosis_still_escalates(self):
+        connection = self._seed(_incident("inc-degraded-esc", "high", "2026-08-29T10:00:00Z"))
+        persist_result(
+            connection,
+            "inc-degraded-esc",
+            {
+                "incident_id": "inc-degraded-esc",
+                "leading_hypothesis": {
+                    "statement": "Causal investigation unavailable: agent down",
+                },
+                "diagnostic_confidence": "low",
+                "recommended_next_action": {
+                    "action": "Review the deterministic incident facts",
+                    "urgency": "now",
+                },
+            },
+            "agent_unavailable",
+            trail=[_trail_entry()],
+        )
+        events = self.app.detail("inc-degraded-esc")["escalation"]
+        self.assertTrue(events)
+        payload = events[0]["payload"]
+        self.assertEqual(
+            payload["leading_hypothesis"]["statement"],
+            "Causal investigation unavailable: agent down",
+        )
+        self.assertEqual(payload["diagnostic_confidence"], "low")
 
     def test_channels_for_pins_full_severity_binding_and_unknown_fallback(self):
         # Pins the complete policy (critical and high both phone; low/medium dashboard-only;
@@ -396,7 +503,14 @@ class SurfacesTests(unittest.TestCase):
             "2026-08-29T10:00:00Z",
             affected_cohort={"provider": "provider-p2"},
         )
-        self._seed(incident)
+        connection = self._seed(incident)
+        persist_result(
+            connection,
+            "inc-provider",
+            _diagnosis("inc-provider"),
+            "diagnosed",
+            trail=[_trail_entry()],
+        )
         row = self.app.merchants()["merchants"][0]
         self.assertIsNone(row["merchant_id"])
         self.assertNotEqual(row["merchant_id"], "unknown")
@@ -856,6 +970,126 @@ class StaticContractTests(unittest.TestCase):
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
         self.assertIn("const outcome = investigation.outcome", js)
         self.assertIn('(outcome ? " · " + outcome : "")', js)
+
+
+
+class EscalationEndpointTests(unittest.TestCase):
+    """The escalation view is fed by stored rows, never by a UI reconstruction."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.db = Path(self._tmpdir.name) / "clearwave.db"
+        os.environ.pop("CLEARWAVE_SLACK_WEBHOOK_URL", None)
+        os.environ.pop("CLEARWAVE_SLACK_CHANNEL", None)
+        self.app = SurfacesApp(self.db)
+
+    def _seed(self, *incidents):
+        connection = connect(self.db)
+        self.addCleanup(connection.close)
+        for incident in incidents:
+            insert_incident(
+                connection,
+                incident,
+                lifecycle_state=incident.get("lifecycle_state", "detected"),
+            )
+        return connection
+
+    def test_binding_is_read_from_the_escalator_not_restated(self):
+        self._seed(_incident("inc-1", "critical", "2026-08-29T10:00:00Z"))
+        status, payload = self.app.handle("GET", "/api/escalations")
+        self.assertEqual(status, 200)
+        binding = {row["severity"]: tuple(row["channels"]) for row in payload["binding"]}
+        for severity in ("low", "medium", "high", "critical"):
+            self.assertEqual(binding[severity], channels_for(severity))
+
+    def test_every_stored_incident_reports_its_channel_outcomes(self):
+        self._seed(
+            _incident("inc-1", "critical", "2026-08-29T10:00:00Z"),
+            _incident("inc-2", "low", "2026-08-29T10:05:00Z", merchant="merchant-b"),
+        )
+        _, payload = self.app.handle("GET", "/api/escalations")
+        groups = {group["incident_id"]: group for group in payload["incidents"]}
+        self.assertEqual(set(groups), {"inc-1", "inc-2"})
+        critical = groups["inc-1"]
+        self.assertEqual(tuple(critical["expected_channels"]), channels_for("critical"))
+        self.assertEqual(
+            {event["channel"] for event in critical["channels"]},
+            set(channels_for("critical")),
+        )
+        self.assertEqual([event["channel"] for event in groups["inc-2"]["channels"]], ["dashboard"])
+
+    def test_group_carries_the_stored_record_the_view_reads(self):
+        self._seed(_incident("inc-1", "critical", "2026-08-29T10:00:00Z"))
+        _, payload = self.app.handle("GET", "/api/escalations")
+        group = payload["incidents"][0]
+        self.assertEqual(group["scope_label"], "merchant-a")
+        self.assertEqual(group["blast_radius"]["attempted_payments"], 1000)
+        self.assertEqual(group["change"]["actual"], 0.64)
+        self.assertEqual(group["payload"]["incident_id"], "inc-1")
+        self.assertEqual(payload["slack_channel"], DEFAULT_SLACK_CHANNEL)
+
+    def test_an_empty_store_answers_with_the_binding_and_no_incidents(self):
+        _, payload = self.app.handle("GET", "/api/escalations")
+        self.assertEqual(payload["incidents"], [])
+        self.assertEqual(payload["calls"], [])
+        self.assertEqual(len(payload["binding"]), 4)
+
+
+class DashboardWiringTests(unittest.TestCase):
+    """Every endpoint the server serves has to be read by the page."""
+
+    def test_the_page_fetches_every_served_endpoint(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        for path in (
+            "/api/overview",
+            "/api/incidents",
+            "/api/merchants",
+            "/api/calls",
+            "/api/escalations",
+            "/api/trigger",
+        ):
+            self.assertIn(path, js, f"{path} is served but never fetched")
+
+    def test_the_queue_reads_the_whole_queue_not_the_active_slice(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        # The queue used to be overview.incidents, which is active-only, so a
+        # resolved incident could never appear in the incident queue at all.
+        self.assertNotIn("state.queue = overview.incidents", js)
+        self.assertIn("state.queue = payloads[1].incidents", js)
+
+    def test_a_count_is_never_rendered_as_a_percentage(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        # fmt() reads a bare 1 as 100%; blast-radius counts must not go through it.
+        self.assertIn("function count(value)", js)
+        self.assertIn("count(blast[key])", js)
+        self.assertNotIn("fmt(blast[key])", js)
+
+    def test_escalation_view_exists_and_is_read_only(self):
+        html = (ROOT / "surfaces" / "static" / "index.html").read_text(encoding="utf-8")
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('data-view="escalation"', html)
+        self.assertIn('id="escalation-board"', html)
+        self.assertIn("Nothing here is a control", html)
+        # No control may reach into a channel from this page.
+        self.assertNotIn("/api/calls/", js)
+        self.assertNotIn("acknowledge", js)
+
+    def test_every_class_the_page_emits_has_a_rule_behind_it(self):
+        static = ROOT / "surfaces" / "static"
+        js = (static / "app.js").read_text(encoding="utf-8")
+        html = (static / "index.html").read_text(encoding="utf-8")
+        css = (static / "styles.css").read_text(encoding="utf-8")
+        emitted = set()
+        for source in (js, html):
+            for match in re.finditer(r'class="([a-z][a-z0-9 _-]*)"', source):
+                emitted.update(match.group(1).split())
+        for match in re.finditer(r'className = "([a-z][a-z0-9 _-]*)"', js):
+            emitted.update(match.group(1).split())
+        styled = set(re.findall(r"\.([A-Za-z][\w-]*)", css))
+        # Containers the page only addresses by id carry no rule by design.
+        containers = {"queue-board", "detail-board", "evidence-board", "escalation-board", "is-active"}
+        self.assertEqual(sorted(emitted - styled - containers), [])
 
 
 if __name__ == "__main__":

@@ -15,11 +15,15 @@ from tests import synthetic
 
 from investigation.contracts import InvestigationResult
 from investigation.gateway import EvidenceGateway
+from investigation.store import connect as investigation_connect
 from investigation.vertical import (
     citations_from,
     citations_verify_against_trail,
+    execute_investigation_only,
     execute_vertical_path,
+    seed_and_detect,
 )
+from investigation.vertical import main as vertical_main
 
 
 class VerticalPathTests(unittest.TestCase):
@@ -143,3 +147,73 @@ class FinancialConsistencyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InvestigateOnlyTests(unittest.TestCase):
+    """A prepared store is investigated in place: no reset, no reseed, no second detect."""
+
+    def setUp(self):
+        self._saved_key = os.environ.pop("OPENAI_API_KEY", None)
+        self._saved_db = os.environ.get("CLEARWAVE_DB")
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.addCleanup(self._restore_env)
+        self.db = Path(self._dir.name) / "prepared.db"
+        self.detected = seed_and_detect(self.db)
+        self.assertTrue(self.detected)
+
+    def _restore_env(self):
+        if self._saved_key is None:
+            os.environ.pop("OPENAI_API_KEY", None)
+        else:
+            os.environ["OPENAI_API_KEY"] = self._saved_key
+        if self._saved_db is None:
+            os.environ.pop("CLEARWAVE_DB", None)
+        else:
+            os.environ["CLEARWAVE_DB"] = self._saved_db
+
+    def _event_count(self):
+        connection = investigation_connect(self.db)
+        try:
+            return connection.execute("SELECT count(*) AS n FROM attempt").fetchone()["n"]
+        finally:
+            connection.close()
+
+    def test_investigates_the_stored_incident_without_reseeding(self):
+        before = self._event_count()
+        incident_id = str(self.detected[0]["incident_id"])
+        outcome = execute_investigation_only(self.db, use_model=False)
+        self.assertEqual(outcome.path, "investigate-only")
+        self.assertEqual(outcome.incident.get("incident_id"), incident_id)
+        self.assertEqual(outcome.lifecycle_after_detect, "detected")
+        self.assertEqual(outcome.lifecycle_after_investigate, "diagnosed")
+        self.assertEqual(self._event_count(), before, "investigate-only must not reseed the store")
+
+    def test_a_named_incident_id_is_the_one_investigated(self):
+        incident_id = str(self.detected[0]["incident_id"])
+        outcome = execute_investigation_only(self.db, incident_id=incident_id, use_model=False)
+        self.assertEqual(outcome.result["incident_id"], incident_id)
+        InvestigationResult.model_validate(outcome.result)
+
+    def test_an_unknown_incident_id_is_refused_by_name(self):
+        with self.assertRaises(RuntimeError) as raised:
+            execute_investigation_only(self.db, incident_id="inc-does-not-exist", use_model=False)
+        self.assertIn("inc-does-not-exist", str(raised.exception))
+
+    def test_a_store_with_nothing_detected_says_so_instead_of_seeding(self):
+        execute_investigation_only(self.db, use_model=False)
+        with self.assertRaises(RuntimeError) as raised:
+            execute_investigation_only(self.db, use_model=False)
+        self.assertIn("lifecycle_state detected", str(raised.exception))
+
+    def test_a_missing_store_is_never_created_by_investigate_only(self):
+        absent = Path(self._dir.name) / "absent.db"
+        with self.assertRaises(RuntimeError):
+            execute_investigation_only(absent, use_model=False)
+        self.assertFalse(absent.exists())
+
+    def test_the_cli_flag_investigates_without_seeding(self):
+        before = self._event_count()
+        code = vertical_main(["--db", str(self.db), "--investigate-only"])
+        self.assertEqual(code, 0)
+        self.assertEqual(self._event_count(), before)
