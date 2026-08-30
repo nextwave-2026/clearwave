@@ -6,6 +6,7 @@ import json
 import os
 import re
 import runpy
+import subprocess
 import sys
 import tempfile
 import threading
@@ -970,6 +971,42 @@ class StaticContractTests(unittest.TestCase):
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
         self.assertIn("const outcome = investigation.outcome", js)
         self.assertIn('(outcome ? " · " + outcome : "")', js)
+
+    def test_escalation_hypothesis_renders_statement_not_object_object(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn("String(hypothesis)", js)
+        self.assertIn("function c4FieldText", js)
+        self.assertIn("value.statement", js)
+        self.assertIn("value.explanation", js)
+        self.assertIn("value.action", js)
+        self.assertIn("No causal narrative is stored for this incident.", js)
+        self.assertIn("payload.leading_hypothesis", js)
+        self.assertIn("c4FieldText(", js)
+        helper = js[js.index("function c4FieldText"):js.index("\n  function ", js.index("function c4FieldText"))]
+        self.assertNotIn("JSON.stringify", helper)
+
+        fallback = "No causal narrative is stored for this incident."
+
+        def render(value):
+            script = (
+                helper
+                + "\nprocess.stdout.write(c4FieldText("
+                + json.dumps(value)
+                + ", "
+                + json.dumps(fallback)
+                + "));\n"
+            )
+            return subprocess.check_output(["node", "-e", script], text=True)
+
+        self.assertEqual(render({"statement": "Provider degradation"}), "Provider degradation")
+        self.assertEqual(render(None), fallback)
+        self.assertEqual(render("already text"), "already text")
+        empty_statement = render({"statement": ""})
+        self.assertEqual(empty_statement, fallback)
+        self.assertNotIn("{", empty_statement)
+        self.assertNotIn("}", empty_statement)
+        self.assertEqual(render({"action": ""}), fallback)
+        self.assertEqual(render({"explanation": ""}), fallback)
 
 
 
