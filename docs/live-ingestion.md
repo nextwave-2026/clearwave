@@ -25,9 +25,10 @@ doors onto the same normalisation, the same store and the same detection sweep.
 The copy-pasteable demo sequence, including the offline fallback that actually produces a diagnosed incident on the dashboard, is [`docs/demo-sequence.md`](demo-sequence.md). This page is the live consumer. Several commands that used to be written here fail; do not use them.
 
 The product path is a stack that is already up. `make stack-up` starts Kafka, Schema Registry,
-the three merchants, a detector that consumes and sweeps every 45 seconds, the investigation
-daemon, and the dashboard on http://127.0.0.1:8082/ . It returns only once `/api/overview`
-answers. `make stack-status` prints one fact per piece of that loop. `make stack-down` stops it.
+the three merchants, a detector daemon that consumes continuously and sweeps every 45 seconds
+(empty polls are not terminal; SIGINT and SIGTERM drain), the investigation daemon, and the
+dashboard on http://127.0.0.1:8082/ . It returns only once `/api/overview` answers.
+`make stack-status` prints one fact per piece of that loop. `make stack-down` stops it.
 
 **Leave it running. The store is pre-warmed.** `make stack-up` runs `scripts/prepare_history.py`
 before compose, which replaces `state/clearwave.db` with eight event-time hours of healthy
@@ -62,8 +63,8 @@ export CLEARWAVE_DB=state/clearwave.db
 .venv/bin/python -m detector ingest /path/to/backfill.jsonl --stream
 
 # 3. One-shot consume for a minute, then detect. The compose `detector` service
-#    does this on a 45s cycle so you do not have to. Healthy 60s traffic returns
-#    incident null. Inject first (below) if you want an incident to detect.
+#    is `python -m detector daemon`, not this command in a loop. Healthy 60s
+#    traffic returns incident null. Inject first (below) if you want an incident.
 .venv/bin/python -m detector consume --seconds 60 --detect
 ```
 
@@ -80,6 +81,36 @@ a dead worker), and `--mode anomaly` does not exist.
 
 ```sh
 PYTHONUNBUFFERED=1 .venv/bin/python -m worker.worker merchant-a --interval-seconds 0.2
+```
+
+## Running detection as a service
+
+The compose `detector` service is one process: `python -m detector daemon`. It is the same
+consume loop as the one-shot command, with three differences and no fourth:
+
+- **Empty polls are not terminal.** `detector consume` ends after three consecutive quiet
+  polls, which is right for a bounded run and wrong for a service. The daemon passes
+  `idle_polls=0`, so only a signal ends it.
+- **SIGINT and SIGTERM drain.** Both set a stop flag rather than raising, the loop leaves at
+  the top of an iteration, and the batch already polled is written and only *then*
+  acknowledged. `docker compose stop` therefore loses nothing, and a container that is killed
+  replays its last uncommitted batch on restart - safe because every event table is keyed on
+  `event_id`.
+- **Sweeps keep happening when the topics are quiet.** `--detect-every` is a wall-clock
+  interval, not a traffic interval. An empty poll still asks the sweeper, so a developing
+  watch is not invisible just because nothing arrived in that second.
+
+A broker failure the client cannot recover from exits the process, and `restart: unless-stopped`
+brings it back. There is deliberately no retry policy inside the loop.
+
+The image copies `detector/` and nothing else. The service is given `./state:/data` for the
+shared store, and an empty tmpfs over `/data/ground_truth` so that mount cannot hand it C6.
+
+`make detect-daemon` runs the identical loop on the host:
+
+```sh
+make detect-daemon                                   # Ctrl-C to stop, it drains
+make detect-daemon DB=state/clearwave.db DETECT_EVERY=15
 ```
 
 ## Injecting an incident

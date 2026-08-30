@@ -140,36 +140,21 @@ services:
   detector:
     build:
       context: .
-      dockerfile: .devcontainer/Dockerfile
-    image: clearwave-stack
+      dockerfile: detector/Dockerfile
     container_name: clearwave-detector
-    working_dir: /workspaces/clearwave
     user: "1000:1000"
-    # 45s consume-then-detect cycle: inside the 30-60s range so a developing
-    # anomaly is swept within a minute of appearing. consume --seconds N --detect
-    # exits after one sweep, including when it finds nothing; the loop (and
-    # restart: unless-stopped) start the next cycle rather than ending the
-    # service. A transient broker hiccup is the same: the cycle exits, sleep 5,
-    # retry. --idle-polls 60 keeps a quiet broker from ending the cycle after
-    # three empty polls (the CLI default) so the 45s bound is the one that wins.
-    command:
-      - bash
-      - -lc
-      - |
-        while true; do
-          python -m detector consume --seconds 45 --idle-polls 60 --detect || sleep 5
-        done
+    # One long-lived consume loop. Empty polls are not terminal; SIGINT and
+    # SIGTERM drain the in-flight batch then exit 0. Sweeps every 45s even
+    # when the topics are quiet. A client-level broker failure exits non-zero
+    # into restart: unless-stopped; compose owns that retry, not this process.
     environment:
-      PYTHONUNBUFFERED: "1"
       CLEARWAVE_DB: /data/clearwave.db
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       SCHEMA_REGISTRY_URL: http://schema-registry:8081
     volumes:
-      - .:/workspaces/clearwave
       - ./state:/data
     tmpfs:
       - /data/ground_truth
-      - /workspaces/clearwave/state/ground_truth
     depends_on:
       kafka:
         condition: service_healthy

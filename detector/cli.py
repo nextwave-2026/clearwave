@@ -4,6 +4,7 @@
     python3 -m detector ingest events.json        # a file of canonical events
     python3 -m detector ingest backfill.jsonl --stream   # a backfill too big to hold
     python3 -m detector consume                   # W1's live Kafka topics
+    python3 -m detector daemon                    # the same, run as a service
     python3 -m detector detect                    # one detection sweep
 
 `consume` is the live path and `seed`/`ingest` the offline one. They are two
@@ -27,7 +28,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from . import config, consumer, detect, evidence, metrics, schema, store
+from . import config, consumer, daemon, detect, evidence, metrics, schema, store
 
 SCENARIOS = ("healthy", "provider_incident", "confounded")
 
@@ -331,7 +332,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     consume_command.add_argument(
         "--idle-polls", type=int, default=3,
-        help="consecutive empty polls that end the run",
+        help="consecutive empty polls that end the run; 0 never ends on idle, "
+             "which is what `detector daemon` uses",
     )
     consume_command.add_argument(
         "--detect", action="store_true",
@@ -347,6 +349,12 @@ def main(argv: list[str] | None = None) -> int:
              "sweep persists, and its headline goes to stderr as it happens.",
     )
 
+    daemon_command = sub.add_parser(
+        "daemon",
+        help="consume and sweep continuously until SIGINT or SIGTERM (the compose service)",
+    )
+    daemon.add_arguments(daemon_command)
+
     detect_command = sub.add_parser("detect", help="run one detection sweep over the stored window")
     detect_command.add_argument(
         "--window-buckets",
@@ -361,6 +369,16 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
+
+    if args.command == "daemon":
+        # The daemon owns its own connection for the whole process lifetime, so
+        # it is dispatched before the one-shot commands open theirs.
+        try:
+            return daemon.run(args)
+        except ValueError as exc:
+            print(f"detector daemon: {exc}", flush=True)
+            return 2
+
     connection = store.connect(args.db or store.database_path())
     try:
         if args.command == "ingest":
