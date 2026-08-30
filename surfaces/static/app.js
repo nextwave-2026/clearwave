@@ -584,10 +584,10 @@
   function renderQueue() {
     if (!state.queue.length) {
       queueBoard.innerHTML = '<p class="empty">No incidents in the store.</p>';
-      queueWho.textContent = "Ordered by stored severity. Recency is not a ranking.";
+      queueWho.textContent = "Ordered by severity, then measured loss per hour. Recency is not a ranking.";
       return;
     }
-    queueWho.textContent = state.queue.length + " in the store · ordered by stored severity. Recency is not a ranking.";
+    queueWho.textContent = state.queue.length + " in the store · ordered by severity, then measured loss per hour. Recency is not a ranking.";
     const table = document.createElement("div");
     table.className = "frame";
     table.innerHTML =

@@ -22,8 +22,8 @@ from .escalation import channels_for, escalate
 
 DEFAULT_DB = Path("state/clearwave.db")
 
-# Stored severity is already the business priority. This rank is only a sort
-# key over that stored label; it does not compute or adjust severity.
+# Stored severity is the primary business priority. Financial impact breaks
+# ties between incidents in the same severity band without recomputing either.
 SEVERITY_RANK = {
     "critical": 0,
     "high": 1,
@@ -93,7 +93,7 @@ def session(path: Path | str = DEFAULT_DB) -> Iterator[sqlite3.Connection]:
 
 
 def list_incidents(connection: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Every C3 record, ordered by stored business priority, never by recency."""
+    """Every C3 record, ordered by severity then measured impact, never recency."""
     rows = connection.execute(
         "SELECT incident_id, record, lifecycle_state, severity FROM incident"
     ).fetchall()
@@ -323,9 +323,26 @@ def _decode_record(row: sqlite3.Row) -> dict[str, Any] | None:
     return record
 
 
-def _priority_key(incident: Mapping[str, Any]) -> tuple[int, str]:
+def _priority_key(incident: Mapping[str, Any]) -> tuple[int, float, float, str]:
     severity = str(incident.get("severity", "")).lower()
-    return (SEVERITY_RANK.get(severity, 99), str(incident.get("incident_id", "")))
+    financial = incident.get("financial_impact")
+    if not isinstance(financial, Mapping):
+        financial = {}
+    return (
+        SEVERITY_RANK.get(severity, 99),
+        -_money_amount(financial.get("loss_per_hour")),
+        -_money_amount(financial.get("gmv_at_risk")),
+        str(incident.get("incident_id", "")),
+    )
+
+
+def _money_amount(value: Any) -> float:
+    if not isinstance(value, Mapping):
+        return 0.0
+    try:
+        return float(value.get("amount", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _utc_now() -> str:
