@@ -108,10 +108,14 @@ third has changed:
   row returns to `watching`; it does not move to `diagnosed`. A later crossing of the floors
   enriches the same record. Re-investigation happens only when the evidence fingerprint changes,
   not on a timer. ADR 0025 records the reversal of the earlier claim-only-detected rule.
-- **`severity` on a watch is always `low`.** C5 routes on severity alone, so a watch cannot reach
-  Slack or a phone even if escalation were later pointed at the row by mistake.
-- **C5 still does not escalate a watch.** `ESCALATABLE_STATES` is an allowlist of post-detection
-  states. A watch that holds a C4 result is refused before anything is claimed or fired.
+- **C5 does not escalate a watch.** `ensure_escalation` refuses any row whose `lifecycle_state` is
+  not in `ESCALATABLE_STATES` (`detected`, `investigating`, `diagnosed`, `acknowledged`,
+  `mitigated`, `resolved`) before it reads severity, claims a channel, or fires. That lifecycle
+  allowlist is the no-paging mechanism. `watching` is not on it, including when the row already
+  holds a C4 result.
+- **`severity` on a watch is always `low`.** That is defence in depth, not the gate. C5's channel
+  map would still not page a `low` row, but a caller that pointed escalation at a watch while
+  copying a high severity would still be stopped by the lifecycle allowlist.
 - **`financial_impact.projected_loss_per_hour`** is what an hour at the currently measured
   shortfall would cost, applied to the cohort's typical hourly attempted value from the trailing
   baseline. It is labelled projected because it is not realised money, it is a separate key from

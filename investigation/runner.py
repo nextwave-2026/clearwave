@@ -22,6 +22,7 @@ from .store import (
     persist_result,
     prepare,
     read_bound_fingerprint,
+    reclaim_expired_claims,
 )
 from .trail import EvidenceTrail
 
@@ -106,6 +107,7 @@ class InvestigationRunner:
     start = run_forever
 
     def _claim_pending(self, limit: int) -> list[dict[str, Any]]:
+        reclaim_expired_claims(self.connection)
         rows = self._pending_rows()
         claimed: list[dict[str, Any]] = []
         for row in rows:

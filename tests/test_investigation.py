@@ -11,6 +11,7 @@ from investigation.prefilter import compute_signature, prefilter
 from investigation.degrade import degrade_result
 from investigation.runner import InvestigationRunner
 from investigation.store import (
+    CLAIM_LEASE_SECONDS,
     append_trail_entry,
     claim_incident,
     connect,
@@ -19,6 +20,7 @@ from investigation.store import (
     model_call_summary,
     persist_result,
     read_result,
+    reclaim_expired_claims,
 )
 from investigation.trail import EvidenceTrail
 from surfaces.store import ESCALATABLE_STATES, connect as surfaces_connect, ensure_escalation, load_investigation
@@ -404,6 +406,72 @@ class PreventiveRunnerTests(unittest.TestCase):
         self.addCleanup(runner.close)
         runs = runner.poll_once(wait=True)
         self.assertEqual(len(runs), 1)
+        self.assertEqual(
+            connection.execute(
+                "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
+            ).fetchone()[0],
+            "watching",
+        )
+
+    def test_abandoned_investigating_claim_is_reclaimed(self):
+        connection = connect(":memory:")
+        self.addCleanup(connection.close)
+        watch = self._watch()
+        insert_incident(connection, watch, lifecycle_state="watching")
+        self.assertTrue(claim_incident(connection, "inc-watch"))
+        self.assertEqual(
+            connection.execute(
+                "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
+            ).fetchone()[0],
+            "investigating",
+        )
+        connection.execute(
+            "UPDATE investigation_claim SET claimed_at = '2000-01-01T00:00:00.000Z' "
+            "WHERE incident_id = 'inc-watch'"
+        )
+        connection.commit()
+
+        class Agent:
+            def investigate(self, incident):
+                return degrade_result(incident, reason="recovered claim")
+
+        runner = InvestigationRunner(connection, Agent())
+        self.addCleanup(runner.close)
+        runs = runner.poll_once(wait=True)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(
+            connection.execute(
+                "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
+            ).fetchone()[0],
+            "watching",
+        )
+        self.assertIsNotNone(read_result(connection, "inc-watch"))
+
+    def test_fresh_claim_is_not_reclaimed_before_the_lease_expires(self):
+        connection = connect(":memory:")
+        self.addCleanup(connection.close)
+        watch = self._watch()
+        insert_incident(connection, watch, lifecycle_state="watching")
+        self.assertTrue(claim_incident(connection, "inc-watch"))
+        self.assertEqual(reclaim_expired_claims(connection), [])
+        self.assertEqual(
+            connection.execute(
+                "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
+            ).fetchone()[0],
+            "investigating",
+        )
+        self.assertGreaterEqual(CLAIM_LEASE_SECONDS, 300)
+
+    def test_investigating_without_a_lease_is_reclaimed_immediately(self):
+        connection = connect(":memory:")
+        self.addCleanup(connection.close)
+        watch = self._watch()
+        insert_incident(connection, watch, lifecycle_state="watching")
+        connection.execute(
+            "UPDATE incident SET lifecycle_state = 'investigating' WHERE incident_id = 'inc-watch'"
+        )
+        connection.commit()
+        self.assertEqual(reclaim_expired_claims(connection), ["inc-watch"])
         self.assertEqual(
             connection.execute(
                 "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"

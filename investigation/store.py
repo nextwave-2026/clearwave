@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterable, Mapping
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -74,10 +74,20 @@ CREATE TABLE IF NOT EXISTS investigation_bound (
     last_claimed_from     TEXT NOT NULL,
     last_investigated_at  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS investigation_claim (
+    incident_id   TEXT PRIMARY KEY,
+    claimed_at    TEXT NOT NULL,
+    claimed_from  TEXT NOT NULL
+);
 """
 
 CLAIMABLE_STATES = ("detected", "watching")
 _CLAIMABLE_SQL = "lifecycle_state IN ('detected', 'watching')"
+# One investigation may run up to agent.DEFAULT_TIMEOUT_SECONDS (300). The lease
+# is that bound plus a short grace so a live call is not stolen, and a crashed
+# claim is not stuck forever.
+CLAIM_LEASE_SECONDS = 330
 _BOUND_SCHEMA = """
 CREATE TABLE IF NOT EXISTS investigation_bound (
     incident_id           TEXT PRIMARY KEY,
@@ -119,19 +129,90 @@ def claim_incident(connection: sqlite3.Connection, incident_id: str) -> bool:
     The lifecycle predicate is part of the UPDATE. SQLite serialises writers,
     so exactly one concurrent caller can observe a changed row count. A watch
     and a detected incident share this guard so two runners cannot split one
-    cohort into two investigations.
+    cohort into two investigations. The claim lease is written in the same
+    transaction so a crash before persist can be reclaimed.
     """
+    prepare(connection)
     with connection:
+        row = connection.execute(
+            "SELECT lifecycle_state FROM incident WHERE incident_id = ?",
+            (incident_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        previous = str(row["lifecycle_state"])
+        if previous not in CLAIMABLE_STATES:
+            return False
         cursor = connection.execute(
             "UPDATE incident SET lifecycle_state = 'investigating' "
-            f"WHERE incident_id = ? AND {_CLAIMABLE_SQL}",
-            (incident_id,),
+            "WHERE incident_id = ? AND lifecycle_state = ?",
+            (incident_id, previous),
         )
-    return cursor.rowcount == 1
+        if cursor.rowcount != 1:
+            return False
+        connection.execute(
+            """INSERT OR REPLACE INTO investigation_claim
+               (incident_id, claimed_at, claimed_from) VALUES (?, ?, ?)""",
+            (incident_id, _utc_now(), previous),
+        )
+    return True
 
 
 claim_detected_incident = claim_incident
 claim_detected = claim_incident
+
+
+def reclaim_expired_claims(
+    connection: sqlite3.Connection,
+    *,
+    now: str | None = None,
+    lease_seconds: int = CLAIM_LEASE_SECONDS,
+) -> list[str]:
+    """Return abandoned ``investigating`` rows to the state they were claimed from.
+
+    A crash after the claim UPDATE and before persist leaves the demo pointing
+    at a record that ``_pending_rows`` would otherwise never see again. An
+    expired lease, or an investigating row with no lease at all, is restored
+    so the next poll can claim it. A live claim inside the lease is left alone.
+    """
+    prepare(connection)
+    cutoff = _iso_minus(now or _utc_now(), lease_seconds)
+    reclaimed: list[str] = []
+    with connection:
+        expired = connection.execute(
+            """SELECT c.incident_id, c.claimed_from
+               FROM investigation_claim AS c
+               JOIN incident AS i ON i.incident_id = c.incident_id
+               WHERE i.lifecycle_state = 'investigating'
+                 AND c.claimed_at <= ?""",
+            (cutoff,),
+        ).fetchall()
+        orphans = connection.execute(
+            """SELECT i.incident_id, i.record
+               FROM incident AS i
+               LEFT JOIN investigation_claim AS c ON c.incident_id = i.incident_id
+               WHERE i.lifecycle_state = 'investigating'
+                 AND c.incident_id IS NULL"""
+        ).fetchall()
+        pending = [(str(row["incident_id"]), _restore_state(row["claimed_from"])) for row in expired]
+        for row in orphans:
+            record = json.loads(row["record"]) if row["record"] else {}
+            previous = record.get("lifecycle_state") if isinstance(record, Mapping) else None
+            pending.append((str(row["incident_id"]), _restore_state(previous)))
+        for incident_id, restore in pending:
+            cursor = connection.execute(
+                "UPDATE incident SET lifecycle_state = ? "
+                "WHERE incident_id = ? AND lifecycle_state = 'investigating'",
+                (restore, incident_id),
+            )
+            if cursor.rowcount != 1:
+                continue
+            connection.execute(
+                "DELETE FROM investigation_claim WHERE incident_id = ?",
+                (incident_id,),
+            )
+            reclaimed.append(incident_id)
+    return reclaimed
 
 
 def append_trail_entry(
@@ -192,6 +273,7 @@ def persist_result(
     if not isinstance(result, Mapping):
         raise TypeError("result must be a mapping")
 
+    prepare(connection)
     with connection:
         result_version = (
             _next_version(connection, incident_id)
@@ -248,6 +330,10 @@ def persist_result(
                 "WHERE incident_id = ? AND lifecycle_state IN ('detected', 'investigating')",
                 (incident_id,),
             )
+        connection.execute(
+            "DELETE FROM investigation_claim WHERE incident_id = ?",
+            (incident_id,),
+        )
         if evidence_fingerprint is not None:
             ensure_bound_table(connection)
             claimed_from = resume_state if resume_state in CLAIMABLE_STATES else "detected"
@@ -416,6 +502,25 @@ def _json(value: Any) -> str:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _iso_minus(value: str, seconds: int) -> str:
+    text = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        moment = datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    earlier = moment - timedelta(seconds=max(0, int(seconds)))
+    return earlier.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _restore_state(value: Any) -> str:
+    state = str(value or "")
+    if state in CLAIMABLE_STATES:
+        return state
+    return "detected"
 
 
 def _epoch(value: Any) -> int:
