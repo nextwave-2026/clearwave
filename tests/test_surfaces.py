@@ -749,6 +749,170 @@ class SurfacesTests(unittest.TestCase):
         self.assertNotIn("unknown", [row["merchant_id"] for row in rows])
 
 
+class WatchStateTests(unittest.TestCase):
+    """A watch (DECISIONS.md 2026-08-30T03:59Z) is a persisted near-miss on
+    the same C3 record, not yet an incident. It must never be counted as
+    active, never head the overview, and never escalate - even if a C4
+    result somehow exists for it, which should never happen because the
+    investigation daemon never claims a watch in the first place.
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.db = Path(self._tmpdir.name) / "clearwave.db"
+        os.environ.pop("CLEARWAVE_SLACK_WEBHOOK_URL", None)
+        os.environ.pop("CLEARWAVE_PHONE_PROVIDER", None)
+        for name in (*TWILIO_ENV_VARS, TWILIO_TWIML_URL_ENV):
+            os.environ.pop(name, None)
+        self.app = SurfacesApp(self.db)
+
+    def _seed(self, *incidents):
+        connection = connect(self.db)
+        self.addCleanup(connection.close)
+        for incident in incidents:
+            insert_incident(connection, incident, lifecycle_state=incident.get("lifecycle_state", "detected"))
+        return connection
+
+    def test_a_watch_is_never_counted_active_and_never_heads_the_overview(self):
+        # severity="critical" here is deliberate, not realistic: the real
+        # contract forces "low" on a watch (docs/contracts/incident.md), but
+        # this proves the exclusion is keyed on lifecycle_state alone, not on
+        # trusting that severity stayed low.
+        self._seed(
+            _incident("inc-watch", "critical", "2026-08-29T09:00:00Z", lifecycle_state="watching"),
+        )
+        overview = self.app.overview()
+        self.assertEqual(overview["active_incident_count"], 0)
+        self.assertIsNone(overview["source_incident_id"])
+        self.assertEqual(overview["incidents"], [])
+
+    def test_a_real_incident_still_heads_the_overview_alongside_a_watch(self):
+        self._seed(
+            _incident("inc-watch", "critical", "2026-08-29T09:00:00Z", lifecycle_state="watching"),
+            _incident("inc-real", "low", "2026-08-29T10:00:00Z"),
+        )
+        overview = self.app.overview()
+        self.assertEqual(overview["active_incident_count"], 1)
+        self.assertEqual(overview["source_incident_id"], "inc-real")
+
+    def test_a_watch_never_escalates_even_with_a_forced_c4_result(self):
+        # severity="critical" is deliberate here too: escalation.channels_for
+        # would route a real critical incident to every channel, so proving
+        # the guard blocks it even at this severity shows the block is keyed
+        # on lifecycle_state, not on the contract's severity="low" promise.
+        connection = self._seed(
+            _incident("inc-watch", "critical", "2026-08-29T09:00:00Z", lifecycle_state="watching"),
+        )
+        # Forcing a C4 result onto a watch should never happen in practice -
+        # the daemon only claims "detected" - but the guard must not rely on
+        # that staying true, so this proves it holds even here.
+        persist_result(connection, "inc-watch", _diagnosis("inc-watch"), "diagnosed")
+        outcomes = self.app.queue()  # triggers ensure_escalation for every row
+        self.assertEqual(load_escalation(connection, "inc-watch"), [])
+        # No claim row either: the guard fires before the atomic claim.
+        claimed = connection.execute(
+            "SELECT COUNT(*) FROM escalation_claim WHERE incident_id = ?", ("inc-watch",)
+        ).fetchone()[0]
+        self.assertEqual(claimed, 0)
+        # The watch never entered the active queue in the first place - it
+        # is filed under its own rail, per test_a_watch_appears_in_its_own_rail.
+        self.assertEqual(outcomes["incidents"], [])
+        self.assertEqual(outcomes["watches"][0]["lifecycle_state"], "watching")
+
+    def test_a_diagnosed_incident_still_escalates(self):
+        """Regression guard: the escalation filter is a blocklist of watch
+        states, not an allowlist of {"detected"} - escalation only fires once
+        a C4 result exists, which is exactly when lifecycle_state has already
+        moved to "diagnosed" (investigation/store.py). An allowlist of
+        "detected" alone would silently stop every real escalation.
+        """
+        connection = self._seed(
+            _incident("inc-real", "critical", "2026-08-29T09:00:00Z", lifecycle_state="diagnosed"),
+        )
+        persist_result(connection, "inc-real", _diagnosis("inc-real"), "diagnosed")
+        self.app.queue()
+        self.assertNotEqual(load_escalation(connection, "inc-real"), [])
+
+    def test_a_watch_appears_in_its_own_rail_with_the_detectors_fields(self):
+        # Shape taken from the real detector/detect.py:_watch_block and
+        # docs/contracts/incident.md, not guessed: the floor vector and
+        # trajectory live under detection.watch, not as top-level fields,
+        # and a watch's stored severity is always "low" (untouched here -
+        # watch_item() must never read it regardless of what it says).
+        self._seed(
+            _incident(
+                "inc-watch",
+                "low",
+                "2026-08-29T09:00:00Z",
+                lifecycle_state="watching",
+                detection={
+                    "trajectory": 1,
+                    "watch": {
+                        "reasons": ["conversion_near_miss"],
+                        "watch_floors": {
+                            "has_measurement": True,
+                            "not_already_an_incident": True,
+                            "volume_min": True,
+                            "statistically_real": False,
+                            "materially_large": True,
+                            "worsening": True,
+                        },
+                        "not_yet_met": ["statistically_real"],
+                        "trajectory": 1,
+                        "leading_indicators": None,
+                        "degraded_leading_indicators": [],
+                        "statement": "This cohort is unusual for itself against its last hour "
+                        "and is getting worse.",
+                    },
+                },
+                financial_impact={"projected_loss_per_hour": {"amount": 4100.0, "currency": "USD"}},
+            )
+        )
+        overview = self.app.overview()
+        self.assertEqual(overview["incidents"], [])
+        self.assertEqual(len(overview["watches"]), 1)
+        watch = overview["watches"][0]
+        self.assertEqual(watch["incident_id"], "inc-watch")
+        self.assertNotIn("severity", watch)
+        self.assertNotIn("diagnostic_confidence", watch)
+        self.assertEqual(watch["projected_loss_per_hour"], {"amount": 4100.0, "currency": "USD"})
+        self.assertEqual(watch["trajectory"], 1)
+        self.assertEqual(watch["not_yet_met"], ["statistically_real"])
+        self.assertEqual(
+            watch["reason"],
+            "This cohort is unusual for itself against its last hour and is getting worse.",
+        )
+
+        queue = self.app.queue()
+        self.assertEqual(queue["incidents"], [])
+        self.assertEqual([w["incident_id"] for w in queue["watches"]], ["inc-watch"])
+
+    def test_a_watch_with_no_detector_fields_yet_reports_them_as_absent_not_fabricated(self):
+        # detection.watch may be absent entirely (a store from before the
+        # detector's watch predicate landed) - present.py must not invent a
+        # number or a reason it was never given.
+        self._seed(_incident("inc-watch", "low", "2026-08-29T09:00:00Z", lifecycle_state="watching"))
+        watch = self.app.overview()["watches"][0]
+        self.assertIsNone(watch["projected_loss_per_hour"])
+        self.assertIsNone(watch["trajectory"])
+        self.assertIsNone(watch["reason"])
+        self.assertIsNone(watch["not_yet_met"])
+
+    def test_a_watch_is_excluded_from_merchant_health(self):
+        self._seed(
+            _incident(
+                "inc-watch",
+                "low",
+                "2026-08-29T09:00:00Z",
+                lifecycle_state="watching",
+                merchant="merchant-only-watch",
+            )
+        )
+        merchant_ids = [row["merchant_id"] for row in self.app.overview()["merchant_health"]]
+        self.assertNotIn("merchant-only-watch", merchant_ids)
+
+
 class SlackBlockKitTests(unittest.TestCase):
     def test_severity_and_confidence_render_in_separate_blocks(self):
         payload = {

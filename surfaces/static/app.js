@@ -6,6 +6,7 @@
     selectedId: null,
     overview: null,
     queue: [],
+    watches: [],
     merchants: [],
     escalations: null,
     calls: [],
@@ -15,6 +16,7 @@
   };
 
   const overviewBoard = document.getElementById("overview-board");
+  const watchRail = document.getElementById("watch-rail");
   const queueBoard = document.getElementById("queue-board");
   const detailBoard = document.getElementById("detail-board");
   const escalationBoard = document.getElementById("escalation-board");
@@ -259,6 +261,66 @@
       "<h3>Merchant health</h3>" +
       '<div class="merchants">' + (merchants || '<p class="empty">No merchant incidents in the store.</p>') + "</div>";
     bindCites(overviewBoard);
+  }
+
+  // +1 worsening, 0 flat, -1 recovering (detector/detect.py:trajectory_of).
+  function trajectoryLabel(value) {
+    if (value === 1) return "worsening";
+    if (value === -1) return "recovering";
+    if (value === 0) return "flat";
+    return "not in store";
+  }
+
+  // detection.watch.not_yet_met (detector/detect.py:_watch_block) is a list
+  // of the detector's own floor names still failing, e.g.
+  // "statistically_real". Formatted generically rather than mapped through a
+  // hand-written label table, so a floor the detector renames or adds later
+  // still renders instead of silently disappearing.
+  function notYetMetLine(names) {
+    if (!Array.isArray(names) || !names.length) return null;
+    return names.map(function (name) { return String(name).replace(/_/g, " "); }).join(" · ");
+  }
+
+  // A watch (DECISIONS.md 2026-08-30T03:59Z) is a persisted near-miss, not
+  // an incident: no severity badge, no lamp, no place in the active queue.
+  // It renders only while at least one exists, as a quieter rail above the
+  // KPIs, and hides itself entirely when there is nothing to watch.
+  function renderWatches() {
+    const watches = state.watches || [];
+    if (!watches.length) {
+      watchRail.hidden = true;
+      watchRail.innerHTML = "";
+      return;
+    }
+    watchRail.hidden = false;
+    watchRail.innerHTML = watches.map(function (watch) {
+      const change = watch.change || {};
+      const trajectory = escapeHtml(trajectoryLabel(watch.trajectory));
+      const lossLine = watch.projected_loss_per_hour
+        ? "Projected " + escapeHtml(money(watch.projected_loss_per_hour)) + "/hour if this continues."
+        : "Projected loss not in store yet.";
+      // detection.watch.statement is the detector's own prose explanation
+      // (detector/detect.py:_watch_block) - copied through rather than
+      // reconstructed, so this never drifts from the detector's wording.
+      const reason = watch.reason
+        ? escapeHtml(watch.reason)
+        : "Not yet an incident. Reason not in store.";
+      const notYetMet = notYetMetLine(watch.not_yet_met);
+      return (
+        '<article class="watch-card">' +
+        '<div class="watch-head"><span class="watch-badge">WATCHING</span>' +
+        "<h3>" + escapeHtml(incidentScope(watch)) + "</h3></div>" +
+        '<p class="sub mono">' + escapeHtml(cohortLine(watch.affected_cohort)) + "</p>" +
+        '<p class="watch-line">' + escapeHtml(ratio(change.actual)) + " observed against " +
+        escapeHtml(ratio(change.expected)) + " expected, trajectory " + trajectory + ".</p>" +
+        '<p class="watch-money">' + lossLine + "</p>" +
+        '<p class="watch-reason">' + reason + "</p>" +
+        (notYetMet
+          ? '<p class="watch-reason mono">Not yet met: ' + escapeHtml(notYetMet) + "</p>"
+          : "") +
+        "</article>"
+      );
+    }).join("");
   }
 
   function renderQueue() {
@@ -909,11 +971,13 @@
     ]).then(function (payloads) {
       state.overview = payloads[0];
       state.queue = payloads[1].incidents || [];
+      state.watches = payloads[1].watches || [];
       state.merchants = payloads[2].merchants || [];
       state.calls = payloads[3].calls || [];
       state.escalations = payloads[4];
       if (!state.selectedId && state.queue.length) state.selectedId = state.queue[0].incident_id;
       renderOverview();
+      renderWatches();
       renderQueue();
       renderEscalation();
       if (state.selectedId) return loadDetail(state.selectedId);
