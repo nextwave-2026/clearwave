@@ -1,6 +1,6 @@
 # W2 detection - owner: andres
 
-.PHONY: test-detector seed detect consume live backfill e2e
+.PHONY: test-detector seed detect consume live detect-daemon backfill e2e
 
 test-detector:
 	@python3 -m unittest tests.test_detector tests.test_evidence tests.test_mappers tests.test_consumer
@@ -24,6 +24,16 @@ DETECT_EVERY ?= 45
 
 live:
 	@$(PYTHON) -m detector consume --seconds 60 --detect --detect-every $(DETECT_EVERY)
+
+# The same consume-and-sweep loop, run as a service rather than a command:
+# empty polls are not terminal and only SIGINT or SIGTERM ends it, both
+# draining the batch in flight. This is what the `detector` compose service
+# runs; the target is here so a person can run it on the host too.
+#   make detect-daemon
+#   make detect-daemon DB=state/clearwave.db DETECT_EVERY=15
+detect-daemon:
+	@PYTHONUNBUFFERED=1 $(PYTHON) -m detector $(if $(DB),--db "$(DB)") daemon \
+	  --detect-every $(DETECT_EVERY)
 
 # W1's replayable history, streamed rather than held in memory. Point BACKFILL
 # at the file; it is not in the repository, and at 83 MB it never will be.

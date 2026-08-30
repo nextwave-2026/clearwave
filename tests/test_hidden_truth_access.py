@@ -196,8 +196,17 @@ class IsolationTests(unittest.TestCase):
         self.assertIn("./state/ground_truth/merchant-b:/hidden-truth", compose)
         self.assertIn("./state/ground_truth/merchant-c:/hidden-truth", compose)
         self.assertIn("CLEARWAVE_GROUND_TRUTH_DB: /hidden-truth/ground_truth.db", compose)
-        self.assertNotIn("detector:", compose)
         services = _compose_services(compose)
+        # The detection service exists now (it did not when this test was
+        # written, and the assertion then was simply that it was absent). The
+        # claim that matters is unchanged and stronger stated this way: it must
+        # be handed no ground truth. `./state:/data` would expose C6 through
+        # the shared store's own mount, so the subpath is masked with an empty
+        # tmpfs - see tests/test_detector_daemon.py.
+        self.assertIn("detector", services)
+        self.assertNotIn("CLEARWAVE_GROUND_TRUTH_DB", services["detector"])
+        self.assertNotIn("state/ground_truth", services["detector"])
+        self.assertIn("- /data/ground_truth", services["detector"])
         self.assertIn("investigation", services)
         self.assertNotIn("ground_truth", services["investigation"])
         self.assertNotIn("CLEARWAVE_GROUND_TRUTH_DB", services["investigation"])
@@ -215,7 +224,13 @@ class IsolationTests(unittest.TestCase):
             self.assertTrue(
                 "state/ground_truth/merchant-" in line
                 or "CLEARWAVE_GROUND_TRUTH_DB" in line
-                or line.strip().startswith("#"),
+                or line.strip().startswith("#")
+                # A tmpfs mask over the ground-truth subpath of a ./state mount
+                # takes a read path away rather than granting one. The detector
+                # service needs it precisely because ./state:/data would
+                # otherwise expose C6; tests/test_detector_daemon.py asserts it
+                # is present.
+                or line.strip() == "- /data/ground_truth",
                 msg=f"unexpected ground_truth line outside worker mounts: {line}",
             )
 

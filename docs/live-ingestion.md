@@ -11,7 +11,8 @@ Owner: W2 (`andres`). The contract for what a record becomes is
 
 | Path | Command | Needs |
 |---|---|---|
-| **Live** | `.venv/bin/python -m detector consume --detect` | Kafka, Schema Registry, a running W1 worker |
+| **Live, as a service** | `docker compose up -d detector` | Kafka, Schema Registry, a running W1 worker |
+| **Live, as a command** | `.venv/bin/python -m detector consume --detect` | the same, plus somebody at the keyboard |
 | **Offline** | `.venv/bin/python -m detector seed && .venv/bin/python -m detector detect` | the project virtualenv |
 
 The offline path is the demo fallback and does not import a Kafka client at any point. If the
@@ -56,6 +57,50 @@ a dead worker), and `--mode anomaly` does not exist.
 ```sh
 PYTHONUNBUFFERED=1 .venv/bin/python -m worker.worker merchant-a --interval-seconds 0.2
 ```
+
+## Running it as a service, which is how the demo runs it
+
+The demo is a product, not a terminal session (`DECISIONS.md`, derek 2026-08-30T05:10Z): nobody
+types anything. `docker compose up -d` brings up the `detector` service alongside the workers and
+the investigation daemon, and detection then runs continuously with no operator at all.
+
+```sh
+docker compose up -d          # broker, registry, three merchants, detector, investigation
+docker compose logs -f detector
+```
+
+It is the same consume loop the commands above run, with two differences and no third:
+
+- **Empty polls are not terminal.** `detector consume` ends after three consecutive quiet polls,
+  which is right for a bounded run and wrong for a service. The daemon passes `--idle-polls 0`,
+  so only a signal ends it.
+- **SIGINT and SIGTERM drain.** Both set a stop flag rather than raising, the loop leaves at the
+  top of an iteration, and the batch already polled is written and only *then* acknowledged.
+  `docker compose stop` therefore loses nothing, and a container that is killed replays its last
+  uncommitted batch on restart - safe because every event table is keyed on `event_id`.
+
+A broker failure the client cannot recover from exits the process, and `restart: unless-stopped`
+brings it back. There is deliberately no retry policy inside the loop: compose already owns
+process restart, and a second one here would be a supervisor to keep honest. Message-level errors
+are unchanged - they are dead-lettered with their reason and the loop continues.
+
+The service starts at each topic's beginning, not at its end, so a store that starts empty rebuilds
+from whatever the broker still retains. It does **not** load W1's backfill file: that file is 83 MB,
+is not in the repository and cannot be assumed present in a container. `make backfill BACKFILL=...`
+remains the operator's path for it. What actually clears the six-hour floor under merchant-relative
+severity is leaving the stack warm, which is the whole reason this is a service.
+
+`make detect-daemon` runs the identical loop on the host, for anyone who wants it outside Docker:
+
+```sh
+make detect-daemon                                   # Ctrl-C to stop, it drains
+make detect-daemon DB=state/clearwave.db DETECT_EVERY=15
+```
+
+The `detector` service is given `./state:/data` for the shared store, and an empty tmpfs over
+`/data/ground_truth`. That mask is not decoration: `state/ground_truth/` lives inside `state/`, so
+the mount that gives us the store would otherwise give us raul's hidden truth, which
+`docs/ownership.md` quarantines from W2. `tests/test_detector_daemon.py` fails if the mask goes.
 
 ## Injecting an incident
 

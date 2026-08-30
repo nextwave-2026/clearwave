@@ -150,6 +150,7 @@ def consume(
     max_messages: int | None = None,
     deadline: float | None = None,
     on_batch: Callable[[Progress], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> Progress:
     """Drain `source` into `connection` until it runs out, or a bound is reached.
@@ -159,6 +160,14 @@ def consume(
     `clock()` value) passes - whichever comes first. A run with no bound at all
     still terminates on idle, so the same function serves a one-shot sweep and a
     long-lived tail without a second code path.
+
+    Two arguments turn the same loop into a service, and nothing else changes.
+    `idle_polls` of zero or less means empty polls are never terminal: a quiet
+    minute at 03:00 is not a reason for a running service to exit. `should_stop`
+    is then the only way out, checked once per iteration, so a signal handler
+    can ask for a stop without interrupting a batch mid-write. Either way the
+    exit falls through to the same final `flush()`, so a stop drains what was
+    already polled rather than dropping it.
 
     `clock` is injected for the same reason the source is: so a test can bound a
     run without sleeping. It measures the loop's own lifetime and never touches
@@ -183,6 +192,8 @@ def consume(
             on_batch(progress)
 
     while True:
+        if should_stop is not None and should_stop():
+            break
         if deadline is not None and clock() >= deadline:
             break
         if max_messages is not None and progress.polled >= max_messages:
@@ -192,7 +203,7 @@ def consume(
         if record is None:
             flush()
             idle += 1
-            if idle >= idle_polls:
+            if idle_polls > 0 and idle >= idle_polls:
                 break
             continue
 

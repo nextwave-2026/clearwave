@@ -120,6 +120,31 @@ services:
       retries: 10
       start_period: 20s
 
+  detector:
+    build:
+      context: .
+      dockerfile: detector/Dockerfile
+    container_name: clearwave-detector
+    user: "1000:1000"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      CLEARWAVE_DB: /data/clearwave.db
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+    volumes:
+      - ./state:/data
+    # ./state:/data would otherwise hand this container /data/ground_truth,
+    # raul's hidden truth, which docs/ownership.md quarantines from W2. An
+    # empty tmpfs mounted over that subpath masks it: the process sees a
+    # directory with nothing in it and has no read path to C6 at all.
+    tmpfs:
+      - /data/ground_truth
+    restart: unless-stopped
+
   investigation:
     build:
       context: .
