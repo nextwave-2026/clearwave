@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -53,6 +54,10 @@ class EvidenceGateway:
     ``runner(tool_name, parameters, timeout_seconds)``. Its return value may be
     a response mapping, a ``subprocess.CompletedProcess``, or a
     ``(returncode, stdout)`` pair.
+
+    ``env`` overlays environment variables onto the tool subprocess without
+    touching the caller's own environment, so one process can point separate
+    gateways at separate ``CLEARWAVE_DB`` stores concurrently.
     """
 
     allowed_tools = frozenset(ALLOWED_TOOLS)
@@ -69,6 +74,7 @@ class EvidenceGateway:
         trail: EvidenceTrail | None = None,
         python_executable: str | None = None,
         runner: Runner | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> None:
         if query_budget < 0:
             raise ValueError("query_budget must be non-negative")
@@ -82,6 +88,7 @@ class EvidenceGateway:
         self.python_executable = python_executable or sys.executable
         self.trail = trail if trail is not None else EvidenceTrail()
         self.runner = runner
+        self.env = dict(env) if env else {}
         self._additional_calls = 0
 
     @property
@@ -292,6 +299,7 @@ class EvidenceGateway:
             text=True,
             timeout=timeout,
             check=False,
+            env={**os.environ, **self.env} if self.env else None,
         )
 
     def _finish(
