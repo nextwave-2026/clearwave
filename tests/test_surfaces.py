@@ -1192,15 +1192,22 @@ class StaticContractTests(unittest.TestCase):
             js,
         )
         self.assertIn("questions.what_the_operator_should_do", js)
-        self.assertIn("Investigation has not run yet.", js)
+        # An absent recommendation says why it is absent, and the three reasons
+        # a recommendation can be missing do not share one sentence.
+        self.assertIn("No recommendation until there is a diagnosis to base one on.", js)
+        self.assertIn("No recommendation is offered on a cause the system could not stand behind.", js)
 
     def test_missing_investigation_is_not_labelled_agent_unavailable(self):
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
         self.assertNotIn('outcome || "agent_unavailable"', js)
         self.assertNotIn("unavailableCopy", js)
-        self.assertIn("Investigation has not run yet.", js)
-        self.assertIn("Investigation is running.", js)
-        self.assertIn("Narrative unavailable because the investigation agent failed.", js)
+        self.assertIn("No investigation has run on this incident yet.", js)
+        self.assertIn("The agent is investigating", js)
+        # Three states, three readings. A withheld narrative reports the guard
+        # holding, never the internal token that describes the failure.
+        self.assertIn("WITHHELD_COPY", js)
+        self.assertIn("No cause survived the citation check, so none is shown.", js)
+        self.assertNotIn('"Narrative unavailable (" + outcome', js)
 
     def test_missing_confidence_is_not_labelled_none(self):
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
@@ -1265,10 +1272,18 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("body.message", js)
         self.assertIn("Nothing was injected", js)
 
-    def test_investigation_outcome_is_shown_beside_lifecycle(self):
+    def test_investigation_outcome_is_shown_beside_lifecycle_in_words(self):
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
         self.assertIn("const outcome = investigation.outcome", js)
-        self.assertIn('(outcome ? " · " + outcome : "")', js)
+        # The outcome still sits beside the lifecycle, but as a reading rather
+        # than as the store's own token. "agent_unavailable" and "ambiguous"
+        # mean nothing to a reader who has not read the contract, and an
+        # unexplained internal word on screen is a defect of this layer.
+        self.assertIn('(outcomeWords(outcome) ? " · " + outcomeWords(outcome) : "")', js)
+        self.assertNotIn('(outcome ? " · " + outcome : "")', js)
+        self.assertIn("function outcomeWords", js)
+        for token in ("diagnosed", "ambiguous", "insufficient_evidence", "agent_unavailable"):
+            self.assertIn('outcome === "%s"' % token, js)
 
     def test_escalation_hypothesis_renders_statement_not_object_object(self):
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
@@ -2348,3 +2363,128 @@ class WatchRailPageTests(unittest.TestCase):
     def test_the_empty_rail_is_deliberate_rather_than_half_drawn(self):
         self.assertIn("Nothing is being watched", self.js)
         self.assertRegex(self.css, r"\.rail\.is-quiet")
+
+
+class AgentLegibilityPageTests(unittest.TestCase):
+    """The evidence trail and the C4 narrative read as prose, and cite as before.
+
+    The screen that proves the diagnosis was not invented used to render every
+    trail entry and every C4 answer through `JSON.stringify(value, null, 2)`.
+    These guard the treatment that replaced it: sentences over braces, the raw
+    record still reachable, and no value on screen that the store did not
+    publish.
+    """
+
+    def setUp(self):
+        static = ROOT / "surfaces" / "static"
+        self.html = (static / "index.html").read_text(encoding="utf-8")
+        self.js = (static / "app.js").read_text(encoding="utf-8")
+        self.css = (static / "styles.css").read_text(encoding="utf-8")
+        self.trail = self.js[self.js.index("function trailCard("):self.js.index("function renderEvidence(")]
+
+    def test_a_trail_entry_is_a_sentence_rather_than_a_json_dump(self):
+        self.assertIn("askedSentence(entry)", self.trail)
+        self.assertIn("readingsFor(entry)", self.trail)
+        # The old rendering, verbatim, must not come back.
+        self.assertNotIn('"<pre>" + escapeHtml(pretty(entry.parameters))', self.js)
+        self.assertNotIn('<strong>Asked</strong>', self.js)
+
+    def test_the_raw_record_stays_one_click_away_rather_than_deleted(self):
+        # Being able to show the record is part of the argument, so the
+        # disclosure is required, not optional.
+        self.assertIn("<details", self.trail)
+        self.assertIn("Raw request and response", self.trail)
+        self.assertIn("pretty(entry.parameters)", self.trail)
+        self.assertIn("pretty(entry.response)", self.trail)
+
+    def test_every_evidence_tool_in_the_contract_has_a_reading(self):
+        readings = self.js[self.js.index("function readingsFor("):self.js.index("function citeChip(")]
+        for tool in (
+            "cohort_metrics",
+            "cohort_compare",
+            "drilldown",
+            "decline_breakdown",
+            "retry_stats",
+            "operational_metrics",
+            "confounding_check",
+            "incident_history",
+            "external_status",
+            "financial_impact",
+            "metric_series",
+            "ingest_health",
+        ):
+            self.assertIn('case "%s"' % tool, readings)
+        # A tool this view has no reading for still shows something honest
+        # rather than an empty card.
+        self.assertIn("default:", readings)
+
+    def test_a_refused_query_is_shown_as_refused_rather_than_hidden(self):
+        readings = self.js[self.js.index("function readingsFor("):self.js.index("function citeChip(")]
+        self.assertIn("response.error", readings)
+        self.assertIn("refused", self.trail)
+        self.assertIn("entry.executed === false", self.trail)
+
+    def test_a_cited_claim_goes_through_the_boards_own_citation_record(self):
+        # bindCites/citeRecord is the credibility of this page. The trail chip
+        # extends that affordance; it never invents a second one.
+        chip = self.js[self.js.index("function citeChip("):self.js.index("function trailSequenceFor(")]
+        self.assertIn('class="cite cite-q"', chip)
+        self.assertIn("data-cite=", chip)
+        evidence = self.js[self.js.index("function evidenceList("):self.js.index("function trailSummary(")]
+        self.assertIn('citeChip("trail-" + sequence', evidence)
+        # A citation the trail does not contain says so instead of offering a
+        # button that opens nothing.
+        self.assertIn("not in the stored trail", evidence)
+
+    def test_honest_uncertainty_is_presented_as_rigour_not_as_a_shortfall(self):
+        belief = self.js[self.js.index("function beliefBlock("):self.js.index("function actionBlock(")]
+        self.assertIn("competing_explanations", belief)
+        self.assertIn("missing_evidence", belief)
+        self.assertIn("why_ambiguity_exists", belief)
+        self.assertIn("Not ruled out", belief)
+        self.assertIn("What would settle it", belief)
+        self.assertIn("has to publish what it could not eliminate", belief)
+
+    def test_the_wait_shows_the_pipeline_without_claiming_a_live_position(self):
+        run = self.js[self.js.index("function agentRunning("):self.js.index("function guardBanner(")]
+        self.assertIn("The agent is investigating", run)
+        self.assertIn("AGENT_STEPS", run)
+        self.assertIn("not a live position", run)
+        # The elapsed reading is only drawn for a run that is still open: an
+        # incident re-investigated after a watch crosses its floor still carries
+        # the previous version's start until the new one lands.
+        self.assertIn("!investigation.completed_at", run)
+        self.assertIn("function tickAgentRun", self.js)
+
+    def test_the_guard_state_explains_itself_and_never_shows_a_raw_token(self):
+        guard = self.js[self.js.index("function guardBanner("):self.js.index("function noRunBanner(")]
+        self.assertIn("cite an evidence query that actually ran", guard)
+        self.assertNotIn("agent_unavailable", guard)
+        self.assertNotIn("outcome", guard)
+        # The withheld banner reads in the brand hue, not the warning one: the
+        # integrity check holding is not a fault.
+        self.assertRegex(self.css, r"\.note\.guard\s*\{")
+        self.assertNotIn("note warn tight banner", guard)
+
+    def test_severity_and_confidence_are_said_to_be_independent(self):
+        self.assertIn("Priority and confidence", self.js)
+        self.assertIn("Neither is allowed to move", self.js)
+        self.assertIn("Escalation routes on", self.js)
+        self.assertRegex(self.css, r"\.dual-note\s*\{")
+
+    def test_the_reveal_leaves_the_trail_visible_without_animation(self):
+        # `both` fill with a hidden `from` would leave the list blank wherever
+        # the animation does not run, so the base rule must not hide a card.
+        trail_css = self.css[self.css.index("/* --- the reveal"):self.css.index("/* --- a cited claim")]
+        self.assertIn(".trail.reveal .trail-card", trail_css)
+        self.assertIn("prefers-reduced-motion", self.css)
+        self.assertNotRegex(self.css, r"\.trail-card\s*\{[^}]*opacity:\s*0")
+
+    def test_the_prose_helpers_format_and_never_compute(self):
+        prose = self.js[self.js.index("// ---------------------------------------------------- the agent, in prose"):
+                        self.js.index("// -------------------------------------------------- the wait, and the guard")]
+        # Reading a stored ratio as a percentage is formatting. Summing,
+        # averaging or differencing stored values would be a new figure, and a
+        # figure that exists only in the UI is a defect.
+        for arithmetic in ("reduce(", "+ Number(", " - value", "Math.max(", "Math.min("):
+            self.assertNotIn(arithmetic, prose)
