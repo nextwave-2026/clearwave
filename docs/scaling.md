@@ -82,18 +82,21 @@ changes:
 | --- | --- | --- |
 | 3 merchants, 4 issuing banks (demo shape) | ~21 | **4.1 s** |
 | 200 merchants, 500 issuing banks | ~714 | **113.2 s** |
-| 2,000 merchants, 3,000 issuing banks | ~5,014 | still running after 20 minutes, abandoned |
+| 2,000 merchants, 3,000 issuing banks | ~5,014 | **491.4 s** (8 min 11 s) |
 
 The data volume is identical in every row. Only the number of distinct cohort values differs.
 Cost tracks the cardinality of the *dimensions*, not the size of the *data* - which is the whole
 point, and it is why a demo that feels instant tells you nothing about production.
 
-The per-evaluation cost is stable across the two completed rows at roughly 160-200 ms, so the
-third row is estimable rather than mysterious: about 5,000 cohort evaluations at depth 1 alone,
-which is roughly fifteen minutes before depth 2 and 3 are considered at all, and matches the
-abandoned run. Real Yuno cardinality - thousands of merchants, thousands of issuing banks, every country and network they
-support - is larger than the third row, and the detection sweep is supposed to complete inside a
-one-minute bucket.
+Per cohort evaluation that is 197 ms, 159 ms and 98 ms respectively. The unit cost falls as
+cardinality rises, because each cohort holds proportionally fewer rows to aggregate - so the
+growth is not quite linear in distinct values, it is somewhat better than linear. That is the
+generous reading and it does not rescue the result: **the third row takes eight minutes at depth
+1 alone**, before depth 2 and depth 3 are considered at all, and a detection sweep is supposed
+to complete inside a one-minute bucket.
+
+Real Yuno cardinality - thousands of merchants, thousands of issuing banks, every country and
+network they support - is larger than the third row.
 
 ## What we would change
 
@@ -190,7 +193,7 @@ under `CONFIG_VERSION`.
 - The constraint is cohort enumeration in `localise()`: an unbounded `SELECT DISTINCT` over all
   retained history, plus a volume floor applied after a full aggregate rather than before.
 - Measured, same 60,000 rows: 4.1 s at demo cardinality, 113.2 s at 200 merchants and 500 banks,
-  and it does not finish at 2,000 and 3,000.
+  491.4 s at 2,000 and 3,000 - and that last is depth 1 only, against a one-minute sweep budget.
 - The cheap fix is to bound the enumeration by the window's active cohorts before evaluating.
   Same answers, a fraction of the work.
 - The real fix is per-bucket counters keyed by cohort, so detection reads pre-aggregated rows.
