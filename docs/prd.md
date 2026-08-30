@@ -692,7 +692,7 @@ Demo scope:
 
 - dashboard / product UI
 - Slack-style operational notification if practical
-- **phone call escalation for critical incidents**
+- **phone call escalation for high and critical incidents** ([notification escalation binding](contracts/notification-escalation.md))
 
 ## Remove from core scope
 

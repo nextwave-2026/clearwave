@@ -19,6 +19,7 @@ The layer sequence is L1 merchant emission, L2 ingestion and normalisation, L3 d
 - [0011 - One versioned run per incident](0011-one-versioned-run-per-incident.md)
 - [0012 - Scenario identifiers never reach L4](0012-scenario-identifiers-never-reach-l4.md)
 - [0013 - Hand-rolled OpenAI loop is the constrained agent runtime](0013-hand-rolled-openai-loop-agent-runtime.md)
+- [0022 - OpenAI structured outputs fit bounded investigation](0022-openai-structured-loop-over-coding-agent-harness.md)
 
 ## W1 records - `raul`
 
@@ -29,9 +30,14 @@ The layer sequence is L1 merchant emission, L2 ingestion and normalisation, L3 d
 The layer they describe is documented in [detection-plane.md](../detection-plane.md), with diagrams.
 
 - [0015 - Detection qualifies an incident behind four floors](0015-detection-floors-not-a-single-threshold.md)
-- [0016 - Severity is bounded by money, not only weighted by it](0016-severity-is-bounded-by-money.md)
+- [0016 - Severity is bounded by money, not only weighted by it](0016-severity-is-bounded-by-money.md) - superseded by ADR 0023
 - [0017 - Localisation descends on sibling contrast, not on depth](0017-localisation-descends-on-contrast.md)
 - [0018 - All detection arithmetic buckets on event time](0018-event-time-bucketing.md)
 - [0019 - Value is priced per payment, never per attempt](0019-value-is-priced-per-payment.md)
 - [0020 - Native source shapes are normalised through a mapper registry](0020-native-shapes-through-a-mapper-registry.md)
 - [0021 - The canonical model closes the decline vocabulary and preserves the raw code](0021-canonical-vocabulary-with-preserved-raw-code.md)
+- [0023 - Severity is relative to the merchant, and recurrence may promote past the money ceiling](0023-severity-is-relative-to-the-merchant-and-promoted-by-recurrence.md) - supersedes ADR 0016
+- [0024 - Leading indicators warn early, and nothing is predicted](0024-leading-indicators-warn-early-without-prediction.md)
+
+How this plane behaves at Yuno's real volume, and the two changes that would be needed, is in
+[scaling.md](../scaling.md).

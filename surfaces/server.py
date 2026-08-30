@@ -35,6 +35,9 @@ MIME = {
     ".svg": "image/svg+xml",
     ".ico": "image/x-icon",
 }
+# Nothing this server accepts needs to be large; a huge or negative
+# Content-Length is a malformed or hostile request, not a real payload.
+MAX_BODY_BYTES = 1_000_000
 
 
 class SurfacesApp:
@@ -161,13 +164,20 @@ class SurfacesHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path.startswith("/api/"):
-            self._send_json(*self._app().handle("GET", parsed.path, None))
+            self._send_json(*self._safe_handle("GET", parsed.path, None))
             return
         self._send_static(parsed.path)
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self._send_json(400, {"error": "invalid Content-Length"})
+            return
+        if length < 0 or length > MAX_BODY_BYTES:
+            self._send_json(400, {"error": "invalid Content-Length"})
+            return
         raw = self.rfile.read(length) if length else b""
         body: dict[str, Any] | None = None
         if raw:
@@ -177,7 +187,19 @@ class SurfacesHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "invalid json"})
                 return
             body = decoded if isinstance(decoded, dict) else {}
-        self._send_json(*self._app().handle("POST", parsed.path, body))
+        self._send_json(*self._safe_handle("POST", parsed.path, body))
+
+    def _safe_handle(
+        self, method: str, path: str, body: dict[str, Any] | None
+    ) -> tuple[int, dict[str, Any]]:
+        # This server is reachable during a live judge demo. An internal
+        # exception (a SQLite lock timeout, an unexpectedly-shaped stored
+        # record) must become a clean JSON error, not a broken connection
+        # with a traceback on whatever console is projected.
+        try:
+            return self._app().handle(method, path, body)
+        except Exception:  # noqa: BLE001 - never let a request crash the server
+            return 500, {"error": "internal error"}
 
     def log_message(self, format: str, *args: Any) -> None:
         if os.environ.get("CLEARWAVE_SURFACES_QUIET"):
@@ -199,7 +221,7 @@ class SurfacesHandler(BaseHTTPRequestHandler):
     def _send_static(self, path: str) -> None:
         relative = "index.html" if path in {"", "/"} else path.lstrip("/")
         candidate = (STATIC_DIR / relative).resolve()
-        if not str(candidate).startswith(str(STATIC_DIR.resolve())) or not candidate.is_file():
+        if not candidate.is_relative_to(STATIC_DIR.resolve()) or not candidate.is_file():
             self._send_json(404, {"error": "not found", "path": path})
             return
         data = candidate.read_bytes()
