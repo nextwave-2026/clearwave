@@ -206,7 +206,7 @@ class SurfacesTests(unittest.TestCase):
         statuses = {item["channel"]: item["status"] for item in outcomes}
         self.assertEqual(statuses["dashboard"], "delivered")
         self.assertEqual(statuses["slack"], "failed")
-        self.assertNotIn("phone", statuses)
+        self.assertEqual(statuses["phone"], "fallback_dashboard")
         self.app.overview()
 
     def test_no_endpoint_computes_a_metric_absent_from_the_source(self):
@@ -264,6 +264,19 @@ class SurfacesTests(unittest.TestCase):
         ack = self.app.acknowledge_call("inc-call")
         self.assertTrue(ack["acknowledged"])
         self.assertEqual(self.app.pending_calls()["calls"], [])
+
+    def test_channels_for_pins_full_severity_binding_and_unknown_fallback(self):
+        # Pins the complete policy (critical and high both phone; low/medium dashboard-only;
+        # unknown stays conservative) so the binding is tested, not only commented.
+        from surfaces.escalation import channels_for
+        self.assertEqual(channels_for("low"), ("dashboard",))
+        self.assertEqual(channels_for("medium"), ("dashboard",))
+        self.assertEqual(channels_for("high"), ("dashboard", "slack", "phone"))
+        self.assertEqual(channels_for("critical"), ("dashboard", "slack", "phone"))
+        self.assertEqual(channels_for("unknown"), ("dashboard",))
+        self.assertEqual(channels_for("HIGH"), ("dashboard", "slack", "phone"))
+        self.assertEqual(channels_for(None), ("dashboard",))
+        self.assertEqual(channels_for(""), ("dashboard",))
 
     def test_in_process_server_serves_overview_and_static_files(self):
         os.environ["CLEARWAVE_SURFACES_QUIET"] = "1"
