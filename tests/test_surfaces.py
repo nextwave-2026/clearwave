@@ -2079,11 +2079,17 @@ class EscalationRaceTests(unittest.TestCase):
         # winner finishes.
         connection = connect(self.db)
         self.addCleanup(connection.close)
+        # Precondition changed with the move to a per-channel claim: the
+        # winner holds one row per channel in escalation_channel_claim, not a
+        # single incident-level row in escalation_claim. The property under
+        # test is unchanged and is the one #59 fixed - the loser must not fire.
         with connection:
-            connection.execute(
-                "INSERT INTO escalation_claim (incident_id, claimed_at) VALUES (?, ?)",
-                ("inc-race", "2026-08-29T10:00:00.000Z"),
-            )
+            for channel in ("dashboard", "slack", "phone"):
+                connection.execute(
+                    "INSERT INTO escalation_channel_claim "
+                    "(incident_id, channel, claimed_at) VALUES (?, ?, ?)",
+                    ("inc-race", channel, "2026-08-29T10:00:00.000Z"),
+                )
 
         def failing_escalate(*args, **kwargs):
             raise AssertionError("the losing caller must never fire escalate()")
@@ -2104,6 +2110,184 @@ class EscalationRaceTests(unittest.TestCase):
             )
         healed = ensure_escalation(connection, incident, investigation)
         self.assertEqual(len(healed), 1)
+
+
+class PerChannelEscalationClaimTests(unittest.TestCase):
+    """A channel fires when its band is reached, and at most once per incident.
+
+    `docs/contracts/notification-escalation.md` specifies "one record per
+    channel per incident". The claim used to be keyed on the incident alone,
+    so the first C4 result locked it: an incident stored `high` (dashboard and
+    Slack) that a later sweep re-measured as `critical` short-circuited before
+    severity was re-read, and the phone never rang.
+
+    These drive the real ensure_escalation with both side-effecting channels
+    stubbed - no webhook URL, a fake provider - so nothing leaves the process.
+    `not_configured` is the expected healthy Slack status in an isolated run.
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.db = Path(self._tmpdir.name) / "clearwave.db"
+        self.connection = connect(self.db)
+        self.addCleanup(self.connection.close)
+        insert_incident(self.connection, _incident("inc-climb", "high", "2026-08-29T10:00:00Z"))
+        persist_result(
+            self.connection,
+            "inc-climb",
+            _diagnosis("inc-climb"),
+            "diagnosed",
+            trail=[_trail_entry()],
+        )
+        self.result = load_investigation(self.connection, "inc-climb")
+        self.calls = []
+
+    def _read_at(self, severity, incident_id="inc-climb", lifecycle_state="detected"):
+        """One dashboard read of the same incident, re-measured to `severity`."""
+        incident = _incident(
+            incident_id, severity, "2026-08-29T10:00:00Z", lifecycle_state=lifecycle_state
+        )
+        return ensure_escalation(
+            self.connection,
+            incident,
+            self.result,
+            slack_url="",
+            phone_provider=lambda incident, payload: self.calls.append(incident["incident_id"]),
+            log=lambda message: None,
+        )
+
+    def _channels(self, incident_id="inc-climb"):
+        return sorted(
+            event["channel"] for event in load_escalation(self.connection, incident_id)
+        )
+
+    def test_phone_fires_once_on_the_upgrade_and_nothing_fires_twice(self):
+        self._read_at("high")
+        self.assertEqual(self._channels(), ["dashboard", "slack"])
+        self.assertEqual(self.calls, [], "high must not call - #85 binds the phone to critical")
+
+        self._read_at("critical")
+        self.assertEqual(self.calls, ["inc-climb"], "the phone rings once, on the upgrade")
+        self.assertEqual(self._channels(), ["dashboard", "phone", "slack"])
+        # Exactly three rows: dashboard and slack were not fired or recorded a
+        # second time when the incident climbed into the critical band.
+        self.assertEqual(len(load_escalation(self.connection, "inc-climb")), 3)
+
+    def test_oscillating_across_the_band_boundary_pages_exactly_once(self):
+        # A live row can cross 0.70 in both directions as persistence and
+        # trajectory move around the line. The claim records that a channel
+        # has fired, never the severity that fired it, so it is monotonic:
+        # the phone rings on the first crossing and is silent on every one after.
+        for severity in ("high", "critical", "high", "critical", "high", "critical"):
+            self._read_at(severity)
+        self.assertEqual(self.calls, ["inc-climb"], "one call in total, not one per crossing")
+        self.assertEqual(self._channels(), ["dashboard", "phone", "slack"])
+        self.assertEqual(len(load_escalation(self.connection, "inc-climb")), 3)
+
+    def test_a_watch_escalates_nowhere_at_any_severity(self):
+        # The lifecycle allowlist stays ahead of everything the per-channel
+        # claim does: for a watch, severity is never read and nothing is claimed.
+        insert_incident(
+            self.connection,
+            _incident("inc-watch", "low", "2026-08-29T10:00:00Z", lifecycle_state="watching"),
+        )
+        persist_result(
+            self.connection,
+            "inc-watch",
+            _diagnosis("inc-watch"),
+            "diagnosed",
+            trail=[_trail_entry()],
+        )
+        self.result = load_investigation(self.connection, "inc-watch")
+        for severity in ("low", "medium", "high", "critical"):
+            events = self._read_at(severity, incident_id="inc-watch", lifecycle_state="watching")
+            self.assertEqual(events, [], f"a watch must escalate nowhere at severity {severity}")
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self._channels("inc-watch"), [])
+        claims = self.connection.execute(
+            "SELECT COUNT(*) FROM escalation_channel_claim WHERE incident_id = ?", ("inc-watch",)
+        ).fetchone()[0]
+        self.assertEqual(claims, 0, "a watch must not even be claimed")
+
+    def test_nothing_fires_before_a_c4_result_exists(self):
+        insert_incident(self.connection, _incident("inc-bare", "critical", "2026-08-29T10:00:00Z"))
+        incident = load_incident(self.connection, "inc-bare")
+        self.assertEqual(ensure_escalation(self.connection, incident, None), [])
+        self.assertEqual(self._channels("inc-bare"), [])
+
+    def test_a_store_written_before_this_change_does_not_re_fire(self):
+        # The demo stack has live rows whose channels were claimed under the
+        # old incident-level key, so escalation_channel_claim is empty for
+        # them. The recorded escalation_event rows must suppress a re-fire on
+        # their own, without a migration.
+        with self.connection:
+            for channel in ("dashboard", "slack"):
+                self.connection.execute(
+                    """INSERT INTO escalation_event
+                       (incident_id, channel, status, payload, detail, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    ("inc-climb", channel, "delivered", "{}", None, "2026-08-29T10:00:01.000Z"),
+                )
+            self.connection.execute(
+                "INSERT INTO escalation_claim (incident_id, claimed_at) VALUES (?, ?)",
+                ("inc-climb", "2026-08-29T10:00:01.000Z"),
+            )
+        self._read_at("high")
+        self.assertEqual(self._channels(), ["dashboard", "slack"])
+        self.assertEqual(self.calls, [])
+        # ...and the upgrade still reaches the phone, exactly once.
+        self._read_at("critical")
+        self.assertEqual(self.calls, ["inc-climb"])
+        self.assertEqual(self._channels(), ["dashboard", "phone", "slack"])
+
+
+class EscalateChannelSelectionTests(unittest.TestCase):
+    """`channels` narrows dispatch to a subset; it can never widen it."""
+
+    def test_channels_narrows_dispatch_without_touching_the_binding(self):
+        incident = _incident("inc-narrow", "critical", "2026-08-29T10:00:00Z")
+        placed = []
+        outcomes = escalate(
+            incident,
+            None,
+            slack_url="",
+            phone_provider=lambda incident, payload: placed.append(1),
+            log=lambda message: None,
+            channels=("phone",),
+        )
+        self.assertEqual([outcome["channel"] for outcome in outcomes], ["phone"])
+        self.assertEqual(placed, [1])
+
+    def test_channels_cannot_reach_a_channel_this_severity_does_not_bind(self):
+        # A caller asking for the phone on a `high` incident gets silence, not
+        # a call: CHANNELS_BY_SEVERITY stays the only binding, and the subset
+        # is intersected with it rather than trusted.
+        incident = _incident("inc-widen", "high", "2026-08-29T10:00:00Z")
+        placed = []
+        outcomes = escalate(
+            incident,
+            None,
+            slack_url="",
+            phone_provider=lambda incident, payload: placed.append(1),
+            log=lambda message: None,
+            channels=("phone",),
+        )
+        self.assertEqual(outcomes, [])
+        self.assertEqual(placed, [])
+
+    def test_default_none_fires_every_bound_channel(self):
+        incident = _incident("inc-default", "critical", "2026-08-29T10:00:00Z")
+        outcomes = escalate(
+            incident,
+            None,
+            slack_url="",
+            phone_provider=lambda incident, payload: None,
+            log=lambda message: None,
+        )
+        self.assertEqual(
+            [outcome["channel"] for outcome in outcomes], ["dashboard", "slack", "phone"]
+        )
 
 
 class ServerHardeningTests(unittest.TestCase):

@@ -73,13 +73,27 @@ def escalate(
     phone_provider: PhoneProvider | None = None,
     log: Logger | None = None,
     enqueue_call: CallFallback | None = None,
+    channels: tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
-    """Dispatch every bound channel. Never raises."""
+    """Dispatch every bound channel. Never raises.
+
+    `channels` narrows dispatch to a subset the caller has already decided to
+    fire; it never widens it. It exists because escalation is claimed per
+    channel per incident (`surfaces/store.py`), so an incident re-measured
+    from `high` to `critical` must fire the newly bound phone channel WITHOUT
+    posting to Slack a second time. Passing it does not change the binding:
+    `CHANNELS_BY_SEVERITY` stays the only severity-to-channel mapping, and the
+    caller's subset is intersected with it rather than trusted, so no caller
+    can reach a channel this severity does not bind. Default None means "every
+    channel bound at this severity", which is what every other caller wants.
+    """
     logger = log or LOGGER.info
     payload = _payload(incident, result)
     outcomes: list[dict[str, Any]] = []
     severity = str(incident.get("severity", ""))
-    for channel in channels_for(severity):
+    bound = channels_for(severity)
+    selected = bound if channels is None else tuple(c for c in bound if c in set(channels))
+    for channel in selected:
         try:
             if channel == "dashboard":
                 outcomes.append(_record(channel, "delivered", payload))
