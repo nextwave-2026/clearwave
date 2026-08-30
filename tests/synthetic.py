@@ -239,3 +239,187 @@ def confounded_incident(seed: int = 20260830) -> list[dict[str, Any]]:
         _set_approval_count(events, baseline, baseline_approved, rng)
         _set_approval_count(events, final, final_approved, rng)
     return events
+
+
+def merchant_scale(
+    minutes: int = 400,
+    onset_minute: int = 375,
+    small_per_minute: int = 6,
+    small_amount: float = 7.50,
+    large_per_minute: int = 20,
+    large_amount: float = 90.0,
+    seed: int = 11,
+) -> list[dict[str, Any]]:
+    """Two merchants on wildly different scales, one of them collapsing.
+
+    ``merchant-small`` is a low-volume, low-ticket business: its whole normal
+    hour is worth a few thousand dollars, so losing most of its traffic still
+    costs well under $2,000 an hour and the absolute-dollar ladder can never
+    rank it above `medium`. ``merchant-large`` is there to be the platform it
+    is measured against, and stays healthy throughout.
+
+    Long enough that the small merchant's normal hour is actually learnable -
+    the point is a merchant-relative judgement, and a store too short to have a
+    normal must fall back to dollars.
+    """
+    rng = random.Random(seed)
+    events: list[dict[str, Any]] = []
+    index = 0
+    for minute in range(minutes):
+        for _ in range(large_per_minute):
+            index += 1
+            approved = rng.random() < 0.92
+            events.append(
+                _event(
+                    index,
+                    minute,
+                    merchant_id="merchant-large",
+                    provider="provider-p3",
+                    country="MX",
+                    issuing_bank="bank-y",
+                    amount=large_amount,
+                    status="approved" if approved else "declined",
+                    **({} if approved else {"normalized_decline_reason": "insufficient_funds"}),
+                )
+            )
+        for _ in range(small_per_minute):
+            index += 1
+            if minute < onset_minute:
+                rate = 0.92
+            else:
+                # Worsening, not a step: the trajectory term is part of what
+                # the dollar ceiling is suppressing, so the fixture has to
+                # contain it rather than assume it.
+                progress = (minute - onset_minute) / max(minutes - onset_minute, 1)
+                rate = 0.40 - 0.30 * progress
+            approved = rng.random() < rate
+            events.append(
+                _event(
+                    index,
+                    minute,
+                    merchant_id="merchant-small",
+                    provider="provider-p2",
+                    country="CO",
+                    issuing_bank="bank-x",
+                    amount=small_amount,
+                    status="approved" if approved else "declined",
+                    **({} if approved else {"normalized_decline_reason": "do_not_honor"}),
+                )
+            )
+    return events
+
+
+def latency_degradation(
+    minutes: int = 80,
+    per_minute: int = 24,
+    onset_minute: int = 70,
+    seed: int = 13,
+) -> list[dict[str, Any]]:
+    """W1's `effect=latency` shape: the provider slows down, conversion does not.
+
+    Attempts still approve and decline at baseline rates while `latency_ms`
+    spikes, which is precisely the case conversion-only detection cannot see.
+    """
+    rng = random.Random(seed)
+    events: list[dict[str, Any]] = []
+    index = 0
+    for minute in range(minutes):
+        for _ in range(per_minute):
+            index += 1
+            base = _event(index, minute)
+            degraded = minute >= onset_minute and base["provider"] == "provider-p2"
+            approved = rng.random() < 0.92
+            base["status"] = "approved" if approved else "declined"
+            if not approved:
+                base["normalized_decline_reason"] = "insufficient_funds"
+            if degraded:
+                base["latency_ms"] = rng.randint(6_000, 9_000)
+                base["queue_delay_ms"] = 4_000
+            events.append(base)
+    return events
+
+
+def provider_outage(
+    minutes: int = 80,
+    per_minute: int = 24,
+    onset_minute: int = 70,
+    seed: int = 17,
+) -> list[dict[str, Any]]:
+    """W1's `effect=outage` shape: the provider is routed around entirely.
+
+    Its volume goes to zero rather than showing declines, so there is nothing
+    in the decline mix to see and the surviving traffic looks perfectly
+    healthy. A cohort with no attempts can never clear the volume floor, so
+    conversion-only detection cannot even evaluate it.
+    """
+    rng = random.Random(seed)
+    events: list[dict[str, Any]] = []
+    index = 0
+    for minute in range(minutes):
+        for _ in range(per_minute):
+            index += 1
+            base = _event(index, minute)
+            if minute >= onset_minute:
+                base["provider"] = "provider-p3"
+            approved = rng.random() < 0.92
+            base["status"] = "approved" if approved else "declined"
+            if not approved:
+                base["normalized_decline_reason"] = "insufficient_funds"
+            events.append(base)
+    return events
+
+
+def two_stage_deviation(
+    minutes: int = 88,
+    per_minute: int = 100,
+    mild_minute: int = 79,
+    collapse_minute: int = 83,
+    mild_rate: float = 0.80,
+    seed: int = 23,
+) -> list[dict[str, Any]]:
+    """The demo beat: a mild deviation first, then the hard collapse.
+
+    From `mild_minute` provider-p2 gives up a dozen conversion points -
+    worsening, operationally meaningful, and statistically suggestive without
+    being conclusive, so it is a watch rather than an incident. From
+    `collapse_minute` it falls off a cliff and crosses every detection floor.
+
+    The mild step lands part-way through the detection window rather than
+    before it, which is what the live demo actually does: a judge injects, a
+    couple of minutes pass, and the sweep sees healthy buckets followed by
+    degraded ones. That contrast inside the window is what makes trajectory
+    read as worsening at all.
+
+    Volume is deliberately realistic rather than minimal. Trajectory is
+    measured over five one-minute buckets, and on a thin cohort the direction
+    of a slide sits below the binomial noise floor - a fixture at twenty
+    payments a bucket would be asserting on a coin toss.
+    """
+    rng = random.Random(seed)
+    events: list[dict[str, Any]] = []
+    index = 0
+    for minute in range(minutes):
+        for _ in range(per_minute):
+            index += 1
+            base = _event(index, minute)
+            affected = base["provider"] == "provider-p2"
+            rate = 0.92
+            if affected and minute >= collapse_minute:
+                rate = 0.30
+            elif affected and minute >= mild_minute:
+                rate = mild_rate
+            approved = rng.random() < rate
+            base["status"] = "approved" if approved else "declined"
+            if not approved:
+                base["normalized_decline_reason"] = (
+                    "do_not_honor" if affected else "insufficient_funds"
+                )
+            events.append(base)
+    return events
+
+
+def two_stage_deviation_mild_only(**kwargs: Any) -> list[dict[str, Any]]:
+    """Only the first stage: the mild slide, before the collapse arrives."""
+    collapse_minute = kwargs.get("collapse_minute", 83)
+    cutoff = (BASE + timedelta(minutes=collapse_minute)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return [event for event in two_stage_deviation(**kwargs) if event["occurred_at"] < cutoff]

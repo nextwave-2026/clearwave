@@ -11,7 +11,7 @@ import math
 import sqlite3
 from typing import Any
 
-from . import config, metrics, schema
+from . import config, metrics, schema, store
 
 
 # --------------------------------------------------------------------------
@@ -293,12 +293,89 @@ def localise(
 # severity
 # --------------------------------------------------------------------------
 
+SEVERITY_ORDER = [config.SEVERITY_FLOOR] + [
+    name for name, _ in reversed(config.SEVERITY_THRESHOLDS)
+]
+
+
+def _ladder_band(value: float, ladder: tuple[tuple[float, str], ...]) -> str | None:
+    """The band this value is capped at, or None when it is above every rung."""
+    for limit, band in ladder:
+        if value < limit:
+            return band
+    return None
+
+
+def merchant_normal_hourly_value(connection: sqlite3.Connection) -> dict[str, float]:
+    """Each merchant's normal attempted value per hour, from the whole store.
+
+    One aggregate, computed once per sweep rather than once per candidate
+    cohort. Value is taken per payment, never per attempt, for the same reason
+    `financial_impact` does: a retry storm must not inflate the denominator
+    exactly when it matters most.
+
+    A merchant only gets a normal when there is enough history to call it one.
+    Below either floor it is absent from the result, and severity falls back to
+    the dollars-only ladder - which is today's behaviour unchanged, so a short
+    or empty store cannot move a single existing number.
+    """
+    rows = connection.execute(
+        """
+        SELECT merchant_id,
+               COUNT(*) AS payments,
+               SUM(value) AS attempted_value,
+               MIN(first_epoch) AS lo,
+               MAX(first_epoch) AS hi
+        FROM (
+            SELECT merchant_id,
+                   payment_id,
+                   MAX(amount_usd) AS value,
+                   MIN(occurred_epoch) AS first_epoch
+            FROM attempt
+            GROUP BY merchant_id, payment_id
+        )
+        GROUP BY merchant_id
+        """
+    ).fetchall()
+    normals: dict[str, float] = {}
+    for row in rows:
+        payments = int(row["payments"] or 0)
+        hours = (int(row["hi"]) - int(row["lo"])) / 3600.0 if payments else 0.0
+        if payments < config.MERCHANT_NORMAL_MIN_PAYMENTS:
+            continue
+        if hours < config.MERCHANT_NORMAL_MIN_HOURS:
+            continue
+        normals[row["merchant_id"]] = float(row["attempted_value"] or 0.0) / hours
+    return normals
+
+
+def prior_matching_incident_count(
+    connection: sqlite3.Connection,
+    cohort_key: str,
+    onset_epoch: int,
+    lookback_seconds: int = config.RECURRENCE_LOOKBACK_SECONDS,
+) -> int:
+    """How many incidents on this exact cohort already onset inside the lookback.
+
+    The same count `incident_history` publishes as
+    `recurrence.prior_matching_incidents`; severity simply never asked for it.
+    """
+    row = connection.execute(
+        "SELECT COUNT(*) AS n FROM incident "
+        "WHERE cohort_key = ? AND onset_epoch >= ? AND onset_epoch < ?",
+        (cohort_key, onset_epoch - lookback_seconds, onset_epoch),
+    ).fetchone()
+    return int(row["n"] or 0)
+
+
 def severity_of(
     loss_per_hour: float,
     affected_payments: int,
     platform_payments: int,
     buckets_sustained: int,
     trajectory: int,
+    prior_matching_incidents: int = 0,
+    loss_share_of_normal: float | None = None,
 ) -> dict[str, Any]:
     """Business priority. Statistical strength is deliberately not an input.
 
@@ -306,6 +383,11 @@ def severity_of(
     one decisively without outranking it two-hundred-fold, which is what keeps
     a large merchant's small percentage shift above a tiny cohort's dramatic
     one without hand-tuning either case.
+
+    Two inputs default to today's behaviour so no existing caller changes:
+    `prior_matching_incidents` is 0 - nothing has recurred - and
+    `loss_share_of_normal` is None - this merchant's normal hour is unknown,
+    so only the dollar ceiling applies.
     """
     floor = config.LOSS_RATE_FLOOR_USD_PER_HOUR
     cap = config.LOSS_RATE_CAP_USD_PER_HOUR
@@ -328,20 +410,52 @@ def severity_of(
 
     # Apply the money ceiling. Without it a long, worsening, wide but cheap
     # incident can climb on persistence and trajectory alone.
-    order = [config.SEVERITY_FLOOR] + [name for name, _ in reversed(config.SEVERITY_THRESHOLDS)]
-    ceiling = None
-    for limit, band in config.SEVERITY_LOSS_RATE_CEILING:
-        if loss_per_hour < limit:
-            ceiling = band
-            break
+    order = SEVERITY_ORDER
+    dollar_ceiling = _ladder_band(loss_per_hour, config.SEVERITY_LOSS_RATE_CEILING)
+
+    # The same loss read against this merchant's own normal hour. The effective
+    # ceiling is whichever of the two bands is HIGHER, so a proportionally
+    # catastrophic loss on a small merchant is no longer capped by a ladder
+    # written for a large one. A None from either side means that ladder caps
+    # nothing at all, which is the highest answer there is.
+    share_ceiling = (
+        _ladder_band(loss_share_of_normal, config.SEVERITY_LOSS_SHARE_CEILING)
+        if loss_share_of_normal is not None
+        else None
+    )
+    if loss_share_of_normal is None:
+        ceiling = dollar_ceiling
+    elif dollar_ceiling is None or share_ceiling is None:
+        ceiling = None
+    else:
+        ceiling = max(dollar_ceiling, share_ceiling, key=order.index)
+
     if ceiling is not None and order.index(label) > order.index(ceiling):
         label = ceiling
+
+    # Recurrence lifts, after the ceilings have capped. Same machinery, other
+    # direction: a fault that has already fired on this cohort twice inside the
+    # lookback is a worse fault than one that has fired once, and the ladder
+    # keeps saying so until it runs out at critical.
+    promotion = 0
+    for count, steps in config.SEVERITY_RECURRENCE_PROMOTION:
+        if prior_matching_incidents >= count:
+            promotion = steps
+    if promotion:
+        label = order[min(len(order) - 1, order.index(label) + promotion)]
 
     return {
         "severity": label,
         "severity_score": round(score, 6),
         "components": components,
-        "loss_rate_ceiling": ceiling,
+        "loss_rate_ceiling": dollar_ceiling,
+        "loss_share_ceiling": share_ceiling,
+        "loss_share_of_merchant_normal": (
+            round(loss_share_of_normal, 6) if loss_share_of_normal is not None else None
+        ),
+        "effective_ceiling": ceiling,
+        "prior_matching_incidents": prior_matching_incidents,
+        "recurrence_promotion_bands": promotion,
     }
 
 
@@ -418,56 +532,88 @@ def _episode_extent(
     return onset, sustained
 
 
-def build_incident(
+def _c3_record(
     connection: sqlite3.Connection,
+    path: list[dict[str, Any]],
+    reported: dict[str, Any],
     start: int,
     end: int,
-    incident_id: str = "inc-0001",
-) -> dict[str, Any] | None:
-    """Produce one C3 record for the strongest qualifying cohort, or None.
+    incident_id: str,
+    lifecycle_state: str,
+    merchant_normals: dict[str, float] | None,
+    watch: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Assemble one C3 record for a cohort, detected or watching.
 
-    Returning None on a quiet window is the point: not firing on noise is a
-    graded behaviour, not an absence of work.
+    One builder for both states on purpose: a watch and the incident it becomes
+    are the same record for the same cohort (DECISIONS.md, 2026-08-30T03:59Z),
+    so building them from two code paths would be two shapes that drift. The
+    only differences are the lifecycle state, the severity a watch is forced
+    to, and the `detection.watch` block explaining why we are not yet convinced.
     """
-    path = localise(connection, start, end)
-    qualifying = [step for step in path if step["qualifies"]]
-    if not qualifying:
-        return None
-
-    reported = qualifying[-1]
     cohort = reported["cohort"]
-
-    impact = metrics.financial_impact(connection, cohort or None, start, end, reported["expected"])
+    actual = reported["actual"]
+    typical_hourly = metrics.typical_hourly_attempted_value(connection, cohort or None, start)
+    impact = metrics.financial_impact(
+        connection, cohort or None, start, end, reported["expected"], typical_hourly
+    )
     series = metrics.timeseries(connection, cohort or None, start, end)
     platform = metrics.payment_metrics(connection, None, start, end)
     attempts = metrics.attempt_metrics(connection, cohort or None, start, end)
     retries = metrics.retry_profile(connection, cohort or None, start, end)
+    trajectory = trajectory_of(series)
 
     onset, buckets_sustained = _episode_extent(
         connection, cohort or None, start, end, reported["expected"], series
     )
 
+    # Both new severity inputs are measured, never estimated: one is a COUNT
+    # over the incident table, the other an aggregate over attempt. The
+    # merchant normals are computed once for the sweep and handed in.
+    merchant = cohort.get("merchant_id")
+    normals = (
+        merchant_normals
+        if merchant_normals is not None
+        else merchant_normal_hourly_value(connection)
+    )
+    normal_hourly = normals.get(merchant) if merchant else None
+    loss_per_hour = impact["loss_per_hour"]["amount"]
+    loss_share = (loss_per_hour / normal_hourly) if normal_hourly else None
+
     severity = severity_of(
-        loss_per_hour=impact["loss_per_hour"]["amount"],
+        loss_per_hour=loss_per_hour,
         affected_payments=reported["observed"]["attempted_payments"],
         platform_payments=platform["attempted_payments"],
         buckets_sustained=buckets_sustained,
-        trajectory=trajectory_of(series),
+        trajectory=trajectory,
+        prior_matching_incidents=prior_matching_incident_count(
+            connection, reported["cohort_key"], onset
+        ),
+        loss_share_of_normal=loss_share,
     )
 
-    blast = metrics.blast_radius(connection, cohort or None, start, end)
+    # A watch is forced to `low` regardless of what the components say. C5
+    # routes on severity alone, so this is what makes it structurally
+    # impossible for a warning to reach Slack or a phone even if somebody
+    # later points escalation at the row by mistake.
+    severity_label = "low" if watch is not None else severity["severity"]
 
-    return {
+    record = {
         "incident_id": incident_id,
         "affected_cohort": cohort,
         "change": {
             "metric": "payment_approval_conversion",
             "expected": round(reported["expected"], 6),
-            "actual": round(reported["actual"], 6),
-            "absolute_delta": round(reported["actual"] - reported["expected"], 6),
+            # A cohort routed around entirely has an expectation and no
+            # measurement at all, which is the signal rather than a gap. The
+            # delta stays null rather than being invented as a zero.
+            "actual": round(actual, 6) if actual is not None else None,
+            "absolute_delta": (
+                round(actual - reported["expected"], 6) if actual is not None else None
+            ),
             "relative_change": (
-                round((reported["actual"] - reported["expected"]) / reported["expected"], 6)
-                if reported["expected"]
+                round((actual - reported["expected"]) / reported["expected"], 6)
+                if actual is not None and reported["expected"]
                 else None
             ),
             "unit": "ratio",
@@ -478,10 +624,10 @@ def build_incident(
             "observed_for_seconds": buckets_sustained * config.BUCKET_SECONDS,
             "last_observed_at": schema.iso_utc(end),
         },
-        "blast_radius": blast,
+        "blast_radius": metrics.blast_radius(connection, cohort or None, start, end),
         "financial_impact": impact,
-        "severity": severity["severity"],
-        "lifecycle_state": "detected",
+        "severity": severity_label,
+        "lifecycle_state": lifecycle_state,
         # Everything below is W2 provenance: not part of the published C3 field
         # set, and safe for any consumer to ignore.
         "detection": {
@@ -493,9 +639,22 @@ def build_incident(
             "window": {"start_epoch": start, "end_epoch": end},
             "severity_score": severity["severity_score"],
             "severity_components": severity["components"],
+            "severity_ceilings": {
+                "loss_rate": severity["loss_rate_ceiling"],
+                "merchant_relative": severity["loss_share_ceiling"],
+                "effective": severity["effective_ceiling"],
+            },
+            "merchant_normal_hourly_value_usd": (
+                round(normal_hourly, 2) if normal_hourly else None
+            ),
+            "loss_share_of_merchant_normal": severity["loss_share_of_merchant_normal"],
+            "prior_matching_incidents": severity["prior_matching_incidents"],
+            "recurrence_promotion_bands": severity["recurrence_promotion_bands"],
             "z": round(reported["z"], 4) if reported["z"] is not None else None,
             "baseline_method": reported["baseline"]["method"],
             "buckets_sustained": buckets_sustained,
+            "trajectory": trajectory,
+            "detection_floors": reported["floors"],
             "attempt_approval_conversion": attempts["approval_conversion"],
             "retry_amplification_factor": retries["retry_amplification_factor"],
             "localisation_path": [
@@ -508,3 +667,403 @@ def build_incident(
             ],
         },
     }
+    if watch is not None:
+        record["detection"]["watch"] = watch
+        # The severity the components would have produced is kept for the
+        # record, clearly not as the severity. Nothing routes on it.
+        record["detection"]["unforced_severity"] = severity["severity"]
+    return record
+
+
+def build_incident(
+    connection: sqlite3.Connection,
+    start: int,
+    end: int,
+    incident_id: str = "inc-0001",
+    merchant_normals: dict[str, float] | None = None,
+) -> dict[str, Any] | None:
+    """Produce one C3 record for the strongest qualifying cohort, or None.
+
+    Returning None on a quiet window is the point: not firing on noise is a
+    graded behaviour, not an absence of work.
+    """
+    path = localise(connection, start, end)
+    qualifying = [step for step in path if step["qualifies"]]
+    if not qualifying:
+        return None
+    return _c3_record(
+        connection, path, qualifying[-1], start, end, incident_id, "detected", merchant_normals
+    )
+
+
+# --------------------------------------------------------------------------
+# the watch: a near-miss and the signals that move before conversion does
+# --------------------------------------------------------------------------
+#
+# Detection today emits silence or a crossed-floor incident. A developing
+# deviation is measured and then discarded, which is why the first thing a
+# merchant hears about a degradation is the cliff. A watch is that near-miss,
+# persisted as `lifecycle_state: watching` on the same C3 record the cohort
+# will keep if it becomes an incident (DECISIONS.md, 2026-08-30T03:59Z). One
+# cohort, one record: the warning and the incident are the same row, which is
+# what lets the demo point at a timestamp.
+#
+# A watch is not an incident. Its severity is forced to `low` so C5 cannot
+# page, `detected` remains the sole handoff signal, and the investigation
+# daemon's claim SQL asks for `detected` and therefore never sees a watch.
+#
+# There are two ways in, and both are the comparison this plane already makes:
+#
+#   1. Conversion is deviating but has not crossed its floors - derek's
+#      near-miss predicate, sitting beside the existing four floors.
+#   2. The leading indicators have moved. A payment provider does not fail
+#      instantly: latency rises, timeouts appear in the decline mix, retries
+#      amplify, queues build, and conversion falls last. This is the same
+#      trailing-baseline comparison pointed at different columns (ADR 0024).
+#      Nothing is trained, fitted or forecast, and it never states a future
+#      number.
+#
+# Two shapes W1 can produce are invisible to conversion alone, and route 2 is
+# the only thing that sees either:
+#   * effect=latency - attempts still approve and decline at baseline rates
+#     while latency and queue delay spike, so conversion never moves;
+#   * effect=outage - the provider is routed around entirely, so its volume
+#     goes to zero rather than showing declines, and a cohort with no traffic
+#     can never clear N_PAYMENTS_MIN to be evaluated at all.
+
+FORMING_INDICATORS = ("timeout_share", "mean_latency_ms", "volume_rate")
+
+
+def watch_floors(evaluation: dict[str, Any], trajectory: int) -> dict[str, Any]:
+    """The near-miss predicate, in the same shape as the four detection floors.
+
+    Every clause is reported whether or not it held, for exactly the reason
+    `evaluate` reports its own: a warning that did not fire should be as
+    explainable as one that did, and the vector is what a TAM reads to see why
+    we are not yet convinced.
+    """
+    z = evaluation["z"]
+    drop = evaluation["absolute_drop"]
+    floors = {
+        "has_measurement": bool(evaluation["floors"].get("has_measurement")),
+        "not_already_an_incident": not evaluation["qualifies"],
+        "volume_min": bool(evaluation["floors"].get("volume_min")),
+        # Both clauses, not either. The suggested predicate offered the drop as
+        # an alternative to the z-score; measured against the actual fixtures
+        # that made the z-score inert, because ordinary minute-to-minute noise
+        # on a healthy cohort clears a one-point drop routinely - a 92% cohort
+        # sat at z -0.81 with a 3.4-point drop and would have been watched. The
+        # z-score is what separates a real developing deviation from noise, and
+        # the drop is what keeps a statistically clean but operationally
+        # meaningless wobble out. Requiring both is what makes z -2.3 watch and
+        # z -1.0 not, which was the binding tuning target.
+        "statistically_real": bool(z is not None and z <= config.WATCH_Z_MAX),
+        "materially_large": bool(drop is not None and drop >= config.WATCH_ABS_DROP_MIN),
+        "worsening": trajectory == config.WATCH_TRAJECTORY,
+    }
+    return floors
+
+
+def _watch_block(
+    reasons: list[str],
+    floors: dict[str, Any],
+    trajectory: int,
+    indicators: dict[str, Any] | None,
+    degraded: list[str],
+) -> dict[str, Any]:
+    """Why this cohort is watched and not yet reported as an incident."""
+    return {
+        "reasons": reasons,
+        "watch_floors": floors,
+        "not_yet_met": [name for name, held in floors.items() if not held],
+        "trajectory": trajectory,
+        "leading_indicators": indicators,
+        "degraded_leading_indicators": degraded,
+        "statement": (
+            "This cohort is unusual for itself against its last hour and is getting worse. "
+            "It has not crossed the detection floors, so it is watched rather than paged. "
+            "Nothing here is trained, fitted or forecast, and no future number is claimed."
+        ),
+    }
+
+
+def leading_indicators(
+    connection: sqlite3.Connection,
+    cohort: dict[str, Any] | None,
+    start: int,
+    end: int,
+) -> dict[str, Any]:
+    """Timeout share, latency and volume for a cohort, each against its own
+    trailing baseline - the same window `baseline_conversion` reads.
+
+    Every indicator reports its baseline, its observed value, the criterion it
+    was judged by and whether it is degraded, so a signal that fires and one
+    that does not are equally explainable.
+    """
+    trailing_start = start - config.BASELINE_TRAILING_BUCKETS * config.BUCKET_SECONDS
+    window_buckets = max((end - start) / config.BUCKET_SECONDS, 1e-9)
+
+    now = metrics.attempt_pressure(connection, cohort, start, end)
+    base = metrics.attempt_pressure(connection, cohort, trailing_start, start)
+    now_payments = metrics.payment_metrics(connection, cohort, start, end)
+    base_payments = metrics.payment_metrics(connection, cohort, trailing_start, start)
+
+    # The detector's own volume floor, applied to the recent side: below it a
+    # share is arithmetic on too few attempts to defend.
+    has_volume = now["attempts"] >= config.N_PAYMENTS_MIN
+
+    timeout_delta = (
+        now["timeout_share"] - base["timeout_share"]
+        if now["timeout_share"] is not None and base["timeout_share"] is not None
+        else None
+    )
+    latency_ratio = (
+        now["mean_latency_ms"] / base["mean_latency_ms"]
+        if now["mean_latency_ms"] is not None
+        and base["mean_latency_ms"] is not None
+        and base["mean_latency_ms"] >= config.FORMING_LATENCY_MIN_BASELINE_MS
+        else None
+    )
+
+    now_rate = now_payments["attempted_payments"] / window_buckets
+    base_rate = base_payments["attempted_payments"] / config.BASELINE_TRAILING_BUCKETS
+    volume_ratio = (now_rate / base_rate) if base_rate else None
+    # Volume collapse is judged on the *baseline* having been substantial, not
+    # on the recent side clearing a floor: zero traffic is the signal itself,
+    # and a floor on the recent side would make an outage unreportable.
+    volume_judgeable = base_payments["attempted_payments"] >= config.FORMING_VOLUME_BASELINE_MIN
+
+    return {
+        "cohort": dict(cohort or {}),
+        "cohort_key": metrics.cohort_key(cohort),
+        "baseline_window": {"start_epoch": trailing_start, "end_epoch": start},
+        "indicators": {
+            "timeout_share": {
+                "baseline": base["timeout_share"],
+                "observed": now["timeout_share"],
+                "delta": timeout_delta,
+                "observed_attempts": now["attempts"],
+                "criterion": (
+                    f"timeout share rises by at least {config.FORMING_TIMEOUT_SHARE_DELTA} "
+                    f"over the trailing baseline, on at least {config.N_PAYMENTS_MIN} attempts"
+                ),
+                "degraded": bool(
+                    has_volume
+                    and timeout_delta is not None
+                    and timeout_delta >= config.FORMING_TIMEOUT_SHARE_DELTA
+                ),
+            },
+            "mean_latency_ms": {
+                "baseline": base["mean_latency_ms"],
+                "observed": now["mean_latency_ms"],
+                "ratio": round(latency_ratio, 6) if latency_ratio is not None else None,
+                "criterion": (
+                    f"mean latency reaches {config.FORMING_LATENCY_P95_RATIO}x a trailing "
+                    f"baseline of at least {config.FORMING_LATENCY_MIN_BASELINE_MS}ms, "
+                    f"on at least {config.N_PAYMENTS_MIN} attempts"
+                ),
+                "degraded": bool(
+                    has_volume
+                    and latency_ratio is not None
+                    and latency_ratio >= config.FORMING_LATENCY_P95_RATIO
+                ),
+            },
+            "volume_rate": {
+                "baseline": round(base_rate, 6),
+                "observed": round(now_rate, 6),
+                "ratio": round(volume_ratio, 6) if volume_ratio is not None else None,
+                "unit": "payments per bucket",
+                "criterion": (
+                    f"payment rate falls below {config.FORMING_VOLUME_COLLAPSE_RATIO} of its own "
+                    f"trailing rate, after at least {config.FORMING_VOLUME_BASELINE_MIN} "
+                    "payments of trailing history"
+                ),
+                "degraded": bool(
+                    volume_judgeable
+                    and volume_ratio is not None
+                    and volume_ratio < config.FORMING_VOLUME_COLLAPSE_RATIO
+                ),
+            },
+        },
+    }
+
+
+# How extreme a degraded indicator is, and which end of that is worst. Latency
+# and timeout share climb; a collapsing volume falls. Written out rather than
+# inferred, so adding an indicator forces the question to be answered.
+_INDICATOR_EXTREME = {
+    "timeout_share": max,
+    "mean_latency_ms": max,
+    "volume_rate": min,
+}
+
+
+def _indicator_strength(indicator: dict[str, Any]) -> float:
+    """The comparable magnitude of one indicator reading against its baseline."""
+    for key in ("ratio", "delta"):
+        if indicator.get(key) is not None:
+            return float(indicator[key])
+    return 0.0
+
+
+def _degraded_names(reading: dict[str, Any]) -> list[str]:
+    return [name for name in FORMING_INDICATORS if reading["indicators"][name]["degraded"]]
+
+
+def store_dimension_values(connection: sqlite3.Connection, dimension: str) -> list[Any]:
+    """Distinct values of one dimension across the whole store, ordered.
+
+    Drawn from the whole store rather than from the window on purpose: a cohort
+    that has been routed around has no rows *in* the window at all, so
+    enumerating from the window would make the outage case unreachable.
+    """
+    if dimension not in schema.DIMENSIONS:
+        raise ValueError(f"{dimension!r} is not a cohort dimension")
+    rows = connection.execute(
+        f"SELECT DISTINCT {dimension} AS value FROM attempt "
+        f"WHERE {dimension} IS NOT NULL ORDER BY {dimension}"
+    ).fetchall()
+    return [row["value"] for row in rows]
+
+
+def _contains_formed_traffic(
+    cohort: dict[str, Any], formed_cohort: dict[str, Any] | None
+) -> bool:
+    """Does this candidate slice contain the traffic of an already-reported incident?
+
+    A slice that does is degraded *because of* that incident, and warning about
+    it a second time under a different name is noise, not an earlier warning.
+    A slice on the same dimension with a different value - the healthy sibling
+    provider - is disjoint from it and stays eligible.
+    """
+    if not formed_cohort:
+        return False
+    return any(
+        dimension not in formed_cohort or formed_cohort[dimension] == value
+        for dimension, value in cohort.items()
+    )
+
+
+def _watch_candidates(
+    connection: sqlite3.Connection,
+    start: int,
+    end: int,
+    formed_cohort: dict[str, Any] | None,
+) -> list[tuple[dict[str, Any] | None, dict[str, Any], dict[str, Any], list[str]]]:
+    """Cohorts eligible to be watched, with their conversion and indicator reads.
+
+    Reporting follows the same contrast rule as `localise`: a dimension only
+    earns a place when one of its values is degraded and another is not. If
+    every merchant behind a slow provider is equally slow, the merchant is not
+    the story, and reporting one would be a coincidence dressed up as a
+    finding. When nothing localises, the platform itself is reported, which is
+    the honest answer to a slowdown that really is everywhere.
+    """
+    def read(cohort):
+        conversion = evaluate(connection, cohort, start, end)
+        reading = leading_indicators(connection, cohort, start, end)
+        series = metrics.timeseries(connection, cohort, start, end)
+        trajectory = trajectory_of(series)
+        floors = watch_floors(conversion, trajectory)
+        degraded = [] if conversion["qualifies"] else _degraded_names(reading)
+        reasons = []
+        if all(floors.values()):
+            reasons.append("conversion_near_miss")
+        if degraded:
+            reasons.append("leading_indicators")
+        return conversion, reading, floors, trajectory, degraded, reasons
+
+    localised: list = []
+    for dimension in schema.DIMENSIONS:
+        values = store_dimension_values(connection, dimension)
+        if len(values) < 2:
+            continue
+        siblings = []
+        for value in values:
+            cohort = {dimension: value}
+            if _contains_formed_traffic(cohort, formed_cohort):
+                continue
+            siblings.append((cohort,) + read(cohort))
+        if not siblings or all(entry[-1] for entry in siblings):
+            continue  # no contrast: this dimension is not what separates them
+        localised.extend(entry for entry in siblings if entry[-1])
+
+    if not localised and not formed_cohort:
+        entry = (None,) + read(None)
+        if entry[-1]:
+            localised.append(entry)
+    return localised
+
+
+def build_watches(
+    connection: sqlite3.Connection,
+    start: int,
+    end: int,
+    formed_cohort: dict[str, Any] | None = None,
+    merchant_normals: dict[str, float] | None = None,
+    identify=None,
+) -> list[dict[str, Any]]:
+    """C3 records in `lifecycle_state: watching` for every cohort worth watching.
+
+    A cohort that already qualifies as an incident is not watched - it has
+    formed, and the detected record is the right way to say so. `formed_cohort`
+    is that incident's affected cohort when the sweep reported one, so the
+    slices carrying its traffic are not re-reported here under other names.
+    """
+    candidates = _watch_candidates(connection, start, end, formed_cohort)
+
+    # A conversion near-miss appears in every slice that contains the affected
+    # traffic - the provider, and also the country, the bank and the merchant
+    # it happens to be diluted into. Only the strongest is reported, which is
+    # the same instinct `localise` applies to an incident: name the cohort the
+    # deviation is concentrated in, not every slice it leaks into. Localisation
+    # itself cannot do the job here, because a deviation small enough to be a
+    # near-miss is by definition too small to clear its separation rule.
+    keep: list = []
+    near_misses = [entry for entry in candidates if "conversion_near_miss" in entry[-1]]
+    if near_misses:
+        keep.append(
+            min(near_misses, key=lambda e: (e[1]["z"], metrics.cohort_key(e[1]["cohort"])))
+        )
+
+    # The same dilution happens to a leading indicator, and worse: a slow
+    # provider makes its merchant, its country, its card scheme and every bank
+    # behind it read slow too, so one cause arrives as eight rows. Each
+    # degraded indicator therefore names the single cohort it is most extreme
+    # in - the one the degradation is concentrated in rather than diluted
+    # through. Different indicators may still name different cohorts, because
+    # a slow provider and a routed-around one are two findings, not one.
+    for indicator, best in _INDICATOR_EXTREME.items():
+        holders = [entry for entry in candidates if indicator in entry[-2]]
+        if not holders:
+            continue
+        strongest = best(
+            holders,
+            key=lambda e: (
+                _indicator_strength(e[2]["indicators"][indicator]),
+                metrics.cohort_key(e[2]["cohort"]),
+            ),
+        )
+        if strongest not in keep:
+            keep.append(strongest)
+    candidates = [entry for entry in candidates if entry in keep]
+
+    watches: list[dict[str, Any]] = []
+    for cohort, conversion, reading, floors, trajectory, degraded, reasons in candidates:
+        watch = _watch_block(reasons, floors, trajectory, reading["indicators"], degraded)
+        record = _c3_record(
+            connection,
+            [conversion],
+            conversion,
+            start,
+            end,
+            "watch-0001",
+            store.WATCHING,
+            merchant_normals,
+            watch=watch,
+        )
+        if identify is not None:
+            record["incident_id"] = identify(record)
+        watches.append(record)
+    watches.sort(key=lambda record: metrics.cohort_key(record["affected_cohort"]))
+    return watches

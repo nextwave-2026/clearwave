@@ -86,8 +86,34 @@ what changed and its business priority, not why it changed.
 - `financial_impact` is the deterministic C2 financial-impact shape. `gmv_at_risk` is an estimate,
   not a platform-revenue claim.
 - `severity` is one of `low`, `medium`, `high`, or `critical` and represents business priority.
-- `lifecycle_state` is one of `detected`, `investigating`, `acknowledged`, `mitigated`, or
-  `resolved`.
+- `lifecycle_state` is one of `watching`, `detected`, `investigating`, `acknowledged`,
+  `mitigated`, or `resolved`.
+
+#### `watching`
+
+A watch is a developing deviation that has **not** crossed the detection floors. It is carried on
+the same C3 record the cohort will keep if it becomes an incident, not on a separate store: one
+cohort keeps one record, so the warning and the incident it becomes share an `incident_id`, and a
+watch is updated in place as evidence accumulates. When the floors pass, the same row moves to
+`detected`.
+
+A watch is not an incident, and three behaviours make that true rather than merely stated:
+
+- **`detected` remains the sole handoff signal.** The investigation daemon claims
+  `lifecycle_state = 'detected'` and therefore never claims a watch. Re-examining a watch is a
+  detector loop, not a model loop.
+- **`severity` on a watch is always `low`.** C5 routes on severity alone, so a watch cannot reach
+  Slack or a phone even if escalation were later pointed at the row by mistake.
+- **`financial_impact.projected_loss_per_hour`** is what an hour at the currently measured
+  shortfall would cost, applied to the cohort's typical hourly attempted value from the trailing
+  baseline. It is labelled projected because it is not realised money, it is a separate key from
+  `loss_per_hour`, and nothing that ranks severity reads it.
+
+`detection.watch` carries why the cohort is watched and not yet reported: the reasons, the watch
+floor vector, the detection floors not yet met, the trajectory, and the leading indicators with
+their baselines. Nothing in it is trained, fitted or forecast, and it never states a future
+number - the honest sentence is that this cohort is unusual for itself against its last hour and
+is getting worse.
 
 C3 deliberately has no `root_cause`, `hypothesis`, or `diagnostic_confidence` field. The detector
 must not claim a cause, and diagnostic confidence belongs to C4.
