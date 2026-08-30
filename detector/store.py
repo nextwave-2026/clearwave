@@ -127,6 +127,7 @@ CREATE INDEX IF NOT EXISTS closed_time ON payment_closed (closed_epoch);
 # same row. `detected` remains the sole handoff signal to investigation, and a
 # watch is never claimed and never escalated.
 WATCHING = "watching"
+RESOLVED = "resolved"
 
 KINDS = {
     "attempt": "attempt",
@@ -415,6 +416,45 @@ def list_incidents(connection: sqlite3.Connection) -> list[dict[str, Any]]:
         "ORDER BY onset_epoch DESC, incident_id ASC"
     ).fetchall()
     return [record for record in (_record_of(row) for row in rows) if record is not None]
+
+
+def expire_watches_except(connection: sqlite3.Connection, keep_ids: set[str]) -> int:
+    """Move watching rows this sweep no longer wants to resolved.
+
+    A watch is a claim about the present. Once the present no longer supports
+    it, leaving the row in `watching` floods the board with warnings that are
+    no longer true. The existing save guard still holds: only a row that is
+    still watching can be expired this way, so a claimed or diagnosed incident
+    is never touched.
+    """
+    rows = connection.execute(
+        "SELECT incident_id, record FROM incident WHERE lifecycle_state = ?",
+        (WATCHING,),
+    ).fetchall()
+    expired = 0
+    with connection:
+        for row in rows:
+            if row["incident_id"] in keep_ids:
+                continue
+            try:
+                record = json.loads(row["record"])
+            except (TypeError, ValueError):
+                record = {}
+            if not isinstance(record, dict):
+                record = {}
+            record["lifecycle_state"] = RESOLVED
+            cursor = connection.execute(
+                """UPDATE incident SET record = ?, lifecycle_state = ?
+                     WHERE incident_id = ? AND lifecycle_state = ?""",
+                (
+                    json.dumps(record, sort_keys=True, default=str),
+                    RESOLVED,
+                    row["incident_id"],
+                    WATCHING,
+                ),
+            )
+            expired += cursor.rowcount
+    return expired
 
 
 def _record_of(row: sqlite3.Row) -> dict[str, Any] | None:

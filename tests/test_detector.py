@@ -13,7 +13,7 @@ import sys
 import tempfile
 import tracemalloc
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -752,6 +752,94 @@ class WatchTests(unittest.TestCase):
         rows = store.list_incidents(connection)
         self.assertEqual(len(rows), 1, "one cohort keeps one record")
         self.assertEqual(rows[0]["lifecycle_state"], "detected")
+
+        third = cli._sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
+        self.assertEqual(third["incident"]["incident_id"], watch_id)
+        still = [
+            row for row in store.list_incidents(connection)
+            if row["lifecycle_state"] != "resolved"
+        ]
+        self.assertEqual(len(still), 1, "a later sweep must not mint a second detected row")
+
+    def test_a_sharper_localisation_keeps_the_watch_id(self):
+        connection, first = self._sweep(synthetic.two_stage_deviation_mild_only())
+        watch = first["watches"][0]
+        sharper = {
+            "onset": "2026-08-30T05:05:00Z",
+            "affected_cohort": {**watch["affected_cohort"], "country": "CO"},
+        }
+        adopted = cli.adopt_watch_identity(connection, sharper, cli.incident_id_for)
+        self.assertEqual(adopted, watch["incident_id"])
+        self.assertEqual(sharper["onset"], watch["onset"])
+
+    def test_an_onset_walk_does_not_mint_a_second_id(self):
+        connection, first = self._sweep(synthetic.two_stage_deviation_mild_only())
+        watch = first["watches"][0]
+        walked = {
+            "onset": "2026-08-30T05:05:00Z",
+            "affected_cohort": dict(watch["affected_cohort"]),
+        }
+        hashed = cli.incident_id_for(walked)
+        adopted = cli.adopt_watch_identity(connection, walked, cli.incident_id_for)
+        self.assertNotEqual(hashed, watch["incident_id"])
+        self.assertEqual(adopted, watch["incident_id"])
+        self.assertEqual(walked["onset"], watch["onset"])
+
+    def test_a_watch_that_is_no_longer_true_is_resolved(self):
+        connection, first = self._sweep(synthetic.two_stage_deviation_mild_only())
+        watch_id = first["watches"][0]["incident_id"]
+        later = []
+        for event in synthetic.healthy(minutes=10, per_minute=20):
+            shifted = dict(event)
+            stamp = datetime.strptime(event["occurred_at"], "%Y-%m-%dT%H:%M:%SZ")
+            shifted["occurred_at"] = (stamp + timedelta(minutes=200)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            shifted["payment_id"] = f"{event['payment_id']}-later"
+            shifted["attempt_id"] = f"{event['attempt_id']}-later"
+            later.append(shifted)
+        store.ingest(connection, later)
+        second = cli._sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
+        self.assertIsNone(second["incident"])
+        self.assertEqual(second["watches"], [])
+        row = store.load_incident(connection, watch_id)
+        self.assertEqual(row["lifecycle_state"], "resolved")
+
+    def test_a_volume_spike_does_not_watch_on_latency(self):
+        events = synthetic.healthy()
+        cutoff = _epoch(events[-1]["occurred_at"]) - 4 * 60
+        extra = []
+        index = 100000
+        for event in events:
+            if _epoch(event["occurred_at"]) < cutoff:
+                continue
+            event["latency_ms"] = 7000
+            # Extra copies are approved so a chance dip is not amplified into
+            # an incident. The only thing that moves is volume and latency.
+            for _ in range(20):
+                index += 1
+                copy = dict(event)
+                copy["payment_id"] = f"pay-spike-{index}"
+                copy["attempt_id"] = f"att-spike-{index}"
+                copy["status"] = "approved"
+                copy.pop("normalized_decline_reason", None)
+                extra.append(copy)
+        _, sweep = self._sweep(events + extra)
+        self.assertIsNone(sweep["incident"])
+        self.assertEqual(sweep["watches"], [])
+
+    def test_leading_indicators_do_not_watch_when_conversion_is_clearly_up(self):
+        events = synthetic.healthy()
+        cutoff = _epoch(events[-1]["occurred_at"]) - 4 * 60
+        for event in events:
+            if _epoch(event["occurred_at"]) < cutoff:
+                continue
+            event["latency_ms"] = 700
+            event["status"] = "approved"
+            event.pop("normalized_decline_reason", None)
+        _, sweep = self._sweep(events)
+        self.assertIsNone(sweep["incident"])
+        self.assertEqual(sweep["watches"], [])
 
     def test_a_row_that_has_left_watching_is_never_rewritten(self):
         connection, sweep = self._sweep(synthetic.two_stage_deviation_mild_only())

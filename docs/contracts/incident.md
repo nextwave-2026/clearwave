@@ -95,7 +95,10 @@ A watch is a developing deviation that has **not** crossed the detection floors.
 the same C3 record the cohort will keep if it becomes an incident, not on a separate store: one
 cohort keeps one record, so the warning and the incident it becomes share an `incident_id`, and a
 watch is updated in place as evidence accumulates. When the floors pass, the same row moves to
-`detected`.
+`detected`. The identifier is pinned at the first watch, so a later, sharper localisation or a
+walked onset does not mint a second row. When a sweep no longer wants a watch - the deviation
+recovered, or it was only warmup - the row moves to `resolved`. A watch is a claim about the
+present; it does not sit on the board after that claim has stopped being true.
 
 A watch is not an incident, and three behaviours make that true rather than merely stated:
 

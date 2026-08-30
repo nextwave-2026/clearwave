@@ -854,6 +854,15 @@ def leading_indicators(
     # on the recent side clearing a floor: zero traffic is the signal itself,
     # and a floor on the recent side would make an outage unreportable.
     volume_judgeable = base_payments["attempted_payments"] >= config.FORMING_VOLUME_BASELINE_MIN
+    # Latency and timeout need the two windows to be the same kind of traffic.
+    # A 30x rate jump against a thin trailing hour is warmup (or a replay from
+    # offset zero), not a forming outage.
+    volume_comparable = bool(
+        volume_ratio is not None
+        and config.FORMING_VOLUME_COMPARABLE_MIN
+        <= volume_ratio
+        <= config.FORMING_VOLUME_COMPARABLE_MAX
+    )
 
     return {
         "cohort": dict(cohort or {}),
@@ -867,10 +876,13 @@ def leading_indicators(
                 "observed_attempts": now["attempts"],
                 "criterion": (
                     f"timeout share rises by at least {config.FORMING_TIMEOUT_SHARE_DELTA} "
-                    f"over the trailing baseline, on at least {config.N_PAYMENTS_MIN} attempts"
+                    f"over the trailing baseline, on at least {config.N_PAYMENTS_MIN} attempts, "
+                    f"with recent volume between {config.FORMING_VOLUME_COMPARABLE_MIN}x and "
+                    f"{config.FORMING_VOLUME_COMPARABLE_MAX}x the trailing rate"
                 ),
                 "degraded": bool(
                     has_volume
+                    and volume_comparable
                     and timeout_delta is not None
                     and timeout_delta >= config.FORMING_TIMEOUT_SHARE_DELTA
                 ),
@@ -882,10 +894,13 @@ def leading_indicators(
                 "criterion": (
                     f"mean latency reaches {config.FORMING_LATENCY_P95_RATIO}x a trailing "
                     f"baseline of at least {config.FORMING_LATENCY_MIN_BASELINE_MS}ms, "
-                    f"on at least {config.N_PAYMENTS_MIN} attempts"
+                    f"on at least {config.N_PAYMENTS_MIN} attempts, with recent volume "
+                    f"between {config.FORMING_VOLUME_COMPARABLE_MIN}x and "
+                    f"{config.FORMING_VOLUME_COMPARABLE_MAX}x the trailing rate"
                 ),
                 "degraded": bool(
                     has_volume
+                    and volume_comparable
                     and latency_ratio is not None
                     and latency_ratio >= config.FORMING_LATENCY_P95_RATIO
                 ),
@@ -966,6 +981,29 @@ def _contains_formed_traffic(
     )
 
 
+def cohorts_same_episode(
+    left: dict[str, Any] | None,
+    right: dict[str, Any] | None,
+) -> bool:
+    """True when one cohort is the other, or a sharpening of it.
+
+    Localisation deepens as a drop grows. A watch on `{provider: adyen}` and a
+    later incident on `{country: CO, merchant_id: merchant-b, provider: adyen}`
+    are one episode, so they keep one record. Disjoint slices are not.
+    """
+    first = dict(left or {})
+    second = dict(right or {})
+    if first == second:
+        return True
+    if not first or not second:
+        return False
+    return _is_sharpening(first, second) or _is_sharpening(second, first)
+
+
+def _is_sharpening(general: dict[str, Any], specific: dict[str, Any]) -> bool:
+    return all(specific.get(key) == value for key, value in general.items())
+
+
 def _watch_candidates(
     connection: sqlite3.Connection,
     start: int,
@@ -1043,10 +1081,13 @@ def build_watches(
     # near-miss is by definition too small to clear its separation rule.
     keep: list = []
     near_misses = [entry for entry in candidates if "conversion_near_miss" in entry[-1]]
+    near_miss_cohort = None
     if near_misses:
-        keep.append(
-            min(near_misses, key=lambda e: (e[1]["z"], metrics.cohort_key(e[1]["cohort"])))
+        chosen_near_miss = min(
+            near_misses, key=lambda e: (e[1]["z"], metrics.cohort_key(e[1]["cohort"]))
         )
+        keep.append(chosen_near_miss)
+        near_miss_cohort = chosen_near_miss[0]
 
     # The same dilution happens to a leading indicator, and worse: a slow
     # provider makes its merchant, its country, its card scheme and every bank
@@ -1055,8 +1096,17 @@ def build_watches(
     # in - the one the degradation is concentrated in rather than diluted
     # through. Different indicators may still name different cohorts, because
     # a slow provider and a routed-around one are two findings, not one.
+    # A conversion near-miss already names that traffic: do not also warn on
+    # a slice that merely contains it (merchant-b timeout_share while adyen is
+    # the near-miss).
     for indicator, best in _INDICATOR_EXTREME.items():
         holders = [entry for entry in candidates if indicator in entry[-2]]
+        if near_miss_cohort is not None:
+            holders = [
+                entry
+                for entry in holders
+                if not _contains_formed_traffic(entry[0] or {}, near_miss_cohort or {})
+            ]
         if not holders:
             continue
         strongest = best(
@@ -1072,6 +1122,21 @@ def build_watches(
 
     watches: list[dict[str, Any]] = []
     for cohort, conversion, reading, floors, trajectory, degraded, reasons in candidates:
+        # A clearly improved conversion plus a modest latency bump is mix
+        # noise, not a forming outage. Measured: visa at z +1.57 with latency
+        # 1.6x on a warm store. Extreme latency, timeout share, or volume
+        # collapse still watch - that is ADR 0024's conversion-healthy path.
+        z = conversion.get("z")
+        if reasons == ["leading_indicators"] and z is not None and z > 1.0:
+            indicators = reading["indicators"]
+            latency_ratio = indicators["mean_latency_ms"].get("ratio") or 0.0
+            strong = (
+                indicators["timeout_share"]["degraded"]
+                or indicators["volume_rate"]["degraded"]
+                or latency_ratio >= 3.0
+            )
+            if not strong:
+                continue
         watch = _watch_block(reasons, floors, trajectory, reading["indicators"], degraded)
         record = _c3_record(
             connection,

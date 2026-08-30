@@ -47,9 +47,16 @@ INJECTED_INCIDENT = {
     "decline_reason": "provider_timeout",
 }
 
-# Subtle drop the merchant would not yet phone about; what early warning is
-# supposed to catch.
-STAGE_DEVELOPING = 0.35
+# Measured on the live demo volume (warm 8-hour merchant-b/adyen store,
+# ~180 payments in the 5-minute window) on 2026-08-30:
+#   0.10 at 2 min: no watch (conv 0.849); at 4.5 min: watch z=-1.50 then a
+#     child slice crossed Z_MIN.
+#   0.20 at 2 min: incident z=-3.80, no watch.
+#   0.35 (the old "mild") at 2 min on a cold store: watch z=-1.62; at 4 min:
+#     incident z=-6.59 and a phone call.
+# 0.12 sits between 0.10 and 0.20: a conversion near-miss rather than a cliff.
+# Detection floors were not moved; this is the inject magnitude.
+STAGE_DEVELOPING = 0.12
 # Today's near-total break, reachable directly as well as after developing.
 STAGE_COLLAPSE = 0.95
 

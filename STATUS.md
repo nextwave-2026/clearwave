@@ -162,3 +162,4 @@ Entries 2 (22:37Z) and 3 (22:38Z) are unaffected.
 - 2026-08-30T06:29Z  derek  starting: trimming `.env.example` to the variables the end-to-end demo actually requires; do not start a parallel template cut.
 
 - 2026-08-30T06:32Z  derek  starting: reconciling the detector runtime against #69 (continuous daemon vs main's bash consume loop). Judging on merit for record continuity and continuous detection. Do not start a parallel reconcile of #69.
+- 2026-08-30T05:38Z  derek  CORRECTION to the 04:47Z claim that the leading-indicator trigger is silent on the decline demo path. It is not. The demo inject uses decline_reason provider_timeout, which normalises to timeout, so timeout_share moves. Measured on the live 0.35 inject: the adyen watch reasons included leading_indicators with timeout_share delta +0.08 to +0.14. Conversion near-miss still fires; timeout_share fires with it. Do not say the early-warning path is conversion-only on this inject.
