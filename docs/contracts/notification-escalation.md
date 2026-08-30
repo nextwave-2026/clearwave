@@ -16,7 +16,7 @@ Severity is read from C3 and never recomputed, re-ranked, or blended with diagno
 |---|---|
 | `low` | dashboard |
 | `medium` | dashboard |
-| `high` | dashboard, slack |
+| `high` | dashboard, slack, phone |
 | `critical` | dashboard, slack, phone |
 
 Concrete severity thresholds that map raw metrics to these labels are owned by C3 (W2); this
