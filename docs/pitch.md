@@ -28,25 +28,17 @@ For a payments company, the link is direct: merchant-relative visibility, priced
 
 > **1:30**
 
-Clearwave compares a cohort to its own recent behaviour, not to a platform average. Expected conversion is the last hour of that same slice, shrunk toward the parent when volume is thin. When localisation has fixed a merchant, that number is that merchant's last hour. It is not a weekly profile. It is not seasonal. We will not tell you we know Friday nights. We do not.
+**Executive line:** ClearWave turns silent conversion loss into an early merchant-specific warning, a localised route and an evidence-bound diagnosis with the money attached - so a TAM acts on evidence instead of crossing filters at 3 a.m.
 
-Five stages. Simulated merchants publish payment and operational events through Kafka. A deterministic plane normalizes them into one SQLite evidence store, compares the current window to that merchant-relative baseline, localizes the cohort, prices GMV at risk, and assigns severity from business impact. A bounded OpenAI investigation can query only published evidence tools. It returns facts, competing explanations, missing evidence, confidence, and a recommended action. The dashboard renders those records without recomputing them. Clearwave recommends. It never remediates automatically. ([end-to-end flow](demo-sequence.md#end-to-end-flow), [ownership](ownership.md#the-four-workstreams))
+**Operations version:** Fixed code compares current event-time buckets with the cohort's trailing hour and sibling providers, methods, countries and issuing banks. A developing deviation becomes a non-paging watch; only deterministic incident state and business severity can trigger escalation. The bounded investigator starts with cohort comparison, service health, decline-code mix, retries, confounding and financial impact. It recommends a human action and never remediates.
 
-That is already more than a better threshold. Merchant A at seventy percent is not compared to Merchant B at ninety-five. A volume spike that holds conversion stays silent. Localisation walks six dimensions without a scenario catalogue, and stops when a child is not materially worse than its siblings. Confounding is a cross-tab, not a guess.
+ClearWave compares a merchant's cohorts with that merchant's recent behaviour and sibling cohorts, warns while a deviation is still developing, investigates without paging, and escalates the same record only when deterministic detection says it is an incident. It does not use a seasonal baseline and does not know recurring time patterns.
 
-The honesty about early warning. Today's detector still has two outputs: silence, or a fully qualified incident. A developing six or seven point drop is already measured. The floors that stop alert fatigue then discard it. That is the gap a watch on the same record is meant to close: unusual for this merchant against its last hour, not yet an incident, not paged. If a watching row is on the board, that is it, and the warning and the incident are the same row. If it is not, the floors still waited for the conventional failure, and we will say so. We do not predict. We do not forecast a collapse in eleven minutes. ([detection baseline](detection-plane.md#l2---the-baseline), [ADR 0024](adr/0024-leading-indicators-warn-early-without-prediction.md))
+ClearWave detects deviations from recent merchant behaviour and sibling cohorts. It does not yet distinguish an expected recurring spike from an abnormal one purely because it has learned that time pattern. Its noise controls cover statistical strength, decline-code shifts and cohort contrast, not time of day or weekends.
 
-Investigation is the other half of what you asked for. It does not apply a bandage. It compares explanations, cites evidence, and says when it cannot tell. Severity and diagnostic confidence never collapse into one score. `CRITICAL` with `LOW` confidence is valid. Uncertainty about cause must not hide economic urgency.
+A platform-wide floor is wrong for every merchant at once: normal conversion may be 0.75 for one and 0.95 for another. Abrupt provider, issuer or method failures still separate from same-window siblings, localising where money is leaking. When all of a merchant's cohorts move together, that comparison keeps us from blaming one provider; it cannot tell us whether the merchant-wide movement is normal for Friday.
 
-A daemon watches the store. When an incident is detected, diagnosis appears without anyone typing. Notifications fire once, and only after that diagnosis exists. Two overlapping reads cannot double-page. If the model is down, the placeholder narrative is not shown as if it were a real diagnosis.
-
-Five choices protect the answer under pressure.
-
-- Money is a term and a ceiling, so a cheap grind cannot page you on persistence alone. Yuno's product owners named the failure of applying that ceiling as the same dollar numbers to every merchant: it misses high-volume, low-ticket merchants. We recorded the redesign, merchant-relative ceiling, recurrence may promote. Confirm the band on screen. Do not quote a band from an earlier rehearsal. ([ADR 0023](adr/0023-severity-is-relative-to-the-merchant-and-promoted-by-recurrence.md))
-- Severity and diagnostic confidence never collapse into one score. ([ADR 0002](adr/0002-diagnostic-confidence-belongs-to-investigation.md))
-- Confounding is a deterministic cross-tabulation. The model can rule out a cause only with cited contradictory evidence, and only the gateway can issue a citation ID. ([ADRs 0005-0007](adr/0005-confounding-detection-is-deterministic.md))
-- Hidden truth and scenario identifiers never reach detection or investigation. We rejected scenario-aware prompts because they would script the trial. ([C6](../INTERFACES.md), [ADR 0012](adr/0012-scenario-identifiers-never-reach-l4.md))
-- Detection uses event time behind a watermark, not broker arrival time. Decline reasons use one comparable vocabulary while preserving the provider's raw code. ([ADR 0018](adr/0018-event-time-bucketing.md), [ADR 0021](adr/0021-canonical-vocabulary-with-preserved-raw-code.md))
+The code-model split makes the result defensible. Code decides anomaly, cohort, severity, business impact and paging. The model researches the bounded problem already established; validation rejects claims whose evidence does not identify an executed gateway query. Business impact stays on the same evolving record, and `insufficient_evidence` is an explicit outcome when the observations cannot separate causes. ([detection](detection-plane.md#l2---the-baseline), [investigation](contracts/investigation-result.md))
 
 Now the judges take the controls.
 
@@ -151,6 +143,10 @@ Then `payment_integrity`: payload, lifecycle, and raw-code smells the conversion
 On scale: ingest is not the wall. Localisation is. Same 60,000 rows, 4.1 seconds at demo cardinality, 113.2 seconds at 200 merchants, 491.4 seconds at 2,000. That last figure is a correction of an earlier abandoned-run claim. The cheap fix is to apply the volume floor before enumerating, not after evaluating. It is not built. ([scaling](scaling.md))
 
 ## Anticipated questions
+
+### If ClearWave does not understand seasonality yet, why is it valuable to Yuno today?
+
+ClearWave detects deviations from recent merchant behaviour and sibling cohorts. It does not yet distinguish an expected recurring spike from an abnormal one purely because it has learned that time pattern. That still covers abrupt, commercially serious route-specific failures: same-window divergence localises the problem, while cohorts moving together keep us from blaming one provider. It does not protect against a recurring route-specific pattern or tell whether a shared merchant-wide movement is normal for Friday; closing that gap requires an hour-of-week baseline built from replayable multi-week merchant and cohort history, with sparse-cell shrinkage, missing-data and holiday handling, and backtests proving it reduces false positives without hiding real incidents.
 
 ### How do you know what normal is for a merchant you have only just started observing?
 
