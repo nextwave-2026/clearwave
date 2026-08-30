@@ -122,11 +122,18 @@ def ensure_escalation(
     result: Mapping[str, Any] | None = None,
     **kwargs: Any,
 ) -> list[dict[str, Any]]:
-    """Fire channels once per incident. Repeat reads return the recorded outcomes."""
+    """Fire channels once per incident, only after a C4 result exists.
+
+    Repeat reads return the recorded outcomes. A detected incident with no
+    investigation result is left untouched so a later read can fire one
+    complete message. Already-sent rows are never rewritten.
+    """
     incident_id = str(incident.get("incident_id", ""))
     existing = load_escalation(connection, incident_id)
     if existing:
         return existing
+    if not _has_investigation_result(result):
+        return []
 
     def enqueue_call(call_id: str, payload: Mapping[str, Any]) -> None:
         record_pending_call(connection, call_id, payload)
@@ -201,6 +208,16 @@ def acknowledge_call(connection: sqlite3.Connection, incident_id: str) -> bool:
             (incident_id,),
         )
     return cursor.rowcount == 1
+
+
+def _has_investigation_result(result: Mapping[str, Any] | None) -> bool:
+    """A diagnosis exists when a C4 investigation result has been persisted.
+
+    All four C4 outcomes count, including agent_unavailable. ADR 0010 requires
+    every investigation to emit a result, so a degraded diagnosis is still a
+    diagnosis and must be able to escalate. An empty or missing mapping is not.
+    """
+    return isinstance(result, Mapping) and bool(result)
 
 
 def _decode_record(row: sqlite3.Row) -> dict[str, Any] | None:

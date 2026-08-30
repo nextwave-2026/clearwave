@@ -35,7 +35,7 @@ from surfaces.inject import (
 )
 from surfaces.present import cohort_scope_label, merchant_health
 from surfaces.server import SurfacesApp, make_server
-from surfaces.store import connect, list_incidents
+from surfaces.store import connect, list_incidents, load_escalation
 from worker.helpers.control import CONTROL_TOPIC
 from worker.inject import start_command, stop_command
 
@@ -105,6 +105,28 @@ def _trail_entry(sequence=1):
         "duration_ms": 3.0,
         "outcome": "success",
         "executed": True,
+    }
+
+
+def _diagnosis(incident_id, outcome="diagnosed"):
+    return {
+        "incident_id": incident_id,
+        "confirmed_facts": [],
+        "leading_hypothesis": {
+            "statement": "Provider P2 degradation is the leading explanation.",
+            "evidence": [],
+        },
+        "supporting_evidence": [],
+        "competing_explanations": [],
+        "why_ambiguity_exists": {"statement": "Sibling traffic is limited.", "evidence": []},
+        "missing_evidence": [],
+        "diagnostic_confidence": "medium",
+        "recommended_next_action": {
+            "action": "Investigate Provider P2 before broad rerouting.",
+            "urgency": "now",
+            "basis": [],
+        },
+        "outcome": outcome,
     }
 
 
@@ -346,7 +368,14 @@ class SurfacesTests(unittest.TestCase):
         self.addCleanup(setattr, inject_module, "_publish", original)
 
     def test_critical_severity_falls_back_to_dashboard_call_without_telephony(self):
-        self._seed(_incident("inc-call", "critical", "2026-08-29T10:00:00Z"))
+        connection = self._seed(_incident("inc-call", "critical", "2026-08-29T10:00:00Z"))
+        persist_result(
+            connection,
+            "inc-call",
+            _diagnosis("inc-call"),
+            "diagnosed",
+            trail=[_trail_entry()],
+        )
         detail = self.app.detail("inc-call")
         channels = {event["channel"]: event["status"] for event in detail["escalation"]}
         self.assertEqual(channels["dashboard"], "delivered")
@@ -357,6 +386,81 @@ class SurfacesTests(unittest.TestCase):
         ack = self.app.acknowledge_call("inc-call")
         self.assertTrue(ack["acknowledged"])
         self.assertEqual(self.app.pending_calls()["calls"], [])
+
+    def test_dashboard_read_before_diagnosis_does_not_fire_or_record_escalation(self):
+        connection = self._seed(_incident("inc-early", "critical", "2026-08-29T10:00:00Z"))
+        detail = self.app.detail("inc-early")
+        self.assertEqual(detail["escalation"], [])
+        self.assertEqual(load_escalation(connection, "inc-early"), [])
+        self.app.overview()
+        self.app.queue()
+        self.assertEqual(load_escalation(connection, "inc-early"), [])
+
+    def test_read_before_diagnosis_then_diagnosis_fires_once_with_complete_payload(self):
+        # Hazardous demo ordering: the dashboard is already polling when detection
+        # lands, so the first read happens with no C4 result. That read must not
+        # lock an empty notification; the later read after diagnosis is the one
+        # that fires, once, with the complete payload.
+        connection = self._seed(_incident("inc-order", "critical", "2026-08-29T10:00:00Z"))
+        early = self.app.detail("inc-order")
+        self.assertEqual(early["escalation"], [])
+        persist_result(
+            connection,
+            "inc-order",
+            _diagnosis("inc-order"),
+            "diagnosed",
+            trail=[_trail_entry()],
+        )
+        later = self.app.detail("inc-order")
+        events = later["escalation"]
+        self.assertEqual({event["channel"] for event in events}, {"dashboard", "slack", "phone"})
+        for event in events:
+            payload = event["payload"]
+            self.assertEqual(
+                payload["leading_hypothesis"]["statement"],
+                "Provider P2 degradation is the leading explanation.",
+            )
+            self.assertEqual(payload["diagnostic_confidence"], "medium")
+            self.assertEqual(
+                payload["recommended_next_action"]["action"],
+                "Investigate Provider P2 before broad rerouting.",
+            )
+            self.assertIn("cohort_metrics", payload["citations"])
+        self.assertEqual(len(load_escalation(connection, "inc-order")), 3)
+        again = self.app.detail("inc-order")
+        self.assertEqual(
+            [(event["channel"], event["status"], event["payload"]) for event in again["escalation"]],
+            [(event["channel"], event["status"], event["payload"]) for event in events],
+        )
+        self.assertEqual(len(load_escalation(connection, "inc-order")), 3)
+
+    def test_degraded_diagnosis_still_escalates(self):
+        connection = self._seed(_incident("inc-degraded-esc", "high", "2026-08-29T10:00:00Z"))
+        persist_result(
+            connection,
+            "inc-degraded-esc",
+            {
+                "incident_id": "inc-degraded-esc",
+                "leading_hypothesis": {
+                    "statement": "Causal investigation unavailable: agent down",
+                },
+                "diagnostic_confidence": "low",
+                "recommended_next_action": {
+                    "action": "Review the deterministic incident facts",
+                    "urgency": "now",
+                },
+            },
+            "agent_unavailable",
+            trail=[_trail_entry()],
+        )
+        events = self.app.detail("inc-degraded-esc")["escalation"]
+        self.assertTrue(events)
+        payload = events[0]["payload"]
+        self.assertEqual(
+            payload["leading_hypothesis"]["statement"],
+            "Causal investigation unavailable: agent down",
+        )
+        self.assertEqual(payload["diagnostic_confidence"], "low")
 
     def test_channels_for_pins_full_severity_binding_and_unknown_fallback(self):
         # Pins the complete policy (critical and high both phone; low/medium dashboard-only;
@@ -399,7 +503,14 @@ class SurfacesTests(unittest.TestCase):
             "2026-08-29T10:00:00Z",
             affected_cohort={"provider": "provider-p2"},
         )
-        self._seed(incident)
+        connection = self._seed(incident)
+        persist_result(
+            connection,
+            "inc-provider",
+            _diagnosis("inc-provider"),
+            "diagnosed",
+            trail=[_trail_entry()],
+        )
         row = self.app.merchants()["merchants"][0]
         self.assertIsNone(row["merchant_id"])
         self.assertNotEqual(row["merchant_id"], "unknown")
