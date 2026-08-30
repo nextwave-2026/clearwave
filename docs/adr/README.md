@@ -2,7 +2,11 @@
 
 These records lock design decisions before and during implementation. Each ADR uses the same readable format: **Status**, **Context**, **Decision**, **Alternatives considered**, and **Consequences**. Status is `Accepted` for every decision below.
 
-The layer sequence is L1 merchant emission, L2 ingestion and normalisation, L3 deterministic detection, L4 investigation, and L5 surfaces and escalation. L4 Investigation is owned by `derek` and corresponds to W3; L2 and L3 are owned by `andres` and correspond to W2.
+The layer sequence is L1 merchant emission, L2 ingestion and normalisation, L3 deterministic detection, L4 investigation, and L5 surfaces and escalation. L4 Investigation is owned by `derek` and corresponds to W3; L2 and L3 are owned by `andres` and correspond to W2; L5 is owned by `juank` and corresponds to W4.
+
+[`docs/decision-log.md`](../decision-log.md) is the judge-facing index over every ADR below plus
+`DECISIONS.md` and the code that implements each call - read it first for the two-minute version
+and the reversals; come here for the full record behind any one line of it.
 
 ## L4 Investigation records - `derek`
 
@@ -39,6 +43,17 @@ The layer they describe is documented in [detection-plane.md](../detection-plane
 - [0021 - The canonical model closes the decline vocabulary and preserves the raw code](0021-canonical-vocabulary-with-preserved-raw-code.md)
 - [0023 - Severity is relative to the merchant, and recurrence may promote past the money ceiling](0023-severity-is-relative-to-the-merchant-and-promoted-by-recurrence.md) - supersedes ADR 0016
 - [0024 - Leading indicators warn early, and nothing is predicted](0024-leading-indicators-warn-early-without-prediction.md) - claim-only-detected property superseded by ADR 0025
+- 0026 - An incident record is the current reading, not the first one - claimed by `andres` (`STATUS.md` 2026-08-30T08:35Z), open in PR #88, not yet merged; add the link once it lands
 
 How this plane behaves at Yuno's real volume, and the two changes that would be needed, is in
 [scaling.md](../scaling.md).
+
+## L5 Surfaces and escalation records - `juank`
+
+W4 had no ADRs before deliverable 5. Its three records are summarised, each with a diagram, inside
+[`docs/decision-log.md`](../decision-log.md) itself rather than as separate files here - that
+document is the one place a judge needs to open for the whole decision trail.
+
+- [0027 - Severity binds to channel, and only critical rings a phone](../decision-log.md#adr-0027)
+- [0028 - A watch never pages](../decision-log.md#adr-0028)
+- [0029 - We recommend an action, and never execute it](../decision-log.md#adr-0029)
