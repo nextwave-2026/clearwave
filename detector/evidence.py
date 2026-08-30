@@ -47,6 +47,17 @@ TOOLS = (
 # list. The count of distinct reasons is always reported in full.
 DEAD_LETTER_REASON_LIMIT = 10
 
+# The event-time column of each stored record kind, for `ingest_health`.
+# `store.KINDS` names the tables; only the attempt table's column feeds
+# `window_bounds`, and therefore the watermark, because the canonical event is
+# the attempt. Telemetry and closed-payment rows are stored alongside it and
+# would otherwise be invisible on a store that holds them and nothing else.
+KIND_TIME_COLUMNS = {
+    "attempt": "occurred_epoch",
+    "telemetry": "sample_epoch",
+    "closed": "closed_epoch",
+}
+
 # Closed metric vocabulary for `metric_series`. A caller asking for anything
 # else gets a refusal naming the set, never a silently substituted default.
 SERIES_METRICS = (
@@ -921,6 +932,17 @@ def _ingest_health(connection: sqlite3.Connection, request: dict[str, Any]) -> d
     to recover it here, so it is named in `not_measured` rather than guessed
     at. `not_measured` is a statement about this tool, not a counter.
 
+    **The event-time fields describe the canonical attempt stream.**
+    `newest_event_at`, `watermark`, `as_of` and `lag_seconds` all read
+    `store.window_bounds`, which is the attempt table - the same stream `as_of`
+    has meant on every C2 tool since the first one, and not a meaning this tool
+    is free to redefine. Telemetry and closed-payment rows are stored beside
+    attempts and are counted in `stored`, but they do not move the watermark.
+    That would leave a store holding only telemetry samples reporting "nothing
+    observed" while it plainly holds something, so `newest_by_kind` reports each
+    kind's own newest event time separately. It is a second set of readings, not
+    a redefinition of the first.
+
     **`rejected` and `dead_letter.count` are one measurement, not two.** A
     refused record is dead-lettered in the same statement that rejects it, so
     the two fields are equal by construction. Both are published because a
@@ -976,6 +998,18 @@ def _ingest_health(connection: sqlite3.Connection, request: dict[str, Any]) -> d
         },
         "oldest_event_at": schema.iso_utc(bounds[0]) if bounds else None,
         "newest_event_at": schema.iso_utc(bounds[1]) if bounds else None,
+        # Per-kind newest event time. `newest_event_at` above is the canonical
+        # attempt stream and is what the watermark is cut from; these are read
+        # so that a store holding telemetry and no payments cannot report
+        # "nothing observed" while holding something.
+        "newest_by_kind": {
+            name: _newest_event_at(connection, store.KINDS[kind], column)
+            for name, kind, column in (
+                ("attempts", "attempt", KIND_TIME_COLUMNS["attempt"]),
+                ("telemetry_samples", "telemetry", KIND_TIME_COLUMNS["telemetry"]),
+                ("payments_closed", "closed", KIND_TIME_COLUMNS["closed"]),
+            )
+        },
         # How far the newest observed event sits ahead of the watermark. This
         # is event time against event time, never against the wall clock: it
         # says how much of what has arrived is not yet measured, and it stays
@@ -991,6 +1025,20 @@ def _ingest_health(connection: sqlite3.Connection, request: dict[str, Any]) -> d
             ),
         },
     }
+
+
+
+def _newest_event_at(connection: sqlite3.Connection, table: str, column: str) -> str | None:
+    """The newest event time in one stored table, or None where it holds none.
+
+    Read-only, and deliberately here rather than in `store`: the watermark's
+    definition is the attempt stream and must not start depending on what else
+    happens to be stored, or every tool's `as_of` moves with telemetry.
+    """
+    row = connection.execute(f"SELECT MAX({column}) AS hi FROM {table}").fetchone()
+    if row is None or row["hi"] is None:
+        return None
+    return schema.iso_utc(int(row["hi"]))
 
 
 _HANDLERS = {

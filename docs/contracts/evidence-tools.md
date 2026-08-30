@@ -369,7 +369,8 @@ be a caller quietly reading a wider answer than the one asked for.
 
 **Output fields:** `watermark`, `accepted`, `stored` (`attempts`, `telemetry_samples`,
 `payments_closed`), `rejected`, `dead_letter` (`count`, `distinct_reasons`, `reasons`, `by_source`),
-`oldest_event_at`, `newest_event_at`, `lag_seconds`, `lateness_grace_seconds`, and `not_measured`.
+`oldest_event_at`, `newest_event_at`, `newest_by_kind`, `lag_seconds`, `lateness_grace_seconds`, and
+`not_measured`.
 
 - `accepted` is normalised payment attempts the store holds, after de-duplication. It is a row count,
   not a running total of what a consumer saw.
@@ -387,6 +388,14 @@ be a caller quietly reading a wider answer than the one asked for.
   readable without knowing the detector's configuration.
 - `not_measured` names a counter this tool deliberately does not report, with the reason. It is a
   statement about the tool, not a counter.
+- `oldest_event_at`, `newest_event_at`, `watermark`, `as_of` and `lag_seconds` all describe the
+  **canonical attempt stream**, which is what `as_of` has meant on every tool in this contract since
+  the first one. Telemetry and closed-payment rows are stored beside attempts and counted in `stored`,
+  but they do not move the watermark, and this tool does not redefine it. So that a store holding only
+  telemetry cannot report "nothing observed" while plainly holding something, `newest_by_kind` gives
+  each record kind its own newest event time - `attempts`, `telemetry_samples`, `payments_closed`,
+  each an RFC 3339 timestamp or `null`. It is a second set of readings, never a replacement for the
+  first: `newest_by_kind.attempts` and `newest_event_at` are the same value.
 
 **`duplicates` is absent on purpose.** At-least-once delivery is turned into exactly-once counting by
 `INSERT OR IGNORE` on `event_id`, so a redelivered record leaves no row behind. The count exists only
@@ -406,7 +415,7 @@ zero when nothing has been observed.
 **Example response:**
 
 ```json
-{"query_id":"q_ingest_health_3f2a1c9d5e7b4086","as_of":"2026-08-30T05:18:00Z","watermark":"2026-08-30T05:18:00Z","accepted":1836,"stored":{"attempts":1836,"telemetry_samples":240,"payments_closed":0},"rejected":0,"dead_letter":{"count":0,"distinct_reasons":0,"reasons":[],"by_source":[]},"oldest_event_at":"2026-08-30T04:00:00Z","newest_event_at":"2026-08-30T05:19:00Z","lag_seconds":60,"lateness_grace_seconds":30,"not_measured":{"duplicates":"redelivered records are dropped by INSERT OR IGNORE on event_id and leave no row behind; the count lives only in the consumer run that saw them, so the store cannot report it"}}
+{"query_id":"q_ingest_health_3f2a1c9d5e7b4086","as_of":"2026-08-30T05:18:00Z","watermark":"2026-08-30T05:18:00Z","accepted":1836,"stored":{"attempts":1836,"telemetry_samples":240,"payments_closed":0},"rejected":0,"dead_letter":{"count":0,"distinct_reasons":0,"reasons":[],"by_source":[]},"oldest_event_at":"2026-08-30T04:00:00Z","newest_event_at":"2026-08-30T05:19:00Z","newest_by_kind":{"attempts":"2026-08-30T05:19:00Z","telemetry_samples":"2026-08-30T05:18:30Z","payments_closed":null},"lag_seconds":60,"lateness_grace_seconds":30,"not_measured":{"duplicates":"redelivered records are dropped by INSERT OR IGNORE on event_id and leave no row behind; the count lives only in the consumer run that saw them, so the store cannot report it"}}
 ```
 
 ## Measurement notes
