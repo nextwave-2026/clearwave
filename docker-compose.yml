@@ -57,6 +57,9 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CLEARWAVE_GROUND_TRUTH_DB: /hidden-truth/ground_truth.db
+    volumes:
+      - ./state/ground_truth/merchant-a:/hidden-truth
     restart: unless-stopped
 
   worker-merchant-b:
@@ -73,6 +76,9 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CLEARWAVE_GROUND_TRUTH_DB: /hidden-truth/ground_truth.db
+    volumes:
+      - ./state/ground_truth/merchant-b:/hidden-truth
     restart: unless-stopped
 
   worker-merchant-c:
@@ -89,6 +95,9 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CLEARWAVE_GROUND_TRUTH_DB: /hidden-truth/ground_truth.db
+    volumes:
+      - ./state/ground_truth/merchant-c:/hidden-truth
     restart: unless-stopped
 
   schema-registry:

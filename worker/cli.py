@@ -46,8 +46,10 @@ def parse_args() -> argparse.Namespace:
         "--scenario-duration-seconds",
         type=int,
         default=int(os.environ.get("SCENARIO_DURATION_SECONDS", "900")),
-        help="C6 injection window length (default: env "
-        "SCENARIO_DURATION_SECONDS or 900 - the catalogue's typical window).",
+        help="How long a --scenario run lasts, in seconds. Recorded on the "
+        "C6 record and enforced as the process lifetime (default: env "
+        "SCENARIO_DURATION_SECONDS or 900). Ignored when --scenario is not "
+        "set, so healthy-traffic workers stay unbounded.",
     )
     parser.add_argument(
         "--incident-provider",

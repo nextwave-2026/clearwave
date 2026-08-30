@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from collections.abc import Iterable, Mapping, Sequence
@@ -430,15 +431,92 @@ def _load_json(path: str) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = list(argv if argv is not None else sys.argv[1:])
-    if len(args) != 2:
-        print("usage: python3 evaluator/score.py DIAGNOSIS.json HIDDEN_TRUTH.json", file=sys.stderr)
-        return 2
+def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="evaluator/score.py",
+        description="Score a completed diagnosis against a quarantined C6 record.",
+    )
+    parser.add_argument("diagnosis", help="Diagnosis JSON file, or - for stdin.")
+    parser.add_argument(
+        "hidden_truth",
+        nargs="?",
+        help="Hidden-truth JSON file. Omit when reading from --store or --store-dir.",
+    )
+    parser.add_argument(
+        "--store",
+        help="Path to one worker ground_truth.db file.",
+    )
+    parser.add_argument(
+        "--store-dir",
+        help="Directory of per-merchant stores (state/ground_truth). "
+        "Scans every */ground_truth.db; does not assume a single worker.",
+    )
+    parser.add_argument(
+        "--instance-id",
+        help="Select one C6 record when more than one closed record exists.",
+    )
+    parser.add_argument(
+        "--scenario-id",
+        help="Select by scenario_id when more than one closed record exists.",
+    )
+    return parser.parse_args(list(argv))
+
+
+def _load_hidden_truth(args: argparse.Namespace) -> Any:
+    using_store = args.store is not None or args.store_dir is not None
+    if args.hidden_truth is not None and using_store:
+        raise ValueError("pass a hidden-truth JSON file or --store/--store-dir, not both")
+    if args.hidden_truth is None and not using_store:
+        raise ValueError(
+            "usage: python3 evaluator/score.py DIAGNOSIS.json HIDDEN_TRUTH.json "
+            "(or --store / --store-dir)"
+        )
+    if args.hidden_truth is not None:
+        if args.instance_id or args.scenario_id:
+            raise ValueError("--instance-id and --scenario-id require --store or --store-dir")
+        return _load_json(args.hidden_truth)
     try:
-        diagnosis = _load_json(args[0])
-        hidden_truth = _load_json(args[1])
+        from evaluator.truth import (
+            AmbiguousHiddenTruthError,
+            HiddenTruthError,
+            load_hidden_truth,
+        )
+    except ImportError:  # python3 evaluator/score.py, sys.path[0] is evaluator/
+        from truth import (  # type: ignore[import-not-found]
+            AmbiguousHiddenTruthError,
+            HiddenTruthError,
+            load_hidden_truth,
+        )
+
+    try:
+        return load_hidden_truth(
+            store_path=args.store,
+            store_dir=args.store_dir,
+            instance_id=args.instance_id,
+            scenario_id=args.scenario_id,
+        )
+    except AmbiguousHiddenTruthError as error:
+        print(f"evaluator: {error}", file=sys.stderr)
+        for record in error.records:
+            print(
+                f"  {record['path']}  instance_id={record['instance_id']}  "
+                f"scenario_id={record['scenario_id']}",
+                file=sys.stderr,
+            )
+        raise SystemExit(2) from error
+    except HiddenTruthError as error:
+        raise ValueError(str(error)) from error
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    raw = list(argv if argv is not None else sys.argv[1:])
+    try:
+        args = _parse_args(raw)
+        diagnosis = _load_json(args.diagnosis)
+        hidden_truth = _load_hidden_truth(args)
         result = score_diagnosis(diagnosis, hidden_truth)
+    except SystemExit as error:
+        return int(error.code) if isinstance(error.code, int) else 2
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
         print(f"evaluator: {error}", file=sys.stderr)
         return 2

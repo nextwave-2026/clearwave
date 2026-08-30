@@ -5,14 +5,19 @@ Read only by the evaluator, only after a diagnosis exists.
 
 The quarantine is a real process and storage boundary, not a naming
 convention: this module lives under worker/, is never imported by
-detector/ or investigation/, and the SQLite file it writes is local to the
-worker's own container filesystem - nothing mounts it anywhere W2 or W3
-can reach. W2/W3: if you are reading this file to figure out how to get at
-hidden truth, stop - that is exactly the read path this document exists to
-deny you. See docs/contracts/hidden-truth.md for why.
+detector/ or investigation/, and the SQLite file it writes is never
+mounted into a detector or investigation container. The evaluator is the
+only other reader. In a containerised run each merchant worker bind-mounts
+its own file at state/ground_truth/<merchant_id>/ground_truth.db so the
+evaluator can score from the host after the window closes; CLEARWAVE_GROUND_TRUTH_DB
+overrides the path inside the worker. W2/W3: if you are reading this file
+to figure out how to get at hidden truth, stop - that is exactly the read
+path this document exists to deny you. See docs/contracts/hidden-truth.md
+for why.
 """
 
 import json
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +25,16 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_DB = Path(__file__).parent / "state" / "ground_truth.db"
+DB_ENV_VAR = "CLEARWAVE_GROUND_TRUTH_DB"
+
+
+def resolve_db_path(path: Path | str | None = None) -> Path | str:
+    if path is not None:
+        return path
+    override = os.environ.get(DB_ENV_VAR)
+    if override:
+        return override
+    return DEFAULT_DB
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS hidden_truth (
@@ -40,14 +55,18 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
-def connect(path: Path | str = DEFAULT_DB) -> sqlite3.Connection:
-    target = Path(path)
+def connect(path: Path | str | None = None, *, readonly: bool = False) -> sqlite3.Connection:
+    target = resolve_db_path(path)
+    if readonly:
+        db = Path(target).resolve()
+        connection = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+        return connection
     if str(target) != ":memory:":
+        target = Path(target)
         target.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(str(target))
     connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA journal_mode=WAL")
-    connection.execute("PRAGMA synchronous=NORMAL")
     connection.executescript(SCHEMA)
     return connection
 
@@ -118,3 +137,22 @@ def read_hidden_truth(connection: sqlite3.Connection, instance_id: str) -> dict[
     if row["evaluation"]:
         result["evaluation"] = json.loads(row["evaluation"])
     return result
+
+
+def list_hidden_truth(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Instance ids and closed-state for every record in this store. Evaluator only."""
+    rows = connection.execute(
+        "SELECT instance_id, scenario_id, scenario_name, observed, created_at, closed_at "
+        "FROM hidden_truth ORDER BY created_at"
+    ).fetchall()
+    return [
+        {
+            "instance_id": row["instance_id"],
+            "scenario_id": row["scenario_id"],
+            "scenario_name": row["scenario_name"],
+            "created_at": row["created_at"],
+            "closed_at": row["closed_at"],
+            "closed": row["closed_at"] is not None and row["observed"] is not None,
+        }
+        for row in rows
+    ]
