@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -40,6 +41,7 @@ from surfaces.inject import (
     fire_hidden_incident,
     injected_incident_command,
 )
+from surfaces import ask as ask_module
 from surfaces import present
 from surfaces.present import cohort_scope_label, merchant_health
 from surfaces.server import SurfacesApp, make_server
@@ -1391,6 +1393,7 @@ class DashboardWiringTests(unittest.TestCase):
             "/api/calls",
             "/api/escalations",
             "/api/trigger",
+            "/api/ask",
         ):
             self.assertIn(path, js, f"{path} is served but never fetched")
 
@@ -1592,6 +1595,361 @@ class MerchantImpactPayloadTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIsNone(rows[0]["merchant_id"])
         self.assertIn("Provider", rows[0]["scope_label"])
+
+
+def _answered_payload():
+    """The engine's documented answered shape, as briefed."""
+    return {
+        "outcome": "diagnosed",
+        "answer": "Approvals for merchant-b fell because adyen started declining card payments in MX.",
+        "figures": [
+            {"label": "Approval now", "value": 0.52, "query_id": "q-1"},
+            {"label": "Costing / hour", "value": {"amount": 19784.62, "currency": "USD"}, "query_id": "q-2"},
+        ],
+        "citations": [
+            {
+                "sequence": 1,
+                "query_id": "q-1",
+                "tool": "cohort_metrics",
+                "parameters": {"merchant_id": "merchant-b"},
+                "response": {"approval": 0.52},
+                "timestamp": "2026-08-30T06:00:00Z",
+                "outcome": "ok",
+            },
+            {
+                "sequence": 2,
+                "query_id": "q-2",
+                "tool": "financial_impact",
+                "parameters": {"merchant_id": "merchant-b"},
+                "response": {"loss_per_hour": 19784.62},
+                "timestamp": "2026-08-30T06:00:02Z",
+                "outcome": "ok",
+            },
+        ],
+    }
+
+
+class AskAdapterTests(unittest.TestCase):
+    """The one seam onto the engine. No domain logic lives on this side of it."""
+
+    def _stub(self, payload):
+        def call(question, connection, agent=None):
+            return payload
+        return call
+
+    def test_without_a_key_the_engine_is_never_called(self):
+        called = []
+
+        def spy(*args, **kwargs):
+            called.append(args)
+            return _answered_payload()
+
+        with patch.object(ask_module, "api_key_present", return_value=False):
+            out = ask_module.answer("why?", None, entry_point=spy)
+        self.assertEqual(out["outcome"], "agent_unavailable")
+        self.assertEqual(out["unavailable_kind"], ask_module.KIND_NO_API_KEY)
+        self.assertEqual(called, [], "a model call was made with no key configured")
+        # The panel's own wording for this state carries it, so the adapter does
+        # not also supply prose the card would then print twice.
+        self.assertIsNone(out["answer"])
+        self.assertIn("OPENAI_API_KEY", out["reason"])
+
+    def test_a_missing_engine_module_is_a_state_not_a_crash(self):
+        with patch.object(ask_module, "api_key_present", return_value=True), \
+             patch.object(ask_module, "engine", return_value=None):
+            out = ask_module.answer("why?", None)
+        self.assertEqual(out["outcome"], "agent_unavailable")
+        self.assertEqual(out["unavailable_kind"], ask_module.KIND_ENGINE_MISSING)
+        self.assertIsNone(out["answer"])
+
+    def test_a_slow_engine_times_out_rather_than_hanging_the_board(self):
+        started = threading.Event()
+
+        def slow(question, connection, agent=None):
+            started.set()
+            time.sleep(5)
+            return _answered_payload()
+
+        with patch.object(ask_module, "api_key_present", return_value=True), \
+             patch.object(ask_module, "_GUARD_MARGIN_SECONDS", 0.05):
+            out = ask_module.answer("why?", None, timeout=0.2, entry_point=slow)
+        self.assertTrue(started.wait(2))
+        self.assertEqual(out["outcome"], "agent_unavailable")
+        self.assertEqual(out["unavailable_kind"], ask_module.KIND_TIMEOUT)
+        self.assertIn("was not answered", out["answer"])
+
+    def test_an_engine_that_raises_returns_an_outcome_not_an_exception(self):
+        def boom(question, connection, agent=None):
+            raise RuntimeError("gateway refused")
+
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            out = ask_module.answer("why?", None, entry_point=boom)
+        self.assertEqual(out["outcome"], "agent_unavailable")
+        self.assertEqual(out["unavailable_kind"], ask_module.KIND_ENGINE_ERROR)
+        self.assertIn("gateway refused", out["answer"])
+
+    def test_an_answer_keeps_every_figure_tied_to_its_own_query(self):
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            out = ask_module.answer("why?", None, entry_point=self._stub(_answered_payload()))
+        self.assertEqual(out["outcome"], "diagnosed")
+        self.assertIsNone(out["reason"])
+        self.assertEqual([f["query_id"] for f in out["figures"]], ["q-1", "q-2"])
+        self.assertEqual([c["query_id"] for c in out["citations"]], ["q-1", "q-2"])
+        self.assertEqual(out["figures"][1]["value"], {"amount": 19784.62, "currency": "USD"})
+
+    def test_a_figure_the_engine_did_not_cite_never_borrows_a_citation(self):
+        payload = _answered_payload()
+        payload["figures"].append({"label": "Retry load", "value": "1.44x"})
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            out = ask_module.answer("why?", None, entry_point=self._stub(payload))
+        self.assertIsNone(out["figures"][2]["query_id"])
+        self.assertEqual(out["figures"][0]["query_id"], "q-1")
+
+    def test_the_outcome_vocabulary_is_the_c4_one_and_nothing_else(self):
+        self.assertEqual(
+            set(ask_module.OUTCOMES),
+            {"diagnosed", "ambiguous", "insufficient_evidence", "agent_unavailable"},
+        )
+        for outcome in ("ambiguous", "insufficient_evidence"):
+            payload = dict(_answered_payload(), outcome=outcome, reason="ignored")
+            with patch.object(ask_module, "api_key_present", return_value=True):
+                out = ask_module.answer("why?", None, entry_point=self._stub(payload))
+            self.assertEqual(out["outcome"], outcome)
+            # `reason` only ever qualifies agent_unavailable.
+            self.assertIsNone(out["reason"])
+
+    def test_the_adapter_asks_for_the_shorter_interactive_deadline(self):
+        seen = {}
+
+        def spy(question, connection, timeout_seconds=None):
+            seen["timeout"] = timeout_seconds
+            return _answered_payload()
+
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            ask_module.answer("why?", None, entry_point=spy)
+        # The engine bounds itself at 60s by default. A judge is watching a
+        # dashboard, so the box asks for less.
+        self.assertEqual(seen["timeout"], ask_module.ASK_TIMEOUT_SECONDS)
+        self.assertLess(ask_module.ASK_TIMEOUT_SECONDS, 60.0)
+
+    def test_an_engine_without_the_deadline_knob_is_still_callable(self):
+        def older(question, connection, agent=None):
+            return _answered_payload()
+
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            out = ask_module.answer("why?", None, entry_point=older)
+        self.assertEqual(out["outcome"], "diagnosed")
+
+    def test_the_engines_own_unavailable_prose_is_never_read_as_a_state_key(self):
+        # `reason` is free prose from the engine. It is shown, not parsed for
+        # meaning - only the deadline wording chooses between two honest
+        # drawings, and no figure or outcome depends on it.
+        payload = dict(
+            _answered_payload(),
+            outcome="agent_unavailable",
+            reason="The question deadline expired after 30s: timed out",
+        )
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            out = ask_module.answer("why?", None, entry_point=self._stub(payload))
+        self.assertEqual(out["unavailable_kind"], ask_module.KIND_TIMEOUT)
+        self.assertIn("deadline expired", out["reason"])
+
+        payload["reason"] = "the gateway refused every tool"
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            out = ask_module.answer("why?", None, entry_point=self._stub(payload))
+        self.assertEqual(out["unavailable_kind"], ask_module.KIND_ENGINE_ERROR)
+
+    def test_missing_evidence_survives_to_the_panel(self):
+        payload = {
+            "outcome": "insufficient_evidence",
+            "answer": "I cannot answer that from what I measured.",
+            "figures": [],
+            "citations": [],
+            "missing_evidence": ["A decline-reason breakdown for merchant-b.", ""],
+        }
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            out = ask_module.answer("why?", None, entry_point=self._stub(payload))
+        self.assertEqual(out["outcome"], "insufficient_evidence")
+        self.assertIsNone(out["unavailable_kind"])
+        self.assertEqual(out["missing_evidence"], ["A decline-reason breakdown for merchant-b."])
+
+    def test_the_question_is_bounded(self):
+        with patch.object(ask_module, "api_key_present", return_value=True):
+            out = ask_module.answer("x" * 5000, None, entry_point=self._stub(_answered_payload()))
+        self.assertEqual(len(out["question"]), ask_module.MAX_QUESTION_CHARS)
+
+
+class AskEndpointTests(unittest.TestCase):
+    """The endpoint costs a model call, so reaching it must take a press."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.db = Path(self._tmpdir.name) / "clearwave.db"
+        connect(self.db).close()
+        self.app = SurfacesApp(self.db)
+
+    def test_ask_is_post_only_so_a_poll_can_never_reach_a_model(self):
+        status, body = self.app.handle("GET", "/api/ask")
+        self.assertEqual(status, 405)
+        self.assertIn("POST only", body["error"])
+
+    def test_a_blank_question_is_refused_before_the_engine(self):
+        status, body = self.app.handle("POST", "/api/ask", {"question": "   "})
+        self.assertEqual(status, 400)
+
+    def test_a_question_returns_the_panel_payload(self):
+        stub = lambda question, connection, agent=None: _answered_payload()
+        with patch.object(ask_module, "api_key_present", return_value=True), \
+             patch.object(ask_module, "engine", return_value=stub):
+            status, body = self.app.handle("POST", "/api/ask", {"question": "why?"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["outcome"], "diagnosed")
+        self.assertEqual(len(body["citations"]), 2)
+
+    def test_a_second_press_never_stacks_a_second_model_call(self):
+        entered = threading.Event()
+        release = threading.Event()
+        calls = []
+
+        def slow(question, connection, agent=None):
+            calls.append(question)
+            entered.set()
+            release.wait(5)
+            return _answered_payload()
+
+        results = {}
+
+        def first():
+            results["first"] = self.app.handle("POST", "/api/ask", {"question": "one"})
+
+        with patch.object(ask_module, "api_key_present", return_value=True), \
+             patch.object(ask_module, "engine", return_value=slow):
+            worker = threading.Thread(target=first)
+            worker.start()
+            self.assertTrue(entered.wait(5))
+            status, body = self.app.handle("POST", "/api/ask", {"question": "two"})
+            release.set()
+            worker.join(5)
+        self.assertEqual(status, 409)
+        self.assertIn("already running", body["error"])
+        self.assertEqual(calls, ["one"], "the second press reached the engine")
+        self.assertEqual(results["first"][0], 200)
+
+    def test_the_lock_is_released_even_when_the_engine_fails(self):
+        def boom(question, connection, agent=None):
+            raise RuntimeError("nope")
+
+        with patch.object(ask_module, "api_key_present", return_value=True), \
+             patch.object(ask_module, "engine", return_value=boom):
+            self.assertEqual(self.app.handle("POST", "/api/ask", {"question": "one"})[0], 200)
+            status, _ = self.app.handle("POST", "/api/ask", {"question": "two"})
+        self.assertEqual(status, 200)
+
+
+class AskPanelPageTests(unittest.TestCase):
+    """The panel shows what the engine returned, cites it, and computes nothing."""
+
+    def setUp(self):
+        static = ROOT / "surfaces" / "static"
+        self.html = (static / "index.html").read_text(encoding="utf-8")
+        self.js = (static / "app.js").read_text(encoding="utf-8")
+        self.css = (static / "styles.css").read_text(encoding="utf-8")
+
+    def test_the_polling_loop_never_touches_the_ask_endpoint(self):
+        refresh = self.js[self.js.index("function refresh()"):self.js.index("function loadDetail")]
+        self.assertNotIn("/api/ask", refresh)
+        self.assertNotIn("submitAsk", refresh)
+        # And the only fetch of it is the explicit press.
+        self.assertEqual(self.js.count('fetch("/api/ask"'), 1)
+        submit = self.js[self.js.index("function submitAsk"):self.js.index('$("ask-form")')]
+        self.assertIn('fetch("/api/ask"', submit)
+        self.assertIn('method: "POST"', submit)
+
+    def test_only_a_press_or_an_example_press_can_ask(self):
+        self.assertIn('$("ask-form").addEventListener("submit"', self.js)
+        # The example chips fill and submit; both are a user press.
+        self.assertIn("ASK_EXAMPLES", self.js)
+        self.assertNotIn("setInterval(submitAsk", self.js)
+        self.assertNotIn("setTimeout(submitAsk", self.js)
+
+    def test_a_second_press_is_refused_in_the_page_as_well_as_the_server(self):
+        submit = self.js[self.js.index("function submitAsk"):self.js.index('$("ask-form")')]
+        self.assertIn("if (state.asking) return;", submit)
+        self.assertIn('$("ask-go").disabled = true;', submit)
+        self.assertIn("response.status === 409", submit)
+        self.assertIn("is-busy", self.js)
+        self.assertRegex(self.css, r"\.ask-card\.is-busy")
+
+    def test_the_pending_state_is_shown_rather_than_the_page_freezing(self):
+        self.assertIn("is-pending", self.js)
+        self.assertIn("Reading the store", self.js)
+        # A 30s wait needs something to read, not a bare spinner.
+        self.assertIn("choosing and running its own queries", self.js)
+        self.assertIn("including the ones that came back empty", self.js)
+        self.assertRegex(self.css, r"\.ask-spin \{")
+        self.assertIn('aria-live="polite"', self.html)
+
+    def test_every_non_answer_state_is_designed_rather_than_thrown(self):
+        for key, phrase in (
+            ("no_api_key", "No model is configured"),
+            ("engine_missing", "The ask engine is not in this build"),
+            ("timeout", "The question ran past its limit"),
+            ("insufficient_evidence", "Not answerable from what we measure"),
+            ("ambiguous", "The evidence does not settle it"),
+            ("engine_error", "The engine could not complete"),
+        ):
+            self.assertIn(key, self.js)
+            self.assertIn(phrase, self.js)
+        # ambiguous and insufficient_evidence are different situations and are
+        # deliberately not collapsed into one message.
+        self.assertIn("support more than one explanation", self.js)
+        self.assertIn("is not in the store", self.js)
+        self.assertIn("What it would have needed", self.js)
+        self.assertIn("payload.missing_evidence", self.js)
+        # None of them is drawn as an incident.
+        ask_css = self.css[self.css.index("/* Ask the data."):self.css.index("/* The warning rail.")]
+        for banned in ("--sev-critical", "--sev-high", "--sev-low"):
+            self.assertNotIn(banned, ask_css)
+
+    def test_the_citations_are_rendered_next_to_the_answer(self):
+        self.assertIn("function askCitations", self.js)
+        self.assertIn("The queries it ran", self.js)
+        self.assertIn("row.query_id", self.js)
+        self.assertIn("row.tool", self.js)
+        self.assertIn("function askCite", self.js)
+        self.assertIn("ask-cite:", self.js)
+        self.assertIn("ask-fig:", self.js)
+
+    def test_an_uncited_figure_says_so_rather_than_showing_a_cite_dot(self):
+        self.assertIn("the engine tied no query to this one", self.js)
+        figures = self.js[self.js.index("function askFigures"):self.js.index("function askCitations")]
+        self.assertIn("row.query_id", figures)
+        self.assertIn("ask-uncited", figures)
+
+    def test_the_panel_computes_nothing(self):
+        panel = self.js[self.js.index("// Ask the data."):self.js.index("function renderQueue")]
+        for arithmetic in ("reduce(", "* 100", "+ Number(", ".toFixed(", " / "):
+            self.assertNotIn(arithmetic, panel)
+
+    def test_the_panel_supports_the_board_rather_than_taking_it_over(self):
+        board = self.html.index('id="overview-board"')
+        merchants = self.html.index('id="overview-merchants"')
+        ask = self.html.index('id="ask-form"')
+        rail = self.html.index('id="overview-watch-rail"')
+        self.assertLess(board, merchants)
+        self.assertLess(merchants, ask)
+        self.assertLess(ask, rail)
+        # No display-weight money in the panel: the answer is prose, not a KPI.
+        answer = re.search(r"\.ask-answer \{[^}]*font-size: (\d+)px", self.css)
+        risk = re.search(r"\.money \.mfig-risk dd \{[^}]*font-size: (\d+)px", self.css)
+        self.assertLess(int(answer.group(1)), int(risk.group(1)))
+
+    def test_the_judge_control_is_untouched_by_the_panel(self):
+        self.assertIn('id="judge-form"', self.html)
+        for stage in ("developing", "collapse", "clear"):
+            self.assertIn(f'data-stage="{stage}"', self.html)
+        self.assertNotIn("ask", self.html[self.html.index('id="judge-form"'):self.html.index("</header>")])
 
 
 class EscalationRaceTests(unittest.TestCase):
