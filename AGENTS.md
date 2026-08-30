@@ -125,9 +125,11 @@ same record.
 
 W2 also consumes W1's three live Kafka topics into that same store (`python3 -m detector consume --detect`).
 The live and file-based paths share one normalisation and one store; the file-based path imports no Kafka
-client and is the broker-free demo fallback. Compose now runs that consumer as service `detector` (45s
-consume-and-sweep cycle) and the dashboard as service `surfaces` on host port 8082, both on
-`CLEARWAVE_DB=/data/clearwave.db` matching the investigation daemon. `make stack-up` brings the whole
+client and is the broker-free demo fallback. Compose runs that consumer as service `detector`
+(`python -m detector daemon`: empty polls are not terminal, SIGINT/SIGTERM drain the in-flight batch,
+sweeps every 45s even when quiet) and the dashboard as service `surfaces` on host port 8082, both on
+`CLEARWAVE_DB=/data/clearwave.db` matching the investigation daemon. Do not wrap `detector consume` in a
+bash loop; the daemon is the one service path. `make stack-up` brings the whole
 loop up and prints the URL; `make stack-status` reports each piece; `make stack-down` tears it down.
 `make stack-up` first writes healthy live-vocabulary history into `state/clearwave.db` (`scripts/prepare_history.py`, eight event-time hours behind now, merchant-b/adyen included) so the trailing detection baseline (`BASELINE_TRAILING_BUCKETS` = 60) and the merchant-relative floor (`MERCHANT_NORMAL_MIN_HOURS` = 6) are already warm. `make stack-status` reports those two floors separately. The anomaly is still live: do not pre-create incidents or watches. Re-running `stack-up` replaces the store (clean start is the default, because leftover rehearsal rows promote a later band).
 Consumer operator detail: `docs/live-ingestion.md`. The copy-pasteable demo runbook is `docs/demo-sequence.md`.
