@@ -58,6 +58,10 @@ class EvidenceGateway:
     ``env`` overlays environment variables onto the tool subprocess without
     touching the caller's own environment, so one process can point separate
     gateways at separate ``CLEARWAVE_DB`` stores concurrently.
+
+    ``persist_entry`` is an optional live-write hook invoked with each trail
+    record after it is appended in memory. Failures are swallowed: live
+    persistence is a presentation nicety and must not fail the investigation.
     """
 
     allowed_tools = frozenset(ALLOWED_TOOLS)
@@ -75,6 +79,7 @@ class EvidenceGateway:
         python_executable: str | None = None,
         runner: Runner | None = None,
         env: Mapping[str, str] | None = None,
+        persist_entry: Callable[[Mapping[str, Any]], Any] | None = None,
     ) -> None:
         if query_budget < 0:
             raise ValueError("query_budget must be non-negative")
@@ -89,6 +94,7 @@ class EvidenceGateway:
         self.trail = trail if trail is not None else EvidenceTrail()
         self.runner = runner
         self.env = dict(env) if env else {}
+        self.persist_entry = persist_entry
         self._additional_calls = 0
 
     @property
@@ -314,7 +320,7 @@ class EvidenceGateway:
         executed: bool,
     ) -> dict[str, Any]:
         duration_ms = (time.perf_counter() - started) * 1000.0
-        self.trail.record(
+        entry = self.trail.record(
             query_id=query_id,
             tool=tool,
             parameters=parameters,
@@ -324,6 +330,11 @@ class EvidenceGateway:
             outcome=outcome,
             executed=executed,
         )
+        if self.persist_entry is not None:
+            try:
+                self.persist_entry(entry)
+            except Exception:
+                pass
         return response
 
 
