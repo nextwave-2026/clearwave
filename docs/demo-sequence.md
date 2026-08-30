@@ -234,6 +234,14 @@ Use the same `CLEARWAVE_DB=state/clearwave.db` for every process. Do not run the
 
 ## Technical defence notes
 
+### If ClearWave does not understand seasonality yet, why is it valuable to Yuno today?
+
+**Executive answer:** ClearWave turns silent conversion loss into an early, merchant-specific warning, a localised route and an evidence-bound diagnosis with the money attached, so a TAM spends the incident acting on evidence instead of crossing filters at 3 a.m.
+
+**Operations answer:** The detector compares current event-time buckets with each cohort's trailing hour and sibling cohorts, writes a non-paging watch while a deviation develops, and uses fixed rules for incident status and severity; only that deterministic state can trigger escalation. The bounded investigator starts with cohort comparison, service health, decline-code mix, retries, confounding and financial impact; it can add only allowlisted queries, and every factual or causal claim, including every figure, must cite an executed query. If the evidence cannot separate causes, it returns `ambiguous` or `insufficient_evidence` with the missing observation instead of manufacturing certainty.
+
+**Direct answer:** ClearWave detects deviations from recent merchant behaviour and sibling cohorts. It does not yet distinguish an expected recurring spike from an abnormal one purely because it has learned that time pattern. That still covers abrupt, commercially serious route-specific failures: same-window divergence localises the problem, while cohorts moving together keep us from blaming one provider. It does not protect against a recurring route-specific pattern or tell whether a shared merchant-wide movement is normal for Friday; closing that gap requires an hour-of-week baseline built from replayable multi-week merchant and cohort history, with sparse-cell shrinkage, missing-data and holiday handling, and backtests proving it reduces false positives without hiding real incidents.
+
 ### What is deterministic, and what is not?
 
 **Deterministic code decides:**
