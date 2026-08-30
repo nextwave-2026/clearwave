@@ -10,8 +10,7 @@ services:
 
   schema-registry:
     container_name: clearwave-verify-demo-schema-registry
-    ports: !override
-      - "18081:8081"
+    ports: !override []
 
   surfaces:
     container_name: clearwave-verify-demo-surfaces
