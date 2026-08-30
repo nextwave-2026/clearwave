@@ -1799,16 +1799,91 @@ button.cite.cite-q {
 
 /* Ask the data.
 
-   The board's one interactive question. It supports the money above it and
-   never competes with it: no display weight, no severity colour, the same
-   surfaces and ink ramp as every other panel. What it does spend its emphasis
-   on is the citation trail, because that is the whole claim - an answer whose
-   queries are visible is a different object from an answer that just appears. */
+   The board's one interactive question, and the only thing on it that costs a
+   model call. It is no longer a section in the middle of the money: it is a
+   drawer on the right, opened on demand from the masthead, so the board stays
+   operational data and the conversation stays available.
 
-.ask {
-  margin-top: 34px;
-  padding-top: 26px;
+   It borrows the citation drawer's language exactly - same edge, same slide,
+   same scrim, same close affordance, same tokens - and stays a separate
+   element, because an answer in here opens its own citations and a drawer
+   cannot be both the conversation and the record it cites.
+
+   No display weight, no severity colour, the same surfaces and ink ramp as
+   every other panel. What it does spend its emphasis on is the citation trail,
+   because that is the whole claim - an answer whose queries are visible is a
+   different object from an answer that just appears.
+
+   Shared rules with the evidence trail are duplicated here under `.ask-`
+   selectors on purpose: two branches are open across this file tonight. */
+
+/* The masthead toggle. A quiet outline control beside the judge group, never
+   competing with it: the judge control changes the world, this one opens a
+   panel. */
+.ask-toggle {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.ask-toggle:hover { color: var(--ink); border-color: var(--ink-3); }
+.ask-toggle:focus-visible { outline: 2px solid var(--yuno-blue-lift); outline-offset: 2px; }
+.ask-toggle[aria-expanded="true"] { color: var(--ink); border-color: var(--ink-3); background: var(--ground); }
+.ask-toggle svg { flex: none; }
+
+/* The drawer itself. It sits under the citation drawer so a board citation
+   opened while this is up still lands in front of it. */
+.ask-drawer {
+  z-index: 70;
+  width: min(520px, 100vw);
+  background: var(--ground);
+}
+
+.ask-scrim { z-index: 69; }
+
+.ask-drawer .drawer-head { background: var(--surface); align-items: flex-start; }
+.ask-drawer .drawer-head .ask-lede { margin: 4px 0 0; max-width: none; }
+
+/* The transcript scrolls; the input does not. */
+.ask-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.ask-empty {
+  margin: auto 0;
+  padding: 4px 2px;
+}
+
+.ask-empty p { margin: 0 0 9px; font-size: 12px; color: var(--ink-3); line-height: 1.6; }
+.ask-empty p:first-child { color: var(--ink-2); font-size: 12.5px; }
+.ask-empty p:last-child { margin-bottom: 0; }
+
+.ask-turn { display: block; }
+
+/* Pinned at the bottom of the drawer, not floating in the middle of it. */
+.ask-dock {
   border-top: 1px solid var(--line);
+  background: var(--surface);
+  padding: 14px 18px 16px;
 }
 
 .ask-head h3 {
@@ -1819,8 +1894,9 @@ button.cite.cite-q {
 }
 
 .ask-lede { margin: 6px 0 0; font-size: 11.5px; color: var(--ink-3); line-height: 1.55; max-width: 84ch; }
+.ask-drawer .ask-card .ask-lede { font-size: 12px; }
 
-.ask-form { display: flex; gap: 10px; margin: 16px 0 0; align-items: stretch; }
+.ask-form { display: flex; gap: 8px; margin: 0; align-items: stretch; }
 
 .ask-input {
   flex: 1 1 auto;
@@ -1855,7 +1931,9 @@ button.cite.cite-q {
 .ask-go:hover { background: var(--yuno-blue-lift); }
 .ask-go[disabled] { opacity: 0.5; cursor: progress; }
 
-.ask-egs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 11px; }
+.ask-egs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+
+.ask-egs-cap { flex: 1 0 100%; margin: 0 0 2px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); }
 
 .ask-eg {
   font: inherit;
@@ -1871,10 +1949,10 @@ button.cite.cite-q {
 
 .ask-eg:hover { color: var(--ink); border-color: var(--ink-3); }
 
-.ask-result:empty { display: none; }
+
 
 .ask-card {
-  margin-top: 18px;
+  margin-top: 10px;
   padding: 20px 22px;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
@@ -1890,16 +1968,22 @@ button.cite.cite-q {
 .ask-card.is-pending, .ask-card.is-busy { background: var(--surface); }
 
 .ask-asked {
-  margin: 0 0 14px;
-  font-size: 11px;
-  color: var(--ink-3);
-  font-family: "Geist Mono", ui-monospace, Menlo, Consolas, monospace;
+  margin: 0 0 0 auto;
+  max-width: 88%;
+  width: fit-content;
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
   overflow-wrap: anywhere;
 }
 
 .ask-answer {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.55;
   color: var(--ink);
   letter-spacing: -0.01em;
@@ -1990,14 +2074,78 @@ button.cite.cite-q {
 .ask-qid { color: var(--ink-3); font-size: 10.5px; overflow-wrap: anywhere; }
 .ask-outcome { color: var(--ink-3); font-size: 10.5px; text-align: right; }
 
+.ask-cited {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--ground);
+  padding: 14px;
+}
+
+.ask-cited-head h5 {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+  text-transform: none;
+}
+
+.ask-cited-head p { margin: 4px 0 12px; font-size: 11px; color: var(--ink-3); line-height: 1.55; }
+
+.ask-cited dl {
+  margin: 0 0 14px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 14px;
+  align-items: baseline;
+}
+
+.ask-cited dt {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.ask-cited dd { margin: 0; font-size: 11.5px; word-break: break-all; color: var(--ink); }
+
+.ask-cited h6 {
+  margin: 0 0 7px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  font-weight: 600;
+}
+
+.ask-cited pre {
+  margin: 0;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  padding: 11px;
+  font-size: 10.5px;
+  line-height: 1.6;
+  overflow-x: auto;
+  color: var(--ink-2);
+}
+
 @media (max-width: 640px) {
+  .ask-toggle { padding: 6px 10px; font-size: 11px; }
+  .ask-thread { padding: 14px; }
+  .ask-dock { padding: 12px 14px 14px; }
   .ask-form { flex-wrap: wrap; }
   .ask-go { width: 100%; padding: 11px 22px; }
-  .ask-card { padding: 18px 16px; }
-  .ask-answer { font-size: 15px; }
+  .ask-card { padding: 16px 14px; }
+  .ask-answer { font-size: 14.5px; }
   .ask-cite { grid-template-columns: 24px minmax(0, 1fr) auto; row-gap: 4px; }
-  .ask-qid { grid-column: 2 / -1; }
-  .ask-outcome { grid-column: 2 / -1; text-align: left; }
+  .ask-qid { grid-column: 2 / 3; }
+  .ask-outcome { grid-column: 2 / 3; text-align: left; }
+  /* The cite dot keeps the trailing column beside the query rather than
+     dropping to a row of its own with nothing to sit against. */
+  .ask-cite > button.cite { grid-column: 3; grid-row: 1 / -1; align-self: center; }
 }
 
 /* The warning rail.
