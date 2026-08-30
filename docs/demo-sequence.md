@@ -149,7 +149,7 @@ CLEARWAVE_DB=/tmp/clearwave-live.db .venv/bin/python -m detector consume --secon
 
 Then point the dashboard at the same `CLEARWAVE_DB`. Expect `incident: null` after 60 seconds unless you already have minutes of event-time contrast; consume for around three minutes after injecting if you want a stored C3. The judge toggle in the masthead is the other way to inject - on publishes the start command, off publishes the stop - and it targets `merchant-b`/`adyen`, so run the compose workers if you use it.
 
-`--mode anomaly` does not exist (`unrecognized arguments: --mode anomaly`). Replacements that do exist: omit incident flags for healthy traffic and inject after the worker is up; or `--incident-provider dlocal --incident-effect decline`; or `--scenario provider-degradation` on **merchant-c** (not merchant-a). `--scenario-duration-seconds` is a C6 timestamp, not a process lifetime. The worker loop does not stop. SIGINT did not stop it in the live run; use `timeout` / SIGTERM until that is fixed.
+`--mode anomaly` does not exist (`unrecognized arguments: --mode anomaly`). Replacements that do exist: omit incident flags for healthy traffic and inject after the worker is up; or `--incident-provider dlocal --incident-effect decline`; or `--scenario provider-degradation` on **merchant-c** (not merchant-a). A `--scenario` run stops when `--scenario-duration-seconds` elapses, and both SIGINT and SIGTERM run the shutdown path so the C6 record is closed. Healthy-traffic workers (no `--scenario`) stay unbounded.
 
 `make live` is not one step. Its recipe is `.venv/bin/python -m detector consume --seconds 60 --detect`. It runs on the venv, but it starts neither Kafka nor a worker and does not guarantee an incident. `make e2e` is the one that brings the stack up and consumes; it now consumes for three minutes rather than sixty seconds (`CONSUME_SECONDS`, default 180), because sixty is not enough sustained contrast. It still does not inject for you.
 
@@ -157,7 +157,7 @@ Host worker stdout is block-buffered without `PYTHONUNBUFFERED=1`. The worker im
 
 Control-topic consumers use `auto.offset.reset=latest` and a new group, so a command published before the worker is up is dropped. Worker first, then inject.
 
-Compose workers run `command: ["merchant-a"]` (etc.) with no `--scenario`, so they never write C6. The evaluator has no read path into the container ground-truth SQLite (no volume). A live compose run cannot be scored from the host.
+Compose workers run `command: ["merchant-a"]` (etc.) with no `--scenario`, so the long-running healthy-traffic containers never write C6. To produce a scorable record, run a one-off scenario worker that inherits the per-merchant volume (`docker compose run --rm worker-merchant-c merchant-c --scenario provider-degradation --scenario-duration-seconds 12`). The evaluator then reads `state/ground_truth/` from the host: `python3 evaluator/score.py diagnosis.json --store-dir state/ground_truth`.
 
 Standalone `docker-compose` is not required; the `docker compose` subcommand is. Pre-pull images on the demo machine (Schema Registry is a large layer). Prefer `docker compose up -d kafka schema-registry worker-merchant-a worker-merchant-b worker-merchant-c` over a bare `up -d`, which also pulls `devspace`.
 
@@ -262,7 +262,7 @@ Also still open on `main`, not for W4 to resolve:
 - C5 is not yet the current `INTERFACES.md` shape.
 - The judge-trigger seam is closed (PR #45): W4's adapter calls W1's `worker.inject`, and the toggle starts and stops a live incident from the browser.
 - juank's request for a high-value transaction id on C2/C3 (`STATUS.md` 2026-08-29T21:07Z) belongs to andres.
-- Live `--scenario` does not stop on duration or, in the observed run, on SIGINT.
+- A live `--scenario` run now stops on its declared duration and on SIGINT/SIGTERM, and the evaluator reads closed C6 records from `state/ground_truth/`.
 
 ## Where W4 fits
 

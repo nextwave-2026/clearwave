@@ -1004,10 +1004,12 @@ class EscalationEndpointTests(unittest.TestCase):
             self.assertEqual(binding[severity], channels_for(severity))
 
     def test_every_stored_incident_reports_its_channel_outcomes(self):
-        self._seed(
+        connection = self._seed(
             _incident("inc-1", "critical", "2026-08-29T10:00:00Z"),
             _incident("inc-2", "low", "2026-08-29T10:05:00Z", merchant="merchant-b"),
         )
+        persist_result(connection, "inc-1", {"incident_id": "inc-1"}, "diagnosed")
+        persist_result(connection, "inc-2", {"incident_id": "inc-2"}, "diagnosed")
         _, payload = self.app.handle("GET", "/api/escalations")
         groups = {group["incident_id"]: group for group in payload["incidents"]}
         self.assertEqual(set(groups), {"inc-1", "inc-2"})
@@ -1020,7 +1022,8 @@ class EscalationEndpointTests(unittest.TestCase):
         self.assertEqual([event["channel"] for event in groups["inc-2"]["channels"]], ["dashboard"])
 
     def test_group_carries_the_stored_record_the_view_reads(self):
-        self._seed(_incident("inc-1", "critical", "2026-08-29T10:00:00Z"))
+        connection = self._seed(_incident("inc-1", "critical", "2026-08-29T10:00:00Z"))
+        persist_result(connection, "inc-1", {"incident_id": "inc-1"}, "diagnosed")
         _, payload = self.app.handle("GET", "/api/escalations")
         group = payload["incidents"][0]
         self.assertEqual(group["scope_label"], "merchant-a")
@@ -1028,6 +1031,13 @@ class EscalationEndpointTests(unittest.TestCase):
         self.assertEqual(group["change"]["actual"], 0.64)
         self.assertEqual(group["payload"]["incident_id"], "inc-1")
         self.assertEqual(payload["slack_channel"], DEFAULT_SLACK_CHANNEL)
+
+    def test_detected_incident_does_not_escalate_before_a_diagnosis(self):
+        self._seed(_incident("inc-1", "critical", "2026-08-29T10:00:00Z"))
+        _, payload = self.app.handle("GET", "/api/escalations")
+        group = payload["incidents"][0]
+        self.assertEqual(group["channels"], [])
+        self.assertEqual(group["payload"], {})
 
     def test_an_empty_store_answers_with_the_binding_and_no_incidents(self):
         _, payload = self.app.handle("GET", "/api/escalations")

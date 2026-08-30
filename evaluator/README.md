@@ -10,7 +10,11 @@ From the repository root:
 
 ```sh
 python3 evaluator/score.py diagnosis.json hidden-truth.json
+python3 evaluator/score.py diagnosis.json --store-dir state/ground_truth
+python3 evaluator/score.py diagnosis.json --store state/ground_truth/merchant-c/ground_truth.db --instance-id provider-degradation-ab12cd34
 ```
+
+`--store-dir` scans every `*/ground_truth.db` under that directory, one file per merchant worker. If several closed records exist, pass `--instance-id` or `--scenario-id` rather than guessing. An open window (no `observed` yet) is refused.
 
 The diagnosis file may be the C4 result directly when its incident carries
 `affected_cohort`, or an evaluator envelope that keeps runtime contracts separate:
