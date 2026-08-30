@@ -125,9 +125,6 @@ class SurfacesApp:
             # because nothing else is read out of it.
             active = True if body is None else bool(body.get("active", True))
             return 200, self.trigger(active)
-        if method == "POST" and path.startswith("/api/calls/") and path.endswith("/ack"):
-            incident_id = path[len("/api/calls/") : -len("/ack")].strip("/")
-            return 200, self.acknowledge_call(incident_id)
         return 404, {"error": "not found", "path": path}
 
 
