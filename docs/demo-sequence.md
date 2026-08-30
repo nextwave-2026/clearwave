@@ -12,14 +12,29 @@ If this file and the PRD disagree, the PRD governs. Correct the disagreement in 
 
 ## Operator runbook - copy-paste this under pressure
 
-Wrong commands fail on stage. This section is the path that was actually run. Use the **offline** sequence unless live Kafka is already up and healthy before the pitch starts.
+Wrong commands fail on stage. This section is the path that was actually run. The live product is a stack that is already up; the **offline** sequence is the broker-free fallback if Docker is not healthy before the pitch starts.
+
+### Pre-warmed live stack
+
+`make stack-up` brings Kafka, Schema Registry, the three merchants, a detector that consumes and sweeps every 45 seconds, the investigation daemon, and the dashboard up together. It returns only once `GET /api/overview` answers, and prints the URL. The only thing anyone watching it should touch is a browser tab.
+
+```sh
+make stack-up          # blocks until http://127.0.0.1:8082/api/overview answers
+make stack-status      # one fact per piece of the loop
+make stack-down        # stop the stack
+```
+
+The dashboard is published on host port **8082** because 8080, 8090 and 18080 are commonly taken. Host-side `make surfaces-serve` is unchanged and still binds 127.0.0.1:8080.
+
+**Leave it running. Two warm-up clocks, not one.** Detection compares the current window against that merchant's own trailing hour (`BASELINE_TRAILING_BUCKETS = 60` of `BUCKET_SECONDS = 60` in `detector/config.py`) - a stack started sixty seconds before a demo has no baseline and will not warn on anything subtle. Merchant-relative severity needs longer: `MERCHANT_NORMAL_MIN_HOURS = 6`, and below that floor `merchant_normal_hourly_value_usd` and `severity_ceilings.merchant_relative` both read null, so the ceiling is silently inert. Start at least 60 minutes before the pitch for detection; start at least 6 hours before if you plan to pitch merchant-relative severity.
 
 ### Which path to use
 
 | Path | Standing |
 | --- | --- |
-| **Offline deterministic** (seed / detect / `investigation.vertical` / dashboard) | **Safe stage path.** Proven. This worktree: seed+detect stored a critical `provider-p2` incident; `investigation.vertical` diagnosed it; `GET /api/overview` showed `lifecycle_state: diagnosed` with a narrative. An earlier rehearsal timed all three guaranteed scenarios at 2 minutes 48 seconds. Model calls vary (about 45-100+ seconds). Do not promise three fresh model calls inside four minutes. |
-| **Live containerised Kafka** | The worker -> Kafka -> detector hop works. The operator experience on this tree does **not** produce a judge-fired incident. Do not open a four-minute demo with this path. Commands below are from a live Docker run plus CLI checks here; this worktree did **not** re-run Docker. |
+| **Pre-warmed compose stack** (`make stack-up`, browser on port 8082) | **The live product.** Detector, investigation and dashboard run themselves against `state/clearwave.db`. Start 60 minutes before the pitch for the trailing detection baseline; 6 hours before if merchant-relative severity should populate. |
+| **Offline deterministic** (seed / detect / `investigation.vertical` / dashboard) | **Safe stage path if Docker is not up.** Proven. This worktree: seed+detect stored a critical `provider-p2` incident; `investigation.vertical` diagnosed it; `GET /api/overview` showed `lifecycle_state: diagnosed` with a narrative. An earlier rehearsal timed all three guaranteed scenarios at 2 minutes 48 seconds. Model calls vary (about 45-100+ seconds). Do not promise three fresh model calls inside four minutes. |
+| **Live one-shot consume** (`make e2e`, then `make surfaces-serve`) | Debugging and rehearsal, not the pitch. A scripted CLI demonstration. |
 
 ### 0. Once per machine
 
@@ -167,7 +182,7 @@ Control-topic consumers use `auto.offset.reset=latest` and a new group, so a com
 
 Compose workers run `command: ["merchant-a"]` (etc.) with no `--scenario`, so the long-running healthy-traffic containers never write C6. To produce a scorable record, run a one-off scenario worker that inherits the per-merchant volume (`docker compose run --rm worker-merchant-c merchant-c --scenario provider-degradation --scenario-duration-seconds 12`). The evaluator then reads `state/ground_truth/` from the host: `python3 evaluator/score.py diagnosis.json --store-dir state/ground_truth`.
 
-Standalone `docker-compose` is not required; the `docker compose` subcommand is. Pre-pull images on the demo machine (Schema Registry is a large layer). Prefer `docker compose up -d kafka schema-registry worker-merchant-a worker-merchant-b worker-merchant-c` over a bare `up -d`, which also pulls `devspace`.
+Standalone `docker-compose` is not required; the `docker compose` subcommand is. Pre-pull images on the demo machine (Schema Registry is a large layer). Prefer `make stack-up` over a bare `docker compose up -d`, which also pulls `devspace`. `make stack-up` starts kafka, schema-registry, the three workers, detector, investigation and surfaces, and does not start `devspace`.
 
 More operator detail for the consumer itself: [`docs/live-ingestion.md`](live-ingestion.md).
 

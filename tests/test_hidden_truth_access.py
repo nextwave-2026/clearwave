@@ -196,13 +196,18 @@ class IsolationTests(unittest.TestCase):
         self.assertIn("./state/ground_truth/merchant-b:/hidden-truth", compose)
         self.assertIn("./state/ground_truth/merchant-c:/hidden-truth", compose)
         self.assertIn("CLEARWAVE_GROUND_TRUTH_DB: /hidden-truth/ground_truth.db", compose)
-        self.assertNotIn("detector:", compose)
         services = _compose_services(compose)
         self.assertIn("investigation", services)
         self.assertNotIn("ground_truth", services["investigation"])
         self.assertNotIn("CLEARWAVE_GROUND_TRUTH_DB", services["investigation"])
         self.assertIn("CLEARWAVE_DB: /data/clearwave.db", services["investigation"])
         self.assertIn("./state:/data", services["investigation"])
+        for name in ("detector", "surfaces"):
+            self.assertIn(name, services)
+            self.assertNotIn("ground_truth", services[name])
+            self.assertNotIn("CLEARWAVE_GROUND_TRUTH_DB", services[name])
+            self.assertIn("CLEARWAVE_DB: /data/clearwave.db", services[name])
+            self.assertIn("./state:/data", services[name])
         other_volume_hits = [
             line
             for line in compose.splitlines()
