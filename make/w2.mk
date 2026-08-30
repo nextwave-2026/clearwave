@@ -18,8 +18,12 @@ detect:
 consume:
 	@$(PYTHON) -m detector consume
 
+# Sweep while consuming, not only at the end: a watch on a developing
+# deviation is worth nothing if it first appears after the cliff.
+DETECT_EVERY ?= 45
+
 live:
-	@$(PYTHON) -m detector consume --seconds 60 --detect
+	@$(PYTHON) -m detector consume --seconds 60 --detect --detect-every $(DETECT_EVERY)
 
 # W1's replayable history, streamed rather than held in memory. Point BACKFILL
 # at the file; it is not in the repository, and at 83 MB it never will be.
@@ -42,4 +46,4 @@ e2e:
 	@docker compose up -d kafka schema-registry \
 	  worker-merchant-a worker-merchant-b worker-merchant-c
 	@test -z "$(BACKFILL)" || $(PYTHON) -m detector ingest "$(BACKFILL)" --stream
-	@$(PYTHON) -m detector consume --seconds $(CONSUME_SECONDS) --detect
+	@$(PYTHON) -m detector consume --seconds $(CONSUME_SECONDS) --detect --detect-every $(DETECT_EVERY)

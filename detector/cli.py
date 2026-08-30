@@ -120,6 +120,57 @@ def incident_id_for(incident: dict[str, Any]) -> str:
     return f"inc-{incident['onset'][:10]}-{digest[:8]}"
 
 
+def _periodic_sweeper(connection, every_seconds: float, sink: list[dict[str, Any]], clock=time.monotonic):
+    """A `consumer.consume` batch hook that sweeps on a wall-clock interval.
+
+    A watch on a developing deviation is only worth anything while it is
+    developing. Sweeping once at the end of a run means the earliest thing the
+    operator ever sees is the cliff, which is the opposite of the point.
+
+    It reuses the consumer's existing `on_batch` hook rather than adding a
+    thread or a scheduler: the consume loop is already calling us after every
+    durable batch, so the only thing missing was a clock. Returns None when the
+    interval is off, which keeps the hook out of the loop entirely.
+    """
+    if every_seconds <= 0:
+        return None
+    next_at = clock() + every_seconds
+
+    def on_batch(_progress) -> None:
+        nonlocal next_at
+        now = clock()
+        if now < next_at:
+            return
+        next_at = now + every_seconds
+        result = _sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
+        sink.append(result)
+        # Headlines to stderr, data to stdout: the run's stdout stays one JSON
+        # document that a script can still parse, while a person watching the
+        # demo sees the watch appear at the moment it appears.
+        incident = result.get("incident")
+        if incident is not None:
+            print(
+                f"detect: incident {incident['incident_id']} "
+                f"{metrics.cohort_key(incident['affected_cohort'])} "
+                f"severity={incident['severity']}",
+                file=sys.stderr, flush=True,
+            )
+        for watch in result.get("watches") or ():
+            print(
+                f"detect: WATCHING {metrics.cohort_key(watch['affected_cohort'])} "
+                f"- {', '.join(watch['detection']['watch']['reasons'])}, "
+                f"projected "
+                f"{watch['financial_impact']['projected_loss_per_hour']['amount']} "
+                f"{watch['financial_impact']['projected_loss_per_hour']['currency']}/hour "
+                "if it continues",
+                file=sys.stderr, flush=True,
+            )
+        if incident is None and not result.get("watches"):
+            print("detect: nothing above the floors and nothing watched", file=sys.stderr, flush=True)
+
+    return on_batch
+
+
 def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
     """One detection sweep over the stored window, in the shape the CLI prints.
 
@@ -234,6 +285,14 @@ def main(argv: list[str] | None = None) -> int:
         help="run a detection sweep on what was consumed, so one command goes "
              "from live traffic to a stored C3 record",
     )
+    consume_command.add_argument(
+        "--detect-every", type=float, default=0.0, metavar="SECONDS",
+        help="also sweep every SECONDS while consuming, instead of only at the "
+             "end. A watch on a developing deviation is only useful if it "
+             "appears while the deviation is developing; without this a live "
+             "run shows nothing until the cliff has already happened. Each "
+             "sweep persists, and its headline goes to stderr as it happens.",
+    )
 
     detect_command = sub.add_parser("detect", help="run one detection sweep over the stored window")
     detect_command.add_argument(
@@ -274,6 +333,7 @@ def main(argv: list[str] | None = None) -> int:
             from_beginning=not args.from_latest,
         )
         deadline = None if args.seconds is None else time.monotonic() + args.seconds
+        sweeps: list[dict[str, Any]] = []
         try:
             progress = consumer.consume(
                 connection,
@@ -282,6 +342,7 @@ def main(argv: list[str] | None = None) -> int:
                 idle_polls=args.idle_polls,
                 max_messages=args.max_messages,
                 deadline=deadline,
+                on_batch=_periodic_sweeper(connection, args.detect_every, sweeps),
             )
         except KeyboardInterrupt:
             # Whatever the last completed batch wrote is already durable and
@@ -294,6 +355,8 @@ def main(argv: list[str] | None = None) -> int:
             "consumed": (progress.as_dict() if progress is not None else "interrupted"),
             "stored": store.stored_counts(connection),
         }
+        if sweeps:
+            summary["periodic_detection"] = sweeps
         if args.detect:
             summary["detection"] = _sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
         print(json.dumps(summary, indent=2, sort_keys=True))

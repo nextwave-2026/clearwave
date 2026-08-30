@@ -769,6 +769,25 @@ class WatchTests(unittest.TestCase):
         _, sweep = self._sweep(events, persist=False)
         self.assertEqual([w["affected_cohort"] for w in sweep["watches"]], [{}])
 
+    def test_a_periodic_sweeper_is_absent_when_the_interval_is_off(self):
+        connection, _, _ = loaded(synthetic.healthy())
+        self.assertIsNone(cli._periodic_sweeper(connection, 0.0, []))
+
+    def test_a_periodic_sweeper_sweeps_on_its_own_interval(self):
+        connection, _, _ = loaded(synthetic.two_stage_deviation_mild_only())
+        now = [0.0]
+        sink: list = []
+        hook = cli._periodic_sweeper(connection, 30.0, sink, clock=lambda: now[0])
+        hook(None)
+        self.assertEqual(sink, [], "not yet due")
+        now[0] = 31.0
+        hook(None)
+        self.assertEqual(len(sink), 1)
+        self.assertEqual(len(sink[0]["watches"]), 1)
+        now[0] = 40.0
+        hook(None)
+        self.assertEqual(len(sink), 1, "the interval has not elapsed again")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
