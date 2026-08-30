@@ -1028,6 +1028,13 @@ class WatchTests(unittest.TestCase):
         self.assertEqual(cohort.get("provider"), "adyen", cohort)
         # Must not stop on the card confounder.
         self.assertNotEqual(cohort, {"payment_method": "card"}, cohort)
+        # Merchant+provider is the product shape; country/bank children split
+        # one inject and fire on healthy noise.
+        self.assertEqual(
+            set(cohort),
+            {"merchant_id", "provider"},
+            cohort,
+        )
 
     def test_a_detected_incident_resolves_when_traffic_recovers(self):
         connection, first = self._sweep(synthetic.two_stage_deviation_mild_only())
@@ -1058,6 +1065,88 @@ class WatchTests(unittest.TestCase):
         self.assertIsNone(recovered["incident"])
         row = store.load_incident(connection, watch_id)
         self.assertEqual(row["lifecycle_state"], "resolved")
+
+    def test_residual_collapse_heat_does_not_remint_after_clear(self):
+        """After Clear, residual full-window heat must not mint a second active row.
+
+        Live verify-demo beat 7 failed when the diagnosed row resolved (or stayed)
+        while the next onset walk stored a fresh detected incident on the same
+        residual collapse still sitting in the 5-minute window.
+        """
+        connection, first = self._sweep(synthetic.two_stage_deviation_mild_only())
+        watch_id = first["watches"][0]["incident_id"]
+        store.ingest(connection, synthetic.two_stage_deviation())
+        detected = cli._sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
+        self.assertEqual(detected["incident"]["incident_id"], watch_id)
+        connection.execute(
+            "UPDATE incident SET lifecycle_state = ? WHERE incident_id = ?",
+            ("diagnosed", watch_id),
+        )
+        connection.commit()
+        bounds = store.window_bounds(connection)
+        last = datetime.fromtimestamp(bounds[1], tz=timezone.utc).replace(tzinfo=None)
+        # Two minutes of healthy immediately after collapse - the CLEAR wait
+        # window - leaving residual collapse still inside the 5-minute detect
+        # window so full-window heat remains.
+        later = []
+        index = 0
+        # Healthy recovery on every merchant behind provider-p2. A single-merchant
+        # healthy tail leaves the sibling merchant's residual collapse looking
+        # like a fresh localised incident.
+        p2_seeds = [
+            event
+            for event in synthetic.healthy(minutes=1, per_minute=40)
+            if event.get("provider") == "provider-p2"
+        ]
+        self.assertGreaterEqual(len(p2_seeds), 2, "need multi-merchant p2 healthy seeds")
+        merchants = sorted({event["merchant_id"] for event in p2_seeds})
+        for minute in range(1, 3):
+            for merchant in merchants:
+                seed = next(e for e in p2_seeds if e["merchant_id"] == merchant)
+                for slot in range(30):
+                    index += 1
+                    target = last + timedelta(minutes=minute, seconds=slot % 50)
+                    shifted = dict(seed)
+                    shifted["occurred_at"] = target.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    shifted["payment_id"] = f"pay-clear-tail-{index}"
+                    shifted["attempt_id"] = f"att-clear-tail-{index}"
+                    shifted["event_id"] = f"evt-clear-tail-{index}"
+                    shifted["status"] = "approved"
+                    shifted.pop("normalized_decline_reason", None)
+                    later.append(shifted)
+        store.ingest(connection, later)
+        first_clear = cli._sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
+        self.assertIsNone(
+            first_clear["incident"],
+            "residual full-window heat must not form a live incident once the tail recovered",
+        )
+        row = store.load_incident(connection, watch_id)
+        self.assertEqual(row["lifecycle_state"], "resolved")
+        # Onset walks as the window advances: a third minute of healthy must not
+        # mint a new active id on leftover collapse traffic.
+        more = []
+        for merchant in merchants:
+            seed = next(e for e in p2_seeds if e["merchant_id"] == merchant)
+            for slot in range(30):
+                target = last + timedelta(minutes=3, seconds=slot % 50)
+                shifted = dict(seed)
+                shifted["occurred_at"] = target.strftime("%Y-%m-%dT%H:%M:%SZ")
+                shifted["payment_id"] = f"pay-clear-more-{merchant}-{slot}"
+                shifted["attempt_id"] = f"att-clear-more-{merchant}-{slot}"
+                shifted["event_id"] = f"evt-clear-more-{merchant}-{slot}"
+                shifted["status"] = "approved"
+                shifted.pop("normalized_decline_reason", None)
+                more.append(shifted)
+        store.ingest(connection, more)
+        second_clear = cli._sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
+        self.assertIsNone(second_clear["incident"])
+        active = [
+            r
+            for r in store.list_incidents(connection)
+            if str(r.get("lifecycle_state") or "")
+            not in {"resolved", "mitigated", "watching", ""}
+        ]
+        self.assertEqual(active, [], active)
 
     def test_a_watch_that_is_no_longer_true_is_resolved(self):
         connection, first = self._sweep(synthetic.two_stage_deviation_mild_only())

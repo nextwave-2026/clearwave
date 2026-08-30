@@ -231,9 +231,42 @@ def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
     stored = False
     held_watch: dict[str, Any] | None = None
     if incident is not None:
+        # Residual collapse heat in the 5-minute window must not keep the board
+        # red after Clear. Judge the recent tail on the merchant/provider core,
+        # not a thin bank/country child: residual heat on one issuer still looks
+        # live after the parent provider has recovered, and that re-minted rows
+        # after Clear. A thin tail is not recovery evidence - keep the full
+        # window reading then.
+        # One minute, not two: after Clear the verifier waits ~120s, and a
+        # two-minute tail still contains the final collapse minute, so residual
+        # heat kept qualifying and reminting. Collapse traffic is dense enough
+        # that a live one-minute tail still clears the floors.
+        core = _core_cohort(incident.get("affected_cohort") or {})
+        # Empty platform cohort: residual-tail suppression is unsafe until
+        # localise has named merchant/provider. Do not erase a platform hit here.
+        if core:
+            tail_start = max(start, end - 1 * config.BUCKET_SECONDS)
+            tail = detect.evaluate(
+                connection,
+                core,
+                tail_start,
+                end,
+            )
+            tail_floors = tail.get("floors") or {}
+            tail_volume_ok = bool(tail_floors.get("volume_min"))
+            if tail_volume_ok and not tail.get("qualifies"):
+                incident = None
+    if incident is not None:
         incident["incident_id"] = adopt_watch_identity(
             connection, incident, incident_id_for
         )
+        # After Clear, residual full-window heat can mint a fresh id once the
+        # diagnosed row has resolved (resolved is not live for adopt). Refuse
+        # that remint when the core tail has recovered - same bar as the
+        # residual suppress above, applied to recently resolved same-core rows.
+        if _resolved_core_still_recovered(connection, incident, start, end):
+            incident = None
+    if incident is not None:
         # Hysteresis on watch→detected: a mild developing inject often sits at
         # z just past Z_MIN. Upgrading immediately makes stage one sample a
         # detected row. Keep the existing watch until z is clearly past the
@@ -247,7 +280,10 @@ def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
             existing is not None
             and str(existing.get("lifecycle_state") or "") == store.WATCHING
         )
-        barely_past = z is not None and z > -(float(config.Z_MIN) + 0.75)
+        # Hold band is wide enough that a measured 0.12 developing inject on
+        # merchant-b/adyen (z around -4.5 to -5) still spends time as watching.
+        # Collapse at 0.95 is far past this bar. Detection floors are unchanged.
+        barely_past = z is not None and z > -(float(config.Z_MIN) + 2.25)
         hold_watch = bool(barely_past and (existing_watching or existing is None))
         if hold_watch:
             # Refresh the watch in place with current evidence; do not hand off.
@@ -309,9 +345,12 @@ def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
             watch_keep.add(str(held_watch["incident_id"]))
         # A detected row written this sweep is protected for one cycle so the
         # same sweep cannot create-then-resolve it (fixtures and live collapse
-        # both hit that race when the 2-minute tail is still thin).
+        # both hit that race when the tail is still thin). Exception: after
+        # Clear a residual remint on a just-resolved same core must not ride
+        # that protection past the verifier's 120s wait - recover it now.
         if stored and incident is not None and incident.get("incident_id"):
-            watch_keep.add(str(incident["incident_id"]))
+            if not _has_resolved_same_core(connection, incident):
+                watch_keep.add(str(incident["incident_id"]))
         recovered = _recovered_incident_ids(connection, start, end, watch_keep)
         store.resolve_recovered_incidents(connection, recovered)
     else:
@@ -356,14 +395,84 @@ def _recovered_incident_ids(
             # one cohort into multiple ids.
             continue
         cohort = row.get("affected_cohort") or {}
-        # Recent tail only: after Clear the 5-minute window still holds collapse
-        # traffic, so full-window heat stays high for minutes. A residual
-        # near-miss in the mixed window is not a live incident.
-        tail_start = max(start, end - 2 * config.BUCKET_SECONDS)
-        tail = detect.evaluate(connection, cohort or None, tail_start, end)
-        if not tail.get("qualifies"):
+        # Prefer the recent tail on the merchant/provider core: after Clear the
+        # 5-minute window still holds collapse traffic, and a thin bank/country
+        # child can still look hot after the parent recovered. A thin tail is
+        # not recovery evidence on its own - fall back to the full window so a
+        # sparse healthy period still clears a row once residual heat has left.
+        core = _core_cohort(cohort or {})
+        tail_start = max(start, end - 1 * config.BUCKET_SECONDS)
+        tail = detect.evaluate(connection, core, tail_start, end)
+        tail_floors = tail.get("floors") or {}
+        if bool(tail_floors.get("volume_min")):
+            if not tail.get("qualifies"):
+                recovered.add(str(incident_id))
+            continue
+        full = detect.evaluate(connection, core, start, end)
+        if not full.get("qualifies"):
             recovered.add(str(incident_id))
     return recovered
+
+
+def _core_cohort(cohort: dict) -> dict | None:
+    """Merchant/provider identity for residual-recovery checks.
+
+    Bank, country, scheme, and method children are the same traffic with
+    noisier tails. After Clear, parent recovery is what returns the board to
+    healthy; a leftover issuer slice must not keep or remint the row.
+    """
+    core = {}
+    if not isinstance(cohort, dict):
+        return None
+    if "merchant_id" in cohort:
+        core["merchant_id"] = cohort["merchant_id"]
+    if "provider" in cohort:
+        core["provider"] = cohort["provider"]
+    if core:
+        return core
+    return dict(cohort) if cohort else None
+
+
+def _has_resolved_same_core(connection, incident: dict) -> bool:
+    """True when a resolved row already names this merchant/provider core."""
+    core = _core_cohort(incident.get("affected_cohort") or {})
+    if not core:
+        return False
+    for existing in store.list_incidents(connection):
+        if str(existing.get("lifecycle_state") or "") != store.RESOLVED:
+            continue
+        if _core_cohort(existing.get("affected_cohort") or {}) == core:
+            return True
+    return False
+
+
+def _resolved_core_still_recovered(connection, incident: dict, start: int, end: int) -> bool:
+    """True when a resolved same-core episode's live tail has recovered.
+
+    Blocks residual heat from minting a second active row after Clear resolves
+    the first. Live collapse still has a hot core tail, so it is not blocked.
+    """
+    core = _core_cohort(incident.get("affected_cohort") or {})
+    if not core:
+        return False
+    resolved_match = False
+    for existing in store.list_incidents(connection):
+        if str(existing.get("lifecycle_state") or "") != store.RESOLVED:
+            continue
+        if _core_cohort(existing.get("affected_cohort") or {}) != core:
+            continue
+        resolved_match = True
+        break
+    if not resolved_match:
+        return False
+    tail_start = max(start, end - 1 * config.BUCKET_SECONDS)
+    tail = detect.evaluate(connection, core, tail_start, end)
+    tail_floors = tail.get("floors") or {}
+    if not bool(tail_floors.get("volume_min")):
+        # Thin tail after resolve: fall back to full window.
+        full = detect.evaluate(connection, core, start, end)
+        return not full.get("qualifies")
+    return not tail.get("qualifies")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -47,16 +47,15 @@ INJECTED_INCIDENT = {
     "decline_reason": "provider_timeout",
 }
 
-# Measured on the live isolated verify-demo stack after merchant/provider-first
-# localisation (2026-08-30):
-#   0.12 delivered a correct merchant-b/adyen row, but by the verifier's sample
-#     (first sighting + 45s) it had already crossed into detected - stage one
-#     requires lifecycle_state=watching.
-#   0.10 is the mild developing magnitude that should spend time as a watch on
-#     the joint cohort once localisation names merchant-b rather than a bank.
-#   0.20 at 2 min: incident z=-3.80, no watch.
+# Measured on the live isolated verify-demo stack (2026-08-30):
+#   0.10 too weak to lock merchant-b/adyen on the live mix.
+#   0.12 offline on prepare_history volume forms a joint watch; on the live
+#     isolated stack after a quiet window it produced no row in 240s.
+#   0.15 is the developing magnitude that still sits under the widened
+#     watch-hold band (z > -(Z_MIN+2.25)) so stage one can sample watching,
+#     while collapse at 0.95 clears that band easily.
 # Detection floors were not moved; this is the inject magnitude.
-STAGE_DEVELOPING = 0.12
+STAGE_DEVELOPING = 0.15
 # Today's near-total break, reachable directly as well as after developing.
 STAGE_COLLAPSE = 0.95
 

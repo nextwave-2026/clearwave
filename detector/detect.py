@@ -190,6 +190,14 @@ def localise(
     path.append(evaluate(connection, current or None, start, end))
 
     for _ in range(config.LOCALISE_MAX_DEPTH):
+        # Merchant-relative provider trouble is the product shape. Once both
+        # axes are named, bank/country/scheme children are the same traffic
+        # with noisier z - they minted healthy-window false watches and split
+        # one demo inject into several ids. Provider-only or merchant-only
+        # parents may still descend (provider+country, provider+bank fixtures).
+        if "merchant_id" in current and "provider" in current:
+            break
+
         best_split: dict[str, Any] | None = None
         children: dict[str, list[dict[str, Any]]] = {}
         global_value_counts: dict[str, int] = {}
@@ -377,21 +385,64 @@ def localise(
                 current = dict(winner["cohort"])
                 continue
 
+        # Platform can qualify from one merchant's mild inject while contrast
+        # separation stays under LOCALISE_MIN_SEPARATION. Without a unique-core
+        # descent here, stage one stayed on `{}` and the residual tail check
+        # erased it. Only from the platform: a provider parent must still be
+        # free to take bank (confounded fixture) and a merchant parent must not
+        # be forced onto a provider child (high-impact fixture).
+        if path[-1]["qualifies"] and core_parent:
+            unique_core = [
+                (dimension, child)
+                for dimension, siblings in children.items()
+                if dimension in ("merchant_id", "provider")
+                and sum(item["qualifies"] for item in siblings) == 1
+                for child in siblings
+                if child["qualifies"]
+            ]
+            if unique_core:
+                dimension, winner = min(
+                    unique_core,
+                    key=lambda item: (
+                        0 if item[0] == "merchant_id" else 1,
+                        -(item[1]["absolute_drop"] or 0.0),
+                        item[1]["cohort_key"],
+                    ),
+                )
+                winner["split"] = {
+                    "dimension": dimension,
+                    "kind": "qualifying_child",
+                }
+                path.append(winner)
+                current = dict(winner["cohort"])
+                continue
+
         # A qualified multi-tenant provider can still be sharpened onto the unique
-        # qualified merchant carrying the drop (adyen -> merchant-b). Only the
-        # provider->merchant direction is forced here: merchant->provider would
-        # re-specify confounders that existing localisations correctly omit.
-        if path[-1]["qualifies"] and needs_merchant:
+        # qualified merchant carrying the drop (adyen -> merchant-b). The reverse
+        # direction (merchant -> unique provider) is required for the demo joint
+        # after platform->merchant unique-core descent: merchant-b qualifies alone
+        # while contrast separation to adyen stays under the min bar.
+        if path[-1]["qualifies"] and (needs_merchant or needs_provider):
+            want = "merchant_id" if needs_merchant else "provider"
             parent_drop = path[-1].get("absolute_drop") or 0.0
+            # provider->merchant keeps the original >= parent_drop bar.
+            # merchant->provider needs real concentration (min separation) so a
+            # merchant-wide hit is not re-specified as its noisiest provider
+            # (high-impact fixture stays merchant-a only).
+            needed = (
+                parent_drop
+                if needs_merchant
+                else parent_drop + config.LOCALISE_MIN_SEPARATION
+            )
             sharpening = [
                 (dimension, child)
                 for dimension, siblings in children.items()
-                if dimension == "merchant_id"
+                if dimension == want
                 and len(siblings) >= 2
                 and sum(item["qualifies"] for item in siblings) == 1
                 for child in siblings
                 if child["qualifies"]
-                and (child.get("absolute_drop") or 0.0) + 1e-9 >= parent_drop
+                and (child.get("absolute_drop") or 0.0) + 1e-9 >= needed
             ]
             if sharpening:
                 dimension, winner = min(
@@ -1650,16 +1701,19 @@ def build_watches(
             )
             if not strong:
                 continue
-        # Multi-merchant provider-only leading indicators without a merchant are
-        # usually healthy mix noise (beat healthy-traffic-quiet on provider=adyen).
-        # A real slow provider still watches when latency/timeouts are strong above.
+        # Multi-merchant single-axis leading indicators without the merchant+
+        # provider pair are usually healthy mix noise (beat healthy-traffic-quiet
+        # on provider=adyen and merchant-b alone). A real slowdown still watches
+        # when latency/timeouts/volume are strong above.
         cohort = cohort or {}
-        if (
+        multi_merchant = len(store_dimension_values(connection, "merchant_id")) >= 2
+        single_axis_leading = (
             reasons == ["leading_indicators"]
-            and "provider" in cohort
-            and "merchant_id" not in cohort
-            and len(store_dimension_values(connection, "merchant_id")) >= 2
-        ):
+            and multi_merchant
+            and not ("provider" in cohort and "merchant_id" in cohort)
+            and ("provider" in cohort or "merchant_id" in cohort)
+        )
+        if single_axis_leading:
             indicators = reading["indicators"]
             latency_ratio = indicators["mean_latency_ms"].get("ratio") or 0.0
             strong = (
