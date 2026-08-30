@@ -402,13 +402,11 @@ be a caller quietly reading a wider answer than the one asked for.
 - `not_measured` names a counter this tool deliberately does not report, with the reason. It is a
   statement about the tool, not a counter.
 - `oldest_event_at`, `newest_event_at`, `watermark`, `as_of` and `lag_seconds` all describe the
-  **canonical attempt stream**, which is what `as_of` has meant on every tool in this contract since
-  the first one. Telemetry and closed-payment rows are stored beside attempts and counted in `stored`,
-  but they do not move the watermark, and this tool does not redefine it. So that a store holding only
-  telemetry cannot report "nothing observed" while plainly holding something, `newest_by_kind` gives
-  each record kind its own newest event time - `attempts`, `telemetry_samples`, `payments_closed`,
-  each an RFC 3339 timestamp or `null`. It is a second set of readings, never a replacement for the
-  first: `newest_by_kind.attempts` and `newest_event_at` are the same value.
+  **full accepted event stream**. The bounds span attempt occurrence times, telemetry sample times,
+  and closed-payment times, so every accepted record can advance the shared watermark. `newest_by_kind`
+  gives each record kind its own newest event time - `attempts`, `telemetry_samples`,
+  `payments_closed`, each an RFC 3339 timestamp or `null` - so operators can identify the stream that
+  advanced the shared reading.
 
 **`duplicates` is absent on purpose.** At-least-once delivery is turned into exactly-once counting by
 `INSERT OR IGNORE` on `event_id`, so a redelivered record leaves no row behind. The count exists only

@@ -440,8 +440,53 @@ LIVE_HISTORY_SEED = 20260830
 DEMO_MERCHANT_ID = "merchant-b"
 DEMO_PROVIDER = "adyen"
 LIVE_HISTORY_HOURS = 8.0
-LIVE_HISTORY_PER_MERCHANT_PER_MINUTE = 24
-_HEALTHY_LATENCY_MS = 220
+# One payment chain per worker tick, and W1's tick is `EVENT_INTERVAL_SECONDS`,
+# which defaults to 1.0s in `worker/cli.py` - so a running merchant emits 60
+# payments a minute. Measured 2026-08-30 on the live stack: 59.8, 59.7 and 59.8
+# for merchants a, b and c. 24 was not a smaller sample of the same traffic, it
+# was different traffic, and the detector reads the difference three ways.
+#
+# `baseline_conversion` takes 60 trailing buckets against a 5-bucket window, so
+# a matched history gives every cohort a trailing baseline 12x its window. At
+# 24 against a live 60 that ratio collapses to about 2, and a deep joint cohort
+# is left estimating its expected rate from a double-handful of payments.
+# Measured on the 11:37Z store: `{issuing_bank: Banorte, payment_method: cash,
+# provider: stripe}` had 36 payments in its window against a 60-minute trailing
+# baseline of 79 - and raised a `medium` incident on merchant-a, which nobody
+# had injected, while the deviation the judge had actually started sat quietly
+# in a watch row.
+#
+# The second reading is `FORMING_VOLUME_COMPARABLE_MAX`. Recent volume 2.47x a
+# trailing rate is outside the [0.5, 2.0] comparability band, so for the first
+# hour after a warm start the latency and timeout indicators judge nothing at
+# all - two of the three leading indicators silently off, on the stage where
+# `effect=latency` and `effect=outage` are the shapes only they can see.
+#
+# The third is simply that a thin history is noisy history: its own cohorts sit
+# at 40 payments per 5-minute window against live traffic's 100, and a warm
+# start is supposed to be the calm the demo opens on.
+LIVE_HISTORY_PER_MERCHANT_PER_MINUTE = 60
+# W1's own live latency and decline mix, restated from worker/helpers/payment.py
+# because they are inline literals there rather than named constants. A flat
+# constant here is not a harmless simplification: `prepare_history` writes eight
+# hours of it, the live workers then publish `random.randint(80, 400)` plus a
+# 2s-8s error tail, and the detector's trailing latency baseline is therefore
+# ~220ms against ~350ms of live traffic - a ratio of 1.58, over
+# FORMING_LATENCY_P95_RATIO, on EVERY cohort at once for the first hour after a
+# warm start. Measured 2026-08-30 on the 07:45Z verification store: that is
+# exactly where the `provider=mercadopago` and `issuing_bank=Banco do Brasil`
+# rows came from, both on `mean_latency_ms` alone with conversion untouched
+# (z +0.57 and -0.01). History must degrade like live traffic or it manufactures
+# a platform-wide deviation out of the seam between the two.
+_HEALTHY_LATENCY_RANGE_MS = (80, 400)
+_ERROR_LATENCY_RANGE_MS = (2_000, 8_000)
+_ERROR_SHARE_OF_DECLINES = 0.2
+_ERROR_DECLINE_REASONS = (
+    "provider_timeout",
+    "provider_error",
+    "processing_error",
+    "rate_limited",
+)
 
 
 def _live_merchant_specs() -> tuple[dict[str, Any], ...]:
@@ -504,6 +549,18 @@ def iter_live_healthy_history(
     Randomness is seeded; the same `(as_of, seed, hours)` pair reproduces the
     same history. Conversion is held flat on purpose - this is context, not
     an incident.
+
+    Payments are attempt *chains*, not single attempts, because W1's are: a
+    declined attempt is retried `RETRY_PROBABILITY` of the time, away from the
+    provider that declined it, up to `MAX_ATTEMPTS`. Skipping that made the
+    history's payment-level conversion ~0.875 against ~0.96 of live traffic,
+    and `baseline_conversion` reads payment conversion. Measured 2026-08-30 on
+    the 07:45Z verification store: every cohort on healthy live traffic read
+    z +4 to +7 against this baseline, the platform itself at z +7.7, and the
+    judge's own `developing` injection - a real 18-point drop on
+    merchant-b/adyen - arrived as a 2.6-point one at z -0.9 and crossed no
+    floor at all for four minutes. A warm start must be indistinguishable from
+    live traffic or it is not a baseline, it is a step change.
     """
     if minutes is not None and hours is not None:
         raise ValueError("pass hours or minutes, not both")
@@ -517,7 +574,11 @@ def iter_live_healthy_history(
     if per_merchant_per_minute < 1:
         raise ValueError("per_merchant_per_minute must be at least 1")
 
-    from worker.helpers.payment import BASELINE_DECLINE_PROBABILITY
+    from worker.helpers.payment import (
+        BASELINE_DECLINE_PROBABILITY,
+        MAX_ATTEMPTS,
+        RETRY_PROBABILITY,
+    )
 
     rng = random.Random(seed)
     specs = _live_merchant_specs()
@@ -543,28 +604,56 @@ def iter_live_healthy_history(
                 occurred = minute_start + timedelta(
                     seconds=slot % 60, milliseconds=(index % 10) * 10
                 )
-                event = {
-                    "event_id": f"hist-{seed}-{index:07d}",
+                # One payment, one chain: the dimensions W1 fixes per payment
+                # are fixed here too, and only the provider moves on a retry.
+                shared = {
                     "payment_id": f"pay-hist-{index:07d}",
-                    "attempt_id": f"att-hist-{index:07d}-1",
-                    "attempt_number": 1,
-                    "occurred_at": _iso(occurred),
                     "merchant_id": spec["merchant_id"],
-                    "provider": providers[slot % len(providers)],
                     "payment_method": payment_method,
                     "card_network": (
                         networks[slot % len(networks)] if payment_method == "card" else None
                     ),
                     "country": spec["country"],
                     "issuing_bank": banks[slot % len(banks)],
-                    "status": "approved" if approved else "declined",
                     "amount": rng.randint(lo, hi) / 100.0,
                     "currency": spec["currency"],
-                    "latency_ms": _HEALTHY_LATENCY_MS,
                 }
-                if not approved:
-                    event["normalized_decline_reason"] = "insufficient_funds"
-                yield event
+                provider = providers[slot % len(providers)]
+                for attempt_number in range(1, MAX_ATTEMPTS + 1):
+                    event = dict(
+                        shared,
+                        event_id=f"hist-{seed}-{index:07d}-{attempt_number}",
+                        attempt_id=f"att-hist-{index:07d}-{attempt_number}",
+                        attempt_number=attempt_number,
+                        occurred_at=_iso(
+                            occurred + timedelta(milliseconds=50 * (attempt_number - 1))
+                        ),
+                        provider=provider,
+                        status="approved" if approved else "declined",
+                        latency_ms=rng.randint(*_HEALTHY_LATENCY_RANGE_MS),
+                    )
+                    if not approved:
+                        # One decline in five is an `error`, not a `declined`,
+                        # and carries a multi-second latency. That is what
+                        # gives the trailing baseline a timeout share and a
+                        # latency tail to compare live traffic against.
+                        if rng.random() < _ERROR_SHARE_OF_DECLINES:
+                            event["status"] = "error"
+                            event["normalized_decline_reason"] = rng.choice(
+                                _ERROR_DECLINE_REASONS
+                            )
+                            event["latency_ms"] = rng.randint(*_ERROR_LATENCY_RANGE_MS)
+                        else:
+                            event["normalized_decline_reason"] = "insufficient_funds"
+                    yield event
+                    if approved or attempt_number == MAX_ATTEMPTS:
+                        break
+                    if rng.random() > RETRY_PROBABILITY:
+                        break  # given up on, not exhausted - W1's "abandoned"
+                    # W1 retries away from the provider that just declined.
+                    alternatives = [name for name in providers if name != provider]
+                    provider = rng.choice(alternatives) if alternatives else provider
+                    approved = rng.random() >= BASELINE_DECLINE_PROBABILITY
 
 
 def live_healthy_history(**kwargs: Any) -> list[dict[str, Any]]:

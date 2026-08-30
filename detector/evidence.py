@@ -955,16 +955,11 @@ def _ingest_health(connection: sqlite3.Connection, request: dict[str, Any]) -> d
     to recover it here, so it is named in `not_measured` rather than guessed
     at. `not_measured` is a statement about this tool, not a counter.
 
-    **The event-time fields describe the canonical attempt stream.**
+    **The event-time fields describe every accepted event stream.**
     `newest_event_at`, `watermark`, `as_of` and `lag_seconds` all read
-    `store.window_bounds`, which is the attempt table - the same stream `as_of`
-    has meant on every C2 tool since the first one, and not a meaning this tool
-    is free to redefine. Telemetry and closed-payment rows are stored beside
-    attempts and are counted in `stored`, but they do not move the watermark.
-    That would leave a store holding only telemetry samples reporting "nothing
-    observed" while it plainly holds something, so `newest_by_kind` reports each
-    kind's own newest event time separately. It is a second set of readings, not
-    a redefinition of the first.
+    `store.window_bounds`, which spans attempts, telemetry samples, and closed
+    payments. `newest_by_kind` retains each stream's individual newest event for
+    operators diagnosing which stream moved the shared freshness reading.
 
     **`rejected` and `dead_letter.count` are one measurement, not two.** A
     refused record is dead-lettered in the same statement that rejects it, so
@@ -1021,10 +1016,8 @@ def _ingest_health(connection: sqlite3.Connection, request: dict[str, Any]) -> d
         },
         "oldest_event_at": schema.iso_utc(bounds[0]) if bounds else None,
         "newest_event_at": schema.iso_utc(bounds[1]) if bounds else None,
-        # Per-kind newest event time. `newest_event_at` above is the canonical
-        # attempt stream and is what the watermark is cut from; these are read
-        # so that a store holding telemetry and no payments cannot report
-        # "nothing observed" while holding something.
+        # Per-kind newest event times identify which stream moved the shared
+        # freshness reading above.
         "newest_by_kind": {
             name: _newest_event_at(connection, store.KINDS[kind], column)
             for name, kind, column in (
@@ -1054,9 +1047,8 @@ def _ingest_health(connection: sqlite3.Connection, request: dict[str, Any]) -> d
 def _newest_event_at(connection: sqlite3.Connection, table: str, column: str) -> str | None:
     """The newest event time in one stored table, or None where it holds none.
 
-    Read-only, and deliberately here rather than in `store`: the watermark's
-    definition is the attempt stream and must not start depending on what else
-    happens to be stored, or every tool's `as_of` moves with telemetry.
+    Read-only, and deliberately here rather than in `store`: this supplements
+    the shared bounds with the stream that supplied each newest event.
     """
     row = connection.execute(f"SELECT MAX({column}) AS hi FROM {table}").fetchone()
     if row is None or row["hi"] is None:

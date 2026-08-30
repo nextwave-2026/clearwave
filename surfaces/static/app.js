@@ -111,22 +111,49 @@
     return "not in store";
   }
 
+  // Outcomes are the investigation's own vocabulary. `ambiguous` is not the
+  // system failing; it is the system declining to overstate. A token with no
+  // reading here is shown as nothing at all rather than raw.
+  function outcomeWords(outcome) {
+    if (outcome === "diagnosed") return "diagnosed";
+    if (outcome === "ambiguous") return "narrowed, not settled";
+    if (outcome === "insufficient_evidence") return "not enough evidence to name a cause";
+    if (outcome === "agent_unavailable") return "no cause published";
+    return null;
+  }
+
   function isInvestigating(record) {
     return ((record && record.lifecycle_state) || "") === "investigating";
   }
 
-  function narrativePlaceholder(incident, investigation) {
-    if (isInvestigating(incident)) {
-      return "Investigation is running. This usually takes about a minute.";
-    }
+  // One sentence per question rather than the same sentence three times. The
+  // banner above already says why nothing is published; these say what is
+  // missing here, so three empty cards do not read as one error repeated.
+  const WITHHELD_COPY = {
+    running: {
+      cause: "The agent has not named a cause yet.",
+      belief: "The reasoning is published together with the cause above.",
+      action: "The recommendation follows the diagnosis.",
+    },
+    guarded: {
+      cause: "No cause survived the citation check, so none is shown.",
+      belief: "There is no reasoning to show, because there is no claim to reason towards.",
+      action: "No recommendation is offered on a cause the system could not stand behind.",
+    },
+    none: {
+      cause: "No investigation has run on this incident yet.",
+      belief: "Nothing to believe or doubt yet. The measured record beside this stands on its own.",
+      action: "No recommendation until there is a diagnosis to base one on.",
+    },
+  };
+
+  function narrativePlaceholder(incident, investigation, question) {
     const outcome = investigation && investigation.outcome;
-    if (outcome === "agent_unavailable") {
-      return "Narrative unavailable because the investigation agent failed.";
-    }
-    if (outcome) {
-      return "Narrative unavailable (" + outcome + ").";
-    }
-    return "Investigation has not run yet.";
+    let bucket = "none";
+    if (isInvestigating(incident)) bucket = "running";
+    else if (outcome === "agent_unavailable") bucket = "guarded";
+    else if (outcome) bucket = "guarded";
+    return WITHHELD_COPY[bucket][question || "cause"];
   }
 
   // C4 narrative fields are objects (statement / explanation / action), not
@@ -143,17 +170,6 @@
       return fallback;
     }
     return String(value);
-  }
-
-  function statusBanner(incident, investigation) {
-    if (isInvestigating(incident)) {
-      return '<div class="note warn tight banner"><h4>Investigation is running</h4><p>This usually takes about a minute.</p></div>';
-    }
-    if (investigation && investigation.narrative_available) return "";
-    const outcome = (investigation && investigation.outcome) || "no investigation";
-    return '<div class="note warn tight banner"><h4>Narrative unavailable (' +
-      escapeHtml(outcome) +
-      ")</h4><p>Localisation, money and the evidence trail remain.</p></div>";
   }
 
   function severityClass(severity) {
@@ -758,10 +774,10 @@
   function renderQueue() {
     if (!state.queue.length) {
       queueBoard.innerHTML = '<p class="empty">No incidents in the store.</p>';
-      queueWho.textContent = "Ordered by stored severity. Recency is not a ranking.";
+      queueWho.textContent = "Ordered by severity, then measured loss per hour. Recency is not a ranking.";
       return;
     }
-    queueWho.textContent = state.queue.length + " in the store · ordered by stored severity. Recency is not a ranking.";
+    queueWho.textContent = state.queue.length + " in the store · ordered by severity, then measured loss per hour. Recency is not a ranking.";
     const table = document.createElement("div");
     table.className = "frame";
     table.innerHTML =
@@ -969,7 +985,7 @@
     const meta = document.createElement("p");
     meta.className = "meta cohort";
     meta.textContent = (incident.incident_id || "") + " · " + (incident.lifecycle_state || "") +
-      (outcome ? " · " + outcome : "") +
+      (outcomeWords(outcome) ? " · " + outcomeWords(outcome) : "") +
       (channels.length ? " · " + channels.map(function (event) {
         return (event.channel || "channel") + ": " + (event.status || "not in store");
       }).join(" · ") : "");
@@ -991,10 +1007,23 @@
       (investigation.result || {}).diagnostic_confidence,
       incident.lifecycle_state
     );
-    const diagnosis = '<div class="panel"><h3>Diagnosis</h3><div class="dual">' +
+    // PRD section 11 keeps severity and confidence independent on purpose, and
+    // docs/ownership.md puts them in different workstreams so they cannot
+    // collapse into one score. Drawing them side by side without saying that
+    // leaves a judge reading a puzzling pair; one line of copy turns it into a
+    // design decision. It asserts no figure.
+    const diagnosis = '<div class="panel"><h3>Priority and confidence</h3>' +
+      '<p class="hint">Two readings, two owners, deliberately not one score.</p>' +
+      '<div class="dual">' +
       '<div><span class="dual-l">priority</span>' + diagnosisPair.querySelector(".sev").outerHTML + "</div>" +
       '<div><span class="dual-l">confidence</span>' + diagnosisPair.querySelector(".conf").outerHTML + "</div>" +
-      "</div></div>";
+      "</div>" +
+      '<p class="dual-note">Priority is the measured business impact of the incident. Confidence is the ' +
+      "investigation's assessment of how strongly the evidence supports a cause. Neither is allowed to move " +
+      "the other, so a critical incident at low confidence reads exactly as it should: a large problem " +
+      "nobody can explain yet, which is worse than a small one and not better. Escalation routes on " +
+      "priority alone.</p>" +
+      "</div>";
     frame.innerHTML =
       '<div class="frame-bar"><span class="dot"></span><span class="path mono">' + escapeHtml(path) + "</span></div>" +
       '<div class="frame-body"></div>';
@@ -1011,57 +1040,719 @@
       readoutCell("Observed for", persistence.observed_for_seconds == null ? "not in store" : String(persistence.observed_for_seconds) + "s", "stored persistence, not a clock", "detail-persist") +
       "</dl>"
     );
+    // The cause is the answer this screen exists to give, so it runs the full
+    // width above everything else. Below it, the long "why" takes the wide
+    // column and the shorter answers stack in the narrow one - the reasoning
+    // leads, and the measured facts stay beside it rather than above it.
+    const answered = questions.narrative_available;
+    function withheldOr(question, html) {
+      if (answered) return html;
+      return '<p class="q-none">' +
+        escapeHtml(narrativePlaceholder(incident, investigation, question)) + "</p>";
+    }
+    const cause = questionCard(
+      "4. What probably caused it?",
+      "The investigation's leading hypothesis. Never guessed in the UI.",
+      withheldOr("cause", causeBlock(questions.what_probably_caused_it,
+        narrativePlaceholder(incident, investigation, "cause")))
+    );
     const grid = document.createElement("div");
     grid.className = "detail-grid";
     const left = document.createElement("div");
-    left.appendChild(questionCard("1. What changed?", questions.what_changed, "Copied from the incident change block."));
-    left.appendChild(questionCard("2. Where?", questions.where, "Affected cohort as stored."));
-    left.appendChild(questionCard("3. How much does it matter?", questions.how_much_it_matters, "Financial impact as stored."));
-    const right = document.createElement("div");
-    const narrativeBody = questions.narrative_available
-      ? null
-      : narrativePlaceholder(incident, investigation);
-    right.appendChild(questionCard(
-      "4. What probably caused it?",
-      questions.narrative_available ? questions.what_probably_caused_it : narrativeBody,
-      "Investigation narrative. Never guessed in the UI."
-    ));
-    right.appendChild(questionCard(
+    // Full width is the promotion an answer earns. With nothing published there
+    // is nothing to promote, and a wide empty card only makes the gap bigger,
+    // so the three unanswered questions stay a stack in the narrow rhythm.
+    if (answered) {
+      cause.classList.add("q-cause");
+      body.appendChild(cause);
+    } else {
+      left.appendChild(cause);
+    }
+    left.appendChild(questionCard(
       "5. Why do we believe that?",
-      questions.narrative_available ? questions.why_we_believe_that : narrativeBody,
-      "Confirmed facts, competing explanations, missing evidence."
+      "What is established, what is not ruled out, and what would settle it.",
+      withheldOr("belief", beliefBlock(questions.why_we_believe_that,
+        narrativePlaceholder(incident, investigation, "belief")))
     ));
+    const right = document.createElement("div");
     right.appendChild(questionCard(
       "6. What should the TAM do?",
-      questions.narrative_available ? questions.what_the_operator_should_do : narrativeBody,
-      "Recommended next action from the investigation record."
+      "Recommended next action from the investigation record.",
+      withheldOr("action", actionBlock(questions.what_the_operator_should_do,
+        narrativePlaceholder(incident, investigation, "action")))
     ));
+    right.appendChild(questionCard(
+      "1. What changed?",
+      "Copied from the incident change block.",
+      changeBlock(questions.what_changed)
+    ));
+    right.appendChild(questionCard(
+      "2. Where?",
+      "Affected cohort as stored.",
+      whereBlock(questions.where, incident)
+    ));
+    right.appendChild(questionCard(
+      "3. How much does it matter?",
+      "Financial impact as stored.",
+      moneyBlock(questions.how_much_it_matters)
+    ));
+    right.insertAdjacentHTML("beforeend", diagnosis);
     grid.appendChild(left);
     grid.appendChild(right);
     body.appendChild(grid);
     body.insertAdjacentHTML("beforeend", chanCards);
-    body.insertAdjacentHTML("beforeend", diagnosis);
     detailBoard.innerHTML = "";
     detailBoard.appendChild(frame);
     bindCites(detailBoard);
   }
 
-  function questionCard(title, body, hint) {
+  function questionCard(title, hint, inner) {
     const article = document.createElement("article");
     article.className = "panel question";
-    const heading = document.createElement("h3");
-    heading.textContent = title;
-    article.appendChild(heading);
-    if (hint) {
-      const p = document.createElement("p");
-      p.className = "hint";
-      p.textContent = hint;
-      article.appendChild(p);
-    }
-    const pre = document.createElement("pre");
-    pre.textContent = pretty(body);
-    article.appendChild(pre);
+    article.innerHTML = "<h3>" + escapeHtml(title) + "</h3>" +
+      (hint ? '<p class="hint">' + escapeHtml(hint) + "</p>" : "") + inner;
     return article;
+  }
+
+  // ---------------------------------------------------- the agent, in prose
+  //
+  // Everything below turns values that are already in `detail.evidence_trail`,
+  // `detail.investigation` and `detail.incident` into sentences. It reads and
+  // formats; it never computes. A number that reaches the screen through one of
+  // these helpers is the number the store published - docs/ownership.md's W4
+  // rule makes a figure that exists only in the UI a defect of this layer.
+
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  const DIMENSION_WORDS = {
+    merchant_id: "merchant",
+    provider: "provider",
+    payment_method: "method",
+    card_network: "network",
+    country: "country",
+    issuing_bank: "bank",
+  };
+
+  function dimensionWord(key) {
+    return DIMENSION_WORDS[key] || String(key || "").replace(/_/g, " ");
+  }
+
+  function clockOf(stamp) {
+    const match = /T(\d{2}:\d{2})/.exec(String(stamp || ""));
+    return match ? match[1] : null;
+  }
+
+  function dayOf(stamp) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(stamp || ""));
+    if (!match) return null;
+    return String(Number(match[3])) + " " + (MONTHS[Number(match[2]) - 1] || match[2]);
+  }
+
+  // "05:14-05:19 UTC on 30 Aug". A window that does not parse returns null and
+  // the sentence is built without it, rather than half-formatted into something
+  // that reads like a different interval.
+  function windowPhrase(window) {
+    if (!window || typeof window !== "object") return null;
+    const from = clockOf(window.start);
+    const to = clockOf(window.end);
+    if (!from || !to) return null;
+    const startDay = dayOf(window.start);
+    const endDay = dayOf(window.end);
+    if (startDay && endDay && startDay !== endDay) {
+      return from + " on " + startDay + " to " + to + " on " + endDay + " UTC";
+    }
+    return from + "-" + to + " UTC" + (startDay ? " on " + startDay : "");
+  }
+
+  function cohortWords(cohort) {
+    if (!cohort || typeof cohort !== "object") return null;
+    const order = ["merchant_id", "provider", "payment_method", "card_network", "country", "issuing_bank"];
+    const parts = order
+      .filter(function (key) { return cohort[key]; })
+      .map(function (key) { return dimensionWord(key) + " " + cohort[key]; });
+    if (!parts.length) return "all traffic";
+    return parts.join(", ");
+  }
+
+  function targetWords(target) {
+    if (!target || typeof target !== "object") return "the target";
+    const rest = {};
+    Object.keys(target).forEach(function (key) {
+      if (key !== "kind") rest[key] = target[key];
+    });
+    if (target.kind === "service") return "service " + (target.service || cohortWords(rest) || "not named");
+    return cohortWords(rest) || "all traffic";
+  }
+
+  function metricWords(metric) {
+    return String(metric || "payment approval conversion").replace(/_/g, " ");
+  }
+
+  function durationWords(ms) {
+    if (typeof ms !== "number" || !isFinite(ms)) return null;
+    if (ms < 1000) return Math.round(ms) + " ms";
+    if (ms < 60000) return (ms / 1000).toFixed(1) + " s";
+    const seconds = Math.round(ms / 1000);
+    return Math.floor(seconds / 60) + "m " + String(seconds % 60).padStart(2, "0") + "s";
+  }
+
+  function pct(value) {
+    if (typeof value !== "number" || !isFinite(value)) return null;
+    return (value * 100).toFixed(1) + "%";
+  }
+
+  // A stored difference between two ratios, read as percentage points. `shift`
+  // and `absolute_delta` are differences, so "17.5 points" is the honest
+  // reading of 0.175 and "17.5%" is not.
+  function pointsWord(value) {
+    if (typeof value !== "number" || !isFinite(value)) return null;
+    return Math.abs(value * 100).toFixed(1) + " points";
+  }
+
+  function num(value) {
+    if (typeof value !== "number" || !isFinite(value)) return null;
+    return String(value);
+  }
+
+  function moneyOrNull(value) {
+    if (!value || typeof value !== "object" || !("amount" in value)) return null;
+    return money(value);
+  }
+
+  function joinWords() {
+    const parts = Array.prototype.slice.call(arguments).filter(function (part) { return part; });
+    return parts.length ? parts.join(", ") : null;
+  }
+
+  function ofPair(part, whole, word) {
+    if (typeof part !== "number" || typeof whole !== "number") return null;
+    return String(part) + " " + word + " " + String(whole);
+  }
+
+  function lowerFirst(text) {
+    const value = String(text || "");
+    // Only lower a plain capitalised opening. An identifier the store spells a
+    // particular way - "GMV", "P2" - is left exactly as it was published.
+    return /^[A-Z][a-z]/.test(value) ? value.charAt(0).toLowerCase() + value.slice(1) : value;
+  }
+
+  // What the agent asked, said as a question rather than as a request body. The
+  // tool, the cohort and the window are all read from `entry.parameters`.
+  function askedSentence(entry) {
+    const parameters = (entry && entry.parameters) || {};
+    const tool = (entry && entry.tool) || "";
+    const window = windowPhrase(parameters.window);
+    const over = window ? ", over " + window : "";
+    const cohort = cohortWords(parameters.cohort);
+    switch (tool) {
+      case "cohort_metrics":
+        return "How " + (cohort || "the cohort") + " converted" + over + ".";
+      case "cohort_compare":
+        return "How " + (cohort || "the cohort") + " compared with its siblings and its parent" +
+          (parameters.compare_dimensions && parameters.compare_dimensions.length
+            ? ", split by " + parameters.compare_dimensions.map(dimensionWord).join(", ")
+            : "") + over + ".";
+      case "drilldown":
+        return "Which level of the cohort the failure localises to, and where the path stopped" + over + ".";
+      case "decline_breakdown":
+        return "Which decline reasons moved for " + (cohort || "the cohort") + over + ".";
+      case "retry_stats":
+        return "How far retries went for " + (cohort || "the cohort") + ", and what that did to the queue" + over + ".";
+      case "operational_metrics":
+        return "Latency, errors, timeouts and health for " + targetWords(parameters.target) + over + ".";
+      case "confounding_check":
+        return "Whether " + dimensionWord(parameters.dimension_a) + " and " + dimensionWord(parameters.dimension_b) +
+          " can be told apart in the data at all" + over + ".";
+      case "incident_history":
+        return "Whether " + (parameters.merchant_id || "this merchant") + " has been here before.";
+      case "external_status":
+        return "What " + (parameters.provider || "the provider") + " reports about itself, as outside corroboration.";
+      case "financial_impact":
+        return "What this incident is costing" + over + ".";
+      case "metric_series":
+        return "How " + metricWords(parameters.metric) + " moved bucket by bucket for " +
+          (cohort || "all traffic") + over + ".";
+      case "ingest_health":
+        return "Whether anything is still arriving in the store that every other answer here is read from.";
+      default:
+        return "A " + (tool || "gateway") + " query" + over + ".";
+    }
+  }
+
+  // The two or three readings that actually mattered for this tool, as
+  // label/value pairs. Every value is lifted straight out of `entry.response`.
+  function readingsFor(entry) {
+    const response = (entry && entry.response) || {};
+    const rows = [];
+    function add(label, value) {
+      if (value === null || value === undefined || value === "") return;
+      rows.push([label, String(value)]);
+    }
+    if (response.error) {
+      add("refused", response.error.code || "error");
+      add("because", response.error.message || "no message was returned");
+      return rows;
+    }
+    switch ((entry && entry.tool) || "") {
+      case "cohort_metrics": {
+        const payments = response.payment_metrics || {};
+        const attempts = response.attempt_metrics || {};
+        const baseline = response.baseline || {};
+        const expected = payments.expected_approval_conversion != null
+          ? payments.expected_approval_conversion
+          : baseline.payment_approval_conversion;
+        add("payment conversion", joinWords(pct(payments.approval_conversion),
+          pct(expected) ? "against a " + pct(expected) + " baseline" : null));
+        add("payments", ofPair(payments.approved_payments, payments.attempted_payments, "approved of"));
+        add("attempts", joinWords(ofPair(attempts.approved_attempts, attempts.attempts, "approved of"),
+          num(attempts.failed_attempts) ? num(attempts.failed_attempts) + " failed" : null));
+        add("decline mix", (response.decline_mix || []).slice(0, 3).map(function (row) {
+          return row.reason + " " + (pct(row.share) || "share not in store");
+        }).join(" · ") || null);
+        break;
+      }
+      case "cohort_compare": {
+        add("this cohort", pct(((response.target || {}).payment_metrics || {}).approval_conversion));
+        (response.siblings || []).slice(0, 3).forEach(function (sibling) {
+          add(cohortWords(sibling.cohort) || sibling.label || "sibling",
+            pct((sibling.payment_metrics || {}).approval_conversion));
+        });
+        add("everything around it", pct(((response.parent || {}).payment_metrics || {}).approval_conversion));
+        break;
+      }
+      case "drilldown": {
+        const levels = response.levels || [];
+        add("levels walked", levels.length ? levels.map(function (level) { return level.level; }).join(" → ") : null);
+        add("stopped at", response.stopped_at);
+        add("why it stopped", response.stop_reason);
+        break;
+      }
+      case "decline_breakdown": {
+        (response.reasons || []).slice(0, 3).forEach(function (row) {
+          add(row.reason, joinWords(
+            pct(row.share),
+            typeof row.shift === "number"
+              ? (row.shift >= 0 ? "up " : "down ") + pointsWord(row.shift) +
+                (pct(row.baseline_share) ? " on a " + pct(row.baseline_share) + " baseline" : "")
+              : null
+          ));
+        });
+        add("measured against", num(response.failed_attempts)
+          ? num(response.failed_attempts) + " failed attempts" : null);
+        break;
+      }
+      case "retry_stats": {
+        add("attempts per payment", num(response.attempts_per_payment));
+        add("payments retried", ofPair(response.retried_payments, response.payments, "of"));
+        add("deepest retry", num((response.retry_depth || {}).max));
+        const queue = response.queue || {};
+        add("queue", queue.depth_peak == null
+          ? "no queue observation in this window"
+          : joinWords("peak depth " + queue.depth_peak,
+            queue.delay_p95_ms == null ? null : "p95 delay " + queue.delay_p95_ms + " ms"));
+        break;
+      }
+      case "operational_metrics": {
+        const latency = response.latency_ms || {};
+        add("latency", joinWords(
+          latency.p50 == null ? null : "p50 " + latency.p50 + " ms",
+          latency.p95 == null ? null : "p95 " + latency.p95 + " ms",
+          latency.p99 == null ? null : "p99 " + latency.p99 + " ms"
+        ));
+        add("timeouts", pct(response.timeout_rate));
+        add("errors", pct(response.error_rate));
+        add("service health", (response.service_health || {}).status);
+        add("runtime health", (response.runtime_health || {}).status);
+        add("deployment", (response.deployment || {}).deployment_id);
+        break;
+      }
+      case "confounding_check": {
+        if (response.structurally_inseparable === true) {
+          add("can they be told apart", "no - every value of one appears with exactly one value of the other");
+        } else if (response.structurally_inseparable === false) {
+          add("can they be told apart", "yes - the data separates them");
+        }
+        add("what that means", response.interpretation);
+        add("cross-tabulated", ((response.cross_tabulation || {}).rows || []).length
+          ? ((response.cross_tabulation || {}).rows || []).length + " observed combinations" : null);
+        break;
+      }
+      case "incident_history": {
+        const recurrence = response.recurrence || {};
+        add("prior matching incidents", num(recurrence.prior_matching_incidents));
+        add("looking back", recurrence.lookback_days == null ? null : recurrence.lookback_days + " days");
+        add("pattern", recurrence.pattern);
+        add("records returned", String((response.incidents || []).length));
+        break;
+      }
+      case "external_status": {
+        add("status", response.status);
+        add("source", response.source);
+        add("checked at", response.checked_at);
+        add("reason", response.reason);
+        add("effect on the diagnosis", response.diagnostic_effect);
+        break;
+      }
+      case "financial_impact": {
+        const lost = response.estimated_lost_approved_volume || {};
+        add("at risk", moneyOrNull(response.gmv_at_risk));
+        add("if it runs an hour", moneyOrNull(response.loss_per_hour));
+        add("approvals not captured", joinWords(
+          num(lost.payments) ? num(lost.payments) + " payments" : null, moneyOrNull(lost)));
+        add("approval rate", joinWords(pct(response.actual_approval_rate),
+          pct(response.expected_approval_rate) ? "against " + pct(response.expected_approval_rate) + " expected" : null));
+        break;
+      }
+      case "metric_series": {
+        const series = (response.points || []).filter(function (point) { return typeof point.value === "number"; });
+        add("metric", metricWords(response.metric));
+        add("buckets", (response.points || []).length
+          ? (response.points || []).length + " of " + (response.bucket_seconds || 60) + " seconds" : "none returned");
+        if (series.length) {
+          add("first reading", clockOf(series[0].bucket_start) + " · " + series[0].value);
+          if (series.length > 1) {
+            add("last reading", clockOf(series[series.length - 1].bucket_start) + " · " + series[series.length - 1].value);
+          }
+        }
+        add("measured through", response.measured_through);
+        break;
+      }
+      case "ingest_health": {
+        add("accepted", num(response.accepted));
+        add("rejected", num(response.rejected));
+        add("newest event", response.newest_event_at);
+        add("not yet measured", response.lag_seconds == null
+          ? null : response.lag_seconds + " seconds behind the watermark");
+        break;
+      }
+      default:
+        Object.keys(response).sort().forEach(function (key) {
+          if (key === "query_id" || key === "as_of" || rows.length >= 4) return;
+          if (response[key] && typeof response[key] === "object") return;
+          add(key.replace(/_/g, " "), String(response[key]));
+        });
+    }
+    add("measured at", response.as_of);
+    return rows;
+  }
+
+  // A cited claim names the query behind it before you click. This is the same
+  // affordance as every other cite on the board - the same `data-cite`, the
+  // same `citeRecord` lookup, the same drawer - carrying the query's ordinal.
+  function citeChip(citeId, text, label) {
+    return '<button type="button" class="cite cite-q" data-cite="' + escapeHtml(citeId) +
+      '" aria-label="' + escapeHtml(label || "cite") + '">' + escapeHtml(text) + "</button>";
+  }
+
+  function trailSequenceFor(queryId) {
+    const trail = (state.detail && state.detail.evidence_trail) || [];
+    const match = trail.filter(function (entry) {
+      return entry && String(entry.query_id) === String(queryId);
+    })[0];
+    return match ? Number(match.sequence) : null;
+  }
+
+  // C4 evidence items. A citation whose query_id is not in the stored trail is
+  // shown as exactly that rather than given a button that opens nothing; the
+  // validator should make it impossible, and if it ever happens it must be
+  // visible.
+  function evidenceList(items, emptyText) {
+    const rows = (items || []).filter(function (item) { return item && (item.claim || item.query_id); });
+    if (!rows.length) return emptyText ? '<p class="q-none">' + escapeHtml(emptyText) + "</p>" : "";
+    return '<ul class="ev">' + rows.map(function (item) {
+      const sequence = trailSequenceFor(item.query_id);
+      const source = sequence === null
+        ? '<span class="ev-orphan mono">' + escapeHtml(String(item.query_id || "no query id")) + " · not in the stored trail</span>"
+        : citeChip("trail-" + sequence, "Q" + sequence,
+          "cite query " + sequence + ", " + (item.tool || "gateway"));
+      return "<li>" +
+        '<span class="ev-claim">' + escapeHtml(item.claim || "no claim was stored for this citation") + "</span>" +
+        '<span class="ev-src"><span class="ev-tool mono">' + escapeHtml(item.tool || "") + "</span>" + source + "</span>" +
+        "</li>";
+    }).join("") + "</ul>";
+  }
+
+  // -------------------------------------------------- the wait, and the guard
+
+  // The order the agent runs in. It is a description of the pipeline, not a
+  // live position: nothing here claims to know which step is executing,
+  // because nothing on the wire says so. See the FOR DEREK line in STATUS.md.
+  const AGENT_STEPS = [
+    ["Opening evidence", "the same first queries on every incident, so the start is never improvised"],
+    ["Candidate causes", "a deterministic prefilter, before a model is shown anything"],
+    ["Targeted queries", "the agent choosing what to ask next, inside a fixed query budget"],
+    ["Citation check", "every causal claim matched against a query that actually ran"],
+    ["Narrative", "published only once that check passes"],
+  ];
+
+  function elapsedWords(since) {
+    const started = Date.parse(since);
+    if (!started) return "";
+    const seconds = Math.max(0, Math.round((Date.now() - started) / 1000));
+    if (seconds < 60) return seconds + "s";
+    return Math.floor(seconds / 60) + "m " + String(seconds % 60).padStart(2, "0") + "s";
+  }
+
+  // The elapsed reading rides on the stored `started_at`, so it is the age of
+  // the run and not the age of this tab. Without a stored start there is no
+  // clock at all rather than one counting from a page load.
+  function tickAgentRun() {
+    document.querySelectorAll(".run-clock[data-since]").forEach(function (node) {
+      node.textContent = elapsedWords(node.getAttribute("data-since"));
+    });
+  }
+
+  // The clock is only drawn when the served `started_at` belongs to a run that
+  // is still open. An incident re-investigated after a watch crosses its floor
+  // still carries the previous version's start until the new one lands, and
+  // counting from that would put hours on a run a second old. Today the
+  // detail payload carries no start for a run in flight at all, so this is
+  // usually absent - see the FOR JUANK line in STATUS.md.
+  function agentRunning(investigation) {
+    const since = (investigation && investigation.started_at) || "";
+    const open = investigation && !investigation.completed_at;
+    const clock = open && Date.parse(since)
+      ? '<span class="run-clock mono" data-since="' + escapeHtml(String(since)) + '">' +
+        escapeHtml(elapsedWords(since)) + "</span>"
+      : "";
+    return '<div class="agentrun banner">' +
+      '<div class="run-head"><h4>The agent is investigating</h4>' + clock + "</div>" +
+      '<div class="run-bar" role="presentation"><i></i></div>' +
+      "<p>It is interrogating the same evidence tools this board reads, one query at a time, and " +
+      "choosing the next question from what the last one returned.</p>" +
+      '<ol class="run-steps">' + AGENT_STEPS.map(function (step) {
+        return "<li><b>" + escapeHtml(step[0]) + "</b><span>" + escapeHtml(step[1]) + "</span></li>";
+      }).join("") + "</ol>" +
+      '<p class="run-foot">That is the order it runs in, not a live position: the trail is stored in one ' +
+      "write when the run finishes, so the queries appear together. The board polls itself; nothing here " +
+      "needs clicking.</p>" +
+      "</div>";
+  }
+
+  // `agent_unavailable` is the only outcome that suppresses the narrative, and
+  // every path into it - a deadline, an unreachable model, a result still
+  // invalid after one retry - ends the same way: no causal claim survived the
+  // citation check, so none is published. The raw token never reaches the
+  // screen. An internal word shown to a reader who cannot decode it is a defect
+  // of this layer, not of the layer that produced it.
+  function guardBanner() {
+    return '<div class="note guard tight banner">' +
+      "<h4>No cause is published here, and that is the guard doing its job</h4>" +
+      "<p>Every causal claim on this board has to cite an evidence query that actually ran. The " +
+      "investigation did not return one that passed that check, so the system published nothing rather " +
+      "than an explanation it could not stand behind.</p>" +
+      "<p>Nothing measured was lost. Where it is happening, what it is costing, and every query the agent " +
+      "ran are all still here, read from the store exactly as they always are.</p>" +
+      "</div>";
+  }
+
+  function noRunBanner() {
+    return '<div class="note tight banner">' +
+      "<h4>No investigation has run on this incident yet</h4>" +
+      "<p>The measured record below stands on its own. A cause is added when the agent has one it can cite.</p>" +
+      "</div>";
+  }
+
+  function statusBanner(incident, investigation) {
+    if (isInvestigating(incident)) return agentRunning(investigation);
+    if (investigation && investigation.narrative_available) return "";
+    if (!investigation || !investigation.outcome) return noRunBanner();
+    return guardBanner();
+  }
+
+  // ------------------------------------------------------- the six questions
+
+  function readCell(label, value) {
+    if (value === null || value === undefined || value === "") return "";
+    return "<div><dt>" + escapeHtml(label) + "</dt><dd>" + escapeHtml(String(value)) + "</dd></div>";
+  }
+
+  function readCellHtml(label, html) {
+    if (!html) return "";
+    return "<div><dt>" + escapeHtml(label) + "</dt><dd>" + html + "</dd></div>";
+  }
+
+  function changeBlock(change) {
+    const data = change || {};
+    if (data.actual == null && data.expected == null) {
+      return '<p class="q-none">No change block is stored for this incident.</p>';
+    }
+    const falling = typeof data.absolute_delta === "number" && data.absolute_delta < 0;
+    const direction = falling ? "down" : "up";
+    return '<p class="q-lead">' + escapeHtml(metricWords(data.metric)) + " is <b>" +
+      escapeHtml(ratio(data.actual)) + "</b> against <b>" + escapeHtml(ratio(data.expected)) +
+      "</b> expected." + citeButton("detail-actual", "cite approval now") + "</p>" +
+      '<dl class="q-read">' +
+      readCell("moved", joinWords(
+        pointsWord(data.absolute_delta) ? direction + " " + pointsWord(data.absolute_delta) : null,
+        typeof data.relative_change === "number"
+          ? direction + " " + pct(Math.abs(data.relative_change)) + " relative" : null
+      )) +
+      "</dl>" +
+      (data.metric ? '<p class="q-foot mono">' + escapeHtml(String(data.metric)) + "</p>" : "");
+  }
+
+  function whereBlock(cohort, incident) {
+    const data = cohort || {};
+    const keys = Object.keys(data).filter(function (key) { return data[key]; });
+    if (!keys.length) {
+      return '<p class="q-lead">Platform-wide. The stored cohort names no dimension, so nothing narrower is claimed.</p>';
+    }
+    return '<p class="q-lead">' + escapeHtml(incidentScope(incident)) + "</p>" +
+      '<ul class="dims">' + keys.map(function (key) {
+        return "<li><span>" + escapeHtml(dimensionWord(key)) + "</span><b>" +
+          escapeHtml(String(data[key])) + "</b></li>";
+      }).join("") + "</ul>" +
+      '<p class="q-foot">These are the dimensions the stored cohort names, and all of them.</p>';
+  }
+
+  function moneyBlock(financial) {
+    const data = financial || {};
+    if (!Object.keys(data).length) {
+      return '<p class="q-none">No financial impact is stored for this incident.</p>';
+    }
+    const lost = data.estimated_lost_approved_volume || {};
+    const assumptions = data.assumptions || [];
+    const lostWords = joinWords(
+      typeof lost.payments === "number" ? lost.payments + " payments" : null,
+      moneyOrNull(lost)
+    );
+    return '<dl class="q-read">' +
+      readCellHtml("at risk so far", escapeHtml(money(data.gmv_at_risk)) +
+        citeButton("detail-risk", "cite at risk so far")) +
+      readCellHtml("costing / hour", escapeHtml(money(data.loss_per_hour)) +
+        citeButton("detail-burn", "cite costing per hour")) +
+      readCellHtml("approvals not captured", escapeHtml(lostWords || "not in store") +
+        citeButton("detail-lost", "cite payments lost")) +
+      readCell("attempted value", moneyOrNull(data.attempted_value) || "not in store") +
+      "</dl>" +
+      (assumptions.length
+        ? '<details class="q-more"><summary>What this figure assumes (' + assumptions.length + ")</summary><ul>" +
+          assumptions.map(function (line) { return "<li>" + escapeHtml(String(line)) + "</li>"; }).join("") +
+          "</ul></details>"
+        : "");
+  }
+
+  function causeBlock(hypothesis, fallback) {
+    const data = hypothesis || {};
+    if (!data.statement) return '<p class="q-none">' + escapeHtml(fallback) + "</p>";
+    return '<p class="q-lead big">' + escapeHtml(String(data.statement)) + "</p>" +
+      '<p class="q-label">What it is standing on</p>' +
+      evidenceList(data.evidence, "No citation was stored for this hypothesis.");
+  }
+
+  // Question 5 is where honest uncertainty lives. docs/challenge.md scores "a
+  // case where the system admits the evidence isn't enough, instead of
+  // inventing a diagnosis" as a bonus, so the competing explanations and the
+  // missing-evidence list are presented as the discipline they are, not as the
+  // system failing to know. Same stored values, named for what they are.
+  function beliefBlock(belief, fallback) {
+    const data = belief || {};
+    const facts = data.confirmed_facts || [];
+    const supporting = data.supporting_evidence || [];
+    const competing = data.competing_explanations || [];
+    const missing = data.missing_evidence || [];
+    const ambiguity = data.why_ambiguity_exists || {};
+    let html = "";
+    if (facts.length) {
+      html += '<p class="q-label">Established, and cited</p><ol class="claims">' +
+        facts.map(function (fact) {
+          return "<li><p>" + escapeHtml(String(fact.statement || "")) + "</p>" +
+            evidenceList(fact.evidence) + "</li>";
+        }).join("") + "</ol>";
+    }
+    if (supporting.length) {
+      html += '<p class="q-label">Pointing the same way</p>' + evidenceList(supporting);
+    }
+    if (competing.length) {
+      html += '<section class="rigor"><h4>Not ruled out<span class="rigor-n">' + competing.length + "</span></h4>" +
+        '<p class="rigor-why">The agent has to publish what it could not eliminate. Each of these survives ' +
+        "the evidence gathered so far, and carries the query that keeps it alive.</p>" +
+        '<ol class="claims">' + competing.map(function (item) {
+          return "<li><p>" + escapeHtml(String(item.explanation || "")) + "</p>" +
+            evidenceList(item.evidence) + "</li>";
+        }).join("") + "</ol>" +
+        (ambiguity.statement
+          ? '<div class="rigor-amb"><p class="q-label">Why this cannot be settled from what is stored</p><p>' +
+            escapeHtml(String(ambiguity.statement)) + "</p>" + evidenceList(ambiguity.evidence) + "</div>"
+          : "") +
+        "</section>";
+    }
+    if (missing.length) {
+      html += '<section class="rigor next"><h4>What would settle it<span class="rigor-n">' + missing.length + "</span></h4>" +
+        '<p class="rigor-why">Named next observations, not a shrug. Each one would discriminate between the ' +
+        "explanations above.</p>" +
+        '<ol class="claims">' + missing.map(function (item) {
+          return "<li><p>" + escapeHtml(String(item.request || "")) + "</p>" +
+            (item.reason ? '<p class="because">Because ' + escapeHtml(lowerFirst(item.reason)) + "</p>" : "") +
+            evidenceList(item.evidence) + "</li>";
+        }).join("") + "</ol></section>";
+    }
+    if (!html) return '<p class="q-none">' + escapeHtml(fallback) + "</p>";
+    return html;
+  }
+
+  function actionBlock(action, fallback) {
+    const data = action || {};
+    if (!data.action) return '<p class="q-none">' + escapeHtml(fallback) + "</p>";
+    const urgency = data.urgency
+      ? '<span class="urg">' + escapeHtml(String(data.urgency)) + "</span>"
+      : "";
+    return '<p class="q-lead">' + escapeHtml(String(data.action)) + "</p>" +
+      (urgency ? '<p class="q-urg">urgency ' + urgency + "</p>" : "") +
+      '<p class="q-label">What that rests on</p>' +
+      evidenceList(data.basis, "No citation was stored for this recommendation.") +
+      '<p class="q-foot">Advisory. The system does not execute it.</p>';
+  }
+
+  // The shape of the run, before the queries themselves. Both counts are of
+  // rows present in the trail this view is about to draw - the view counting
+  // what it is showing, never a figure about the incident.
+  function trailSummary(trail, investigation) {
+    const refused = trail.filter(function (entry) {
+      return String(entry.outcome || "") !== "success";
+    }).length;
+    const took = durationWords(investigation && investigation.duration_ms);
+    return '<div class="trail-top">' +
+      "<p><b>" + trail.length + "</b> queries, in the order the agent asked them" +
+      (refused ? ", <b>" + refused + "</b> of them refused by the gateway" : "") +
+      (took ? ", over " + escapeHtml(took) : "") + ".</p>" +
+      "<p>Each is a real call against the same store the rest of this board reads, and each returns in " +
+      "milliseconds: the minute a run takes is the agent deciding what to ask next, not the data being " +
+      "slow. The raw request and response sit under every card, because being able to show them is the " +
+      "argument.</p>" +
+      "</div>";
+  }
+
+  function trailCard(entry, index) {
+    const sequence = String(entry.sequence);
+    const refused = String(entry.outcome || "") !== "success";
+    const skipped = entry.executed === false;
+    const readings = readingsFor(entry);
+    const purpose = (entry.parameters || {}).purpose;
+    return '<article class="trail-card' + (refused ? " refused" : "") + '" style="--i:' + index + '">' +
+      '<div class="tq-head">' +
+      '<span class="tq-n mono">' + escapeHtml(sequence.padStart(2, "0")) + "</span>" +
+      '<h3 class="mono">' + escapeHtml(entry.tool || "gateway") + "</h3>" +
+      '<span class="tq-tags">' +
+      (skipped ? '<span class="tag">not executed</span>' : "") +
+      (refused ? '<span class="tag bad">refused</span>' : "") +
+      (durationWords(entry.duration_ms)
+        ? '<span class="tq-ms">' + escapeHtml(durationWords(entry.duration_ms)) + "</span>" : "") +
+      citeChip("trail-" + sequence, "Q" + sequence, "cite query " + sequence + ", " + (entry.tool || "gateway")) +
+      "</span></div>" +
+      '<p class="tq-asked">' + escapeHtml(askedSentence(entry)) + "</p>" +
+      (purpose ? '<p class="tq-why">Its own reason: ' + escapeHtml(String(purpose)) + "</p>" : "") +
+      (readings.length
+        ? '<dl class="tq-read">' + readings.map(function (row) {
+          return "<div><dt>" + escapeHtml(row[0]) + "</dt><dd>" + escapeHtml(row[1]) + "</dd></div>";
+        }).join("") + "</dl>"
+        : '<p class="tq-none">The response carried nothing this view knows how to read. The raw record is below.</p>') +
+      '<details class="tq-raw"><summary>Raw request and response</summary><div class="tq-raw-grid">' +
+      "<div><h5>Asked</h5><pre>" + escapeHtml(pretty(entry.parameters)) + "</pre></div>" +
+      "<div><h5>Returned</h5><pre>" + escapeHtml(pretty(entry.response)) + "</pre></div>" +
+      "</div></details>" +
+      "</article>";
   }
 
   function renderEvidence() {
@@ -1073,17 +1764,12 @@
     const incident = detail.incident || {};
     const investigation = detail.investigation || {};
     const trail = detail.evidence_trail || [];
-    const running = isInvestigating(incident);
-    const banner = running
-      ? '<div class="note warn tight banner"><h4>Investigation is running</h4><p>This usually takes about a minute.</p></div>'
-      : (investigation.narrative_available
-        ? ""
-        : '<div class="note warn tight banner"><h4>Narrative unavailable</h4><p>The trail still shows every query that ran.</p></div>');
+    const banner = statusBanner(incident, investigation);
     if (!trail.length) {
-      const empty = running
-        ? '<p class="empty">Investigation is running. The evidence trail is stored when it finishes.</p>'
-        : '<p class="empty">No evidence trail is stored for this incident.</p>';
-      evidenceBoard.innerHTML = banner + empty;
+      evidenceBoard.innerHTML = banner + (isInvestigating(incident)
+        ? '<p class="empty">The trail is written in one go when the run finishes.</p>'
+        : '<p class="empty">No evidence trail is stored for this incident.</p>');
+      bindCites(evidenceBoard);
       return;
     }
     const frame = document.createElement("div");
@@ -1094,27 +1780,25 @@
       "/evidence</span></div><div class=\"frame-body\"></div>";
     const body = frame.querySelector(".frame-body");
     body.insertAdjacentHTML("beforeend", banner);
-    const trailWrap = document.createElement("div");
-    trailWrap.className = "trail";
-    trail.forEach(function (entry) {
-      const card = document.createElement("article");
-      card.className = "trail-card";
-      const citeId = "trail-" + String(entry.sequence);
-      card.innerHTML =
-        "<h3>Query " + escapeHtml(String(entry.sequence)) + " · " + escapeHtml(entry.tool || "") +
-        " " + citeButton(citeId, "cite query " + String(entry.sequence)) + "</h3>" +
-        '<p class="cohort">' + escapeHtml(entry.query_id || "") + " · " + escapeHtml(entry.timestamp || "") +
-        " · " + escapeHtml(entry.outcome || "") + "</p>" +
-        '<div class="asked"><strong>Asked</strong><pre>' + escapeHtml(pretty(entry.parameters)) + "</pre></div>" +
-        '<div class="returned"><strong>Returned</strong><pre>' + escapeHtml(pretty(entry.response)) + "</pre></div>";
-      trailWrap.appendChild(card);
+    body.insertAdjacentHTML("beforeend", trailSummary(trail, investigation));
+    const wrap = document.createElement("div");
+    wrap.className = "trail";
+    // The queries arrive one after another the first time an incident's trail
+    // is drawn, which is the story beat: watch it work. The board repaints
+    // every 2.5s, and replaying the reveal on every poll would be a twitch, so
+    // it runs once per incident.
+    if (state.trailRevealed !== incident.incident_id) {
+      wrap.classList.add("reveal");
+      state.trailRevealed = incident.incident_id;
+    }
+    trail.forEach(function (entry, index) {
+      wrap.insertAdjacentHTML("beforeend", trailCard(entry, index));
     });
-    body.appendChild(trailWrap);
+    body.appendChild(wrap);
     evidenceBoard.innerHTML = "";
     evidenceBoard.appendChild(frame);
     bindCites(evidenceBoard);
   }
-
 
   // ------------------------------------------------------------------ escalation
 
@@ -1915,6 +2599,7 @@
   function tick() {
     const now = new Date();
     $("clock").textContent = now.toISOString().replace(".000Z", "Z");
+    tickAgentRun();
   }
 
   tick();

@@ -21,6 +21,60 @@ ABS_DROP_MIN = 0.02      # operationally meaningful: 2 conversion points
 N_PAYMENTS_MIN = 30      # enough traffic to be sure
 SUSTAIN_BUCKETS = 3      # not a one-minute blip
 
+# MEASURED, AND DELIBERATELY LEFT ALONE - the note is the finding, and the fix
+# is one line in a file this change does not own.
+#
+# Only three of these four are floors: `SUSTAIN_BUCKETS` is never tested by
+# `evaluate`. That is worth knowing, but it is not what lets healthy traffic
+# raise confident incidents, and persistence is not the axis that separates
+# them. Measured 2026-08-30 on a live stack with nothing injected anywhere: the
+# `medium` incident raised on `{issuing_bank: Banorte, payment_method: cash,
+# provider: stripe}` - a merchant-a cohort, on a run where only merchant-b was
+# ever touched - carried `buckets_sustained: 4`. It was sustained. It was also
+# 36 payments.
+#
+# What fails is `N_PAYMENTS_MIN`, and it fails because 30 is not a number of
+# payments, it is a number of payments at an unstated conversion rate.
+# `two_proportion_z` is a normal approximation to a binomial proportion, and
+# that approximation is valid when the rarer outcome is expected at least ten
+# times. On traffic converting at 95% the rare outcome is the failure, so the
+# condition is n * (1 - baseline) >= 10 - about 200 payments here, not 30. Below
+# it the test reports significance it has not got, and the localiser is drawn
+# *toward* exactly those cells, because a deep joint cohort is both the thinnest
+# slice and the one where noise looks most extreme.
+#
+# Measured over 160 sweeps, 45s apart, across two hours of healthy traffic with
+# nothing injected, on a store whose warm-start history already matches live
+# traffic:
+#
+#   floor as written (N_PAYMENTS_MIN = 30)          12 of 160 sweeps raised an
+#                                                   incident on an uninjected
+#                                                   cohort - 7.5%
+#   Z_MIN 3.0 -> 3.5                                 8 of 160 - 5.0%
+#   N_PAYMENTS_MIN 30 -> 150                         8 of 160 - 5.0%
+#   N_PAYMENTS_MIN 30 -> 200                         0 of 160
+#   n * (1 - baseline) >= 10                         0 of 160
+#
+# The last two are the only settings that reach zero, and only the last one is
+# usable. The demo's own cohort, `{merchant_id: merchant-b, provider: adyen}`,
+# runs about 180 payments in a 5-minute window: a flat floor of 200 silences the
+# incident the demo exists to show, while the same cohort's expected failures are
+# 180 * (1 - 0.892) = 19.4, comfortably over 10. `high_impact_small_percentage` -
+# PRD section 10's small-percentage, high-money incident, the class this product
+# is pitched on - measures n=2500, z=-4.43, expected failures 199.8, and clears
+# either. The worst healthy false positive measured, `{card_network: visa}` at
+# z=-5.00, is n=150 with 6.3 expected failures, and only the ratio floor stops it.
+#
+# So the floor that works is a *validity* floor, not a bigger count, and adding
+# it is a change to `detect.evaluate` rather than a value here. `detector/detect.py`
+# belongs to PR #88, so this is reported and not made. For whoever picks it up it
+# is one clause beside the existing three, on numbers `evaluate` already has:
+#
+#     "sample_valid": bool(observed["attempted_payments"] * (1 - expected) >= 10)
+#
+# The 10 wants a name here once something reads it. It is deliberately not
+# added yet: an unread constant in this file is the exact trap `SUSTAIN_BUCKETS`
+# already is, and one of those is enough.
 # --- baseline --------------------------------------------------------------
 # v0 uses a trailing window on the same cohort. The seasonal hour-of-week
 # baseline replaces this once W1 provides replayable backfill history.
@@ -160,7 +214,17 @@ MERCHANT_NORMAL_MIN_PAYMENTS = 200
 # trained, fitted or forecast: it reports that a cohort is degrading now, and
 # never a future number.
 FORMING_TIMEOUT_SHARE_DELTA = 0.05    # +5 points of timeout share over baseline
-FORMING_LATENCY_P95_RATIO = 1.5       # p95 latency half again its baseline
+FORMING_LATENCY_P95_RATIO = 2.0       # latency twice its baseline
+# 1.5 fires on healthy traffic, and it still does once the warm-start history
+# matches live latency - the seam was never the whole story. The reading compares
+# *means* over a distribution with a 2s-8s error tail (the constant is named for
+# a p95 the code does not compute), so one slow attempt moves a small cohort.
+# Measured 2026-08-30 over 1,080 healthy cohort readings, 40 sweeps x 30 cohorts,
+# on a store whose history already matches live traffic: median 1.052, p90 1.246,
+# p99 1.543, max 1.672, with 18 readings crossing 1.5 and none reaching 1.75.
+# 2.0 sits above every healthy reading with margin. It costs no sensitivity that
+# matters: `effect=latency` publishes 6000ms against a ~350ms baseline, a ratio
+# near 17, so the floor could be four times higher and still catch it.
 FORMING_LATENCY_MIN_BASELINE_MS = 50.0  # below this a ratio is noise, not a signal
 # A cohort routed around entirely shows no declines at all - its volume simply
 # goes to zero, and a cohort with no traffic can never clear N_PAYMENTS_MIN. So
@@ -185,5 +249,41 @@ FORMING_VOLUME_COMPARABLE_MAX = 2.0
 # minutes before the cliff while ordinary minute-to-minute noise does not. A
 # looser bar floods the dashboard; a tighter one never fires in time.
 WATCH_Z_MAX = -1.5
-WATCH_ABS_DROP_MIN = 0.01
+WATCH_ABS_DROP_MIN = 0.03
 WATCH_TRAJECTORY = 1  # worsening; a recovering dip is not worth a warning
+# 0.01 was inside ordinary variation and 0.05 was above the thing this clause has
+# to report, so both ends were measured before settling here.
+#
+# The clause is a *floor on the same 5-bucket window the z-score reads*, so what
+# matters is not where the deviation ends up but where it has got to by the time
+# the warning is due. Measured 2026-08-30 on the live stack, injecting the judge's
+# `developing` stage on merchant-b/adyen and sampling the cohort every 30s: the
+# window fills linearly, reaching 0.0204 at 1 minute, 0.0242 at 2, 0.0309 at 3 and
+# about 0.051 once the whole window is inside the deviation at 5. `make verify-demo`
+# gives that stage 240 seconds. At 0.05 the drop clause is not met until roughly
+# 4.9 minutes - the warning is late, not absent, which is exactly what the 07:59Z
+# run recorded as silence. At 0.03 the drop clause is met by 2.9 minutes and the
+# z-score becomes the binding clause again, which is what this predicate says it
+# wants: "the z-score is what separates a real developing deviation from noise,
+# and the drop is what keeps a statistically clean but operationally meaningless
+# wobble out". A 3-point drop is still operationally meaningful and still above
+# ordinary variation - and a watch row that fires on a quiet cohort costs the
+# board a card that says NOT AN INCIDENT YET, where the same mistake one ladder
+# up costs it a confident incident on an innocent merchant.
+#
+# The number is not a preference between the two ends, because at 0.05 there is
+# no magnitude left to choose. Sweeping every injected magnitude from 0.05 to
+# 0.40 against this floor and the detection floors together, and asking for one
+# that warns inside 240 seconds and never crosses Z_MIN:
+#
+#   0.05   no magnitude qualifies - the band is EMPTY
+#   0.04   0.13 warns at 185s, 0.14 at 170s, 0.15 at 160s
+#   0.03   0.12 warns at 190s, 0.13 at 175s, 0.14 at 160s, 0.15 at 150s
+#   0.02   identical to 0.03 - the drop clause has stopped binding
+#
+# 0.05 is not a strict floor, it is an empty intersection: it puts the drop a
+# deviation must reach above the drop any deviation *can* reach while still
+# being a near-miss, so the warning beat of the pitch cannot exist at any
+# magnitude. 0.03 is the largest value at which the z-score is the clause that
+# decides, which is what this predicate is written to want, and where
+# `surfaces.inject.STAGE_DEVELOPING` keeps the most room under Z_MIN.

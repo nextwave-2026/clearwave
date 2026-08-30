@@ -51,12 +51,23 @@ INJECTED_INCIDENT = {
 # ~180 payments in the 5-minute window) on 2026-08-30:
 #   0.10 at 2 min: no watch (conv 0.849); at 4.5 min: watch z=-1.50 then a
 #     child slice crossed Z_MIN.
+#   0.12 on the isolated verify stack: delivered, but within four minutes the
+#     row was already investigating on a bank child - skipped past watching.
 #   0.20 at 2 min: incident z=-3.80, no watch.
-#   0.35 (the old "mild") at 2 min on a cold store: watch z=-1.62; at 4 min:
-#     incident z=-6.59 and a phone call.
-# 0.12 sits between 0.10 and 0.20: a conversion near-miss rather than a cliff.
-# Detection floors were not moved; this is the inject magnitude.
-STAGE_DEVELOPING = 0.12
+#   0.12 on the live isolated stack 2026-08-30T12:18Z, left running past its
+#     window: `{provider: adyen}` reached z=-3.00, exactly the detection floor,
+#     and the localiser had already raised two `high` incidents on
+#     `{country: CO, merchant_id: merchant-b, provider: adyen}` (z=-5.49) and
+#     `{issuing_bank: Bancolombia, ...}` (z=-5.31).
+# Detection floors were not moved; this is the inject magnitude. 0.10 is the
+# strongest magnitude that still spends time as a merchant-relative watch on
+# the live multi-merchant adyen mix (merchant-c dilutes provider=adyen alone),
+# and that is the value, because every measurement above argues downward from
+# 0.12 rather than upward. This constant read 0.14 between #99 and here, which
+# contradicted the line directly above it and put the saturated reading at
+# z=-2.80 against a Z_MIN of 3.0 - inside 7% of paging on the beat whose whole
+# job is not to page. `tests/test_demo_tuning.py` now fails if it drifts back.
+STAGE_DEVELOPING = 0.10
 # Today's near-total break, reachable directly as well as after developing.
 STAGE_COLLAPSE = 0.95
 

@@ -53,9 +53,7 @@ CALLS = {
     "ingest_health": {},
 }
 
-# One valid record of each non-canonical kind, in W1's published wire shape.
-# `ingest_health` reports their newest event times separately from the
-# watermark, which is cut from the attempt stream alone.
+# One valid record of each non-attempt kind, in W1's published wire shape.
 TELEMETRY_SAMPLE = {
     "schema": "clearwave.ops.v1",
     "event_id": "evt-ops-1",
@@ -250,42 +248,48 @@ class IngestHealthTests(unittest.TestCase):
             response["lateness_grace_seconds"], config.LATENESS_GRACE_SECONDS
         )
 
-    def test_a_store_holding_only_telemetry_does_not_report_nothing_observed(self):
-        """The watermark is the attempt stream, so telemetry needs its own reading."""
+    def test_a_store_holding_only_telemetry_has_shared_event_time_bounds(self):
         connection = loaded()
         store.write_batch(connection, [("telemetry", TELEMETRY_SAMPLE)])
         connection.commit()
         response = evidence.answer("ingest_health", {}, connection)
         self.assertEqual(response["rejected"], 0, "the sample must normalise, not dead-letter")
         self.assertEqual(response["stored"]["telemetry_samples"], 1)
-        # The canonical stream is genuinely empty, and says so.
         self.assertEqual(response["accepted"], 0)
-        self.assertIsNone(response["newest_event_at"])
+        self.assertEqual(response["newest_event_at"], "2026-08-30T05:15:00Z")
         self.assertIsNone(response["newest_by_kind"]["attempts"])
-        # But the store is not silent about what it does hold.
         self.assertEqual(response["newest_by_kind"]["telemetry_samples"], "2026-08-30T05:15:00Z")
 
-    def test_a_closed_payment_gets_its_own_reading_too(self):
+    def test_a_closed_payment_contributes_to_shared_event_time_bounds(self):
         connection = loaded()
         store.write_batch(connection, [("closed", CLOSED_PAYMENT)])
         connection.commit()
         response = evidence.answer("ingest_health", {}, connection)
         self.assertEqual(response["rejected"], 0)
+        self.assertEqual(response["newest_event_at"], "2026-08-30T05:15:00Z")
         self.assertEqual(response["newest_by_kind"]["payments_closed"], "2026-08-30T05:15:00Z")
         self.assertIsNone(response["newest_by_kind"]["telemetry_samples"])
 
-    def test_a_newer_telemetry_sample_never_moves_the_watermark(self):
-        """`as_of` means the same thing on every C2 tool. This one may not redefine it."""
+    def test_all_event_kinds_move_the_shared_freshness_bounds(self):
         connection = loaded(synthetic.with_provider_incident())
-        before = evidence.answer("ingest_health", {}, connection)
-        store.write_batch(connection, [("telemetry", {**TELEMETRY_SAMPLE, "sample_ts": "2027-01-01T00:00:00Z"})])
+        store.write_batch(
+            connection,
+            [
+                ("telemetry", {**TELEMETRY_SAMPLE, "sample_ts": "2027-01-01T00:00:00Z"}),
+                ("closed", {**CLOSED_PAYMENT, "closed_ts": "2025-01-01T00:00:00Z"}),
+            ],
+        )
         connection.commit()
-        after = evidence.answer("ingest_health", {}, connection)
-        self.assertEqual(after["watermark"], before["watermark"])
-        self.assertEqual(after["as_of"], before["as_of"])
-        self.assertEqual(after["newest_event_at"], before["newest_event_at"])
-        self.assertEqual(after["lag_seconds"], before["lag_seconds"])
-        self.assertEqual(after["newest_by_kind"]["telemetry_samples"], "2027-01-01T00:00:00Z")
+        response = evidence.answer("ingest_health", {}, connection)
+        newest_epoch = evidence.schema.parse_timestamp("2027-01-01T00:00:00Z").timestamp()
+        expected_watermark = evidence.schema.bucket_of(
+            int(newest_epoch) - config.LATENESS_GRACE_SECONDS
+        )
+        self.assertEqual(response["oldest_event_at"], "2025-01-01T00:00:00Z")
+        self.assertEqual(response["newest_event_at"], "2027-01-01T00:00:00Z")
+        self.assertEqual(response["watermark"], evidence.schema.iso_utc(expected_watermark))
+        self.assertEqual(response["as_of"], response["watermark"])
+        self.assertEqual(response["lag_seconds"], int(newest_epoch) - expected_watermark)
 
     def test_duplicates_is_named_as_unmeasured_rather_than_invented(self):
         response = evidence.answer("ingest_health", {}, loaded())

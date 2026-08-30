@@ -134,15 +134,21 @@ class InvestigationRunner:
             "ORDER BY CASE lifecycle_state WHEN 'detected' THEN 0 ELSE 1 END, "
             "created_at, incident_id"
         )
+        # Watches keep lifecycle_state=watching while claimed, so exclude rows
+        # that already hold a claim lease or the runner would re-queue them.
+        unclaimed = (
+            f"WHERE {_CLAIMABLE_SQL} AND incident_id NOT IN "
+            "(SELECT incident_id FROM investigation_claim)"
+        )
         if self.incident_ids is None:
             return self.connection.execute(
                 "SELECT incident_id, record, lifecycle_state FROM incident "
-                f"WHERE {_CLAIMABLE_SQL} {order}"
+                f"{unclaimed} {order}"
             ).fetchall()
         placeholders = ",".join("?" for _ in self.incident_ids)
         return self.connection.execute(
             "SELECT incident_id, record, lifecycle_state FROM incident "
-            f"WHERE {_CLAIMABLE_SQL} AND incident_id IN ({placeholders}) {order}",
+            f"{unclaimed} AND incident_id IN ({placeholders}) {order}",
             self.incident_ids,
         ).fetchall()
 
