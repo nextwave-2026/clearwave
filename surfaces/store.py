@@ -15,15 +15,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from detector.store import connect as open_detector_store
 from investigation.store import connect as open_investigation_store
 from investigation.store import read_result
 
-from .escalation import escalate
+from .escalation import channels_for, escalate
 
 DEFAULT_DB = Path("state/clearwave.db")
 
-# Stored severity is already the business priority. This rank is only a sort
-# key over that stored label; it does not compute or adjust severity.
+# Stored severity is the primary business priority. Financial impact breaks
+# ties between incidents in the same severity band without recomputing either.
 SEVERITY_RANK = {
     "critical": 0,
     "high": 1,
@@ -67,6 +68,12 @@ CREATE TABLE IF NOT EXISTS escalation_claim (
     incident_id TEXT PRIMARY KEY,
     claimed_at  TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS escalation_channel_claim (
+    incident_id TEXT NOT NULL,
+    channel     TEXT NOT NULL,
+    claimed_at  TEXT NOT NULL,
+    PRIMARY KEY (incident_id, channel)
+);
 """
 
 
@@ -86,8 +93,26 @@ def session(path: Path | str = DEFAULT_DB) -> Iterator[sqlite3.Connection]:
         connection.close()
 
 
+@contextmanager
+def measurement_session(path: Path | str = DEFAULT_DB) -> Iterator[sqlite3.Connection]:
+    """Open the same store through W2's own opener, for a C2 tool to answer on.
+
+    `session` prepares the incident and investigation tables the board reads.
+    The C2 evidence tools measure the ingestion tables - `attempt`,
+    `telemetry_sample`, `dead_letter` - which only W2's opener declares, and a
+    board pointed at a store nothing has ingested into yet must answer "nothing
+    has arrived" rather than raising `no such table`. Same file, same rows; the
+    only difference is which schema is ensured before reading.
+    """
+    connection = open_detector_store(path)
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
 def list_incidents(connection: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Every C3 record, ordered by stored business priority, never by recency."""
+    """Every C3 record, ordered by severity then measured impact, never recency."""
     rows = connection.execute(
         "SELECT incident_id, record, lifecycle_state, severity FROM incident"
     ).fetchall()
@@ -142,40 +167,75 @@ def ensure_escalation(
     result: Mapping[str, Any] | None = None,
     **kwargs: Any,
 ) -> list[dict[str, Any]]:
-    """Fire channels once per incident, only after a C4 result exists.
+    """Fire each bound channel once per incident, only after a C4 result exists.
+
+    The claim is per `(incident_id, channel)`, which is what
+    `docs/contracts/notification-escalation.md` specifies: "one record per
+    channel per incident". Severity is therefore re-read on every call, so a
+    channel fires when its band is finally reached rather than only when the
+    incident was first measured. An incident stored `high` (dashboard, Slack)
+    that a later sweep re-measures as `critical` fires the newly bound phone
+    channel and does not post to Slack again.
+
+    A channel fires at most once per incident, ever. The claim is monotonic:
+    it records that a channel has fired, never the severity that fired it, so
+    a live row crossing a band boundary in both directions - which it can,
+    as persistence and trajectory move around the line - pages on the first
+    crossing and is silent on every one after.
 
     Repeat reads return the recorded outcomes. A detected incident with no
     investigation result is left untouched so a later read can fire one
     complete message. Already-sent rows are never rewritten. A row that has not
-    reached `detected` is refused outright, before anything is read or fired.
+    reached `detected` is refused outright, before severity is read or anything
+    is claimed or fired.
     """
     if not _is_escalatable(incident):
         return []
     incident_id = str(incident.get("incident_id", ""))
     existing = load_escalation(connection, incident_id)
-    if existing:
-        return existing
     if not _has_investigation_result(result):
-        return []
+        return existing
 
-    # Atomic claim BEFORE firing any real side effect. Two overlapping HTTP
-    # requests for the same new incident (two browser tabs, or a poll
-    # overlapping a manual refresh - plausible with a judge on the dashboard)
-    # would otherwise both pass the `existing` check above before either
-    # commits a row, and both post to Slack and both call Twilio for the same
-    # incident. SQLite serialises writers on this INSERT (WAL mode +
-    # busy_timeout, set in investigation.store.connect), so exactly one caller
-    # ever gets rowcount == 1. The loser never fires escalate() and returns
-    # whatever is stored right now - possibly still empty on the very first
-    # race - rather than blocking: the dashboard already polls periodically,
-    # so the next read picks up the winner's result. Fewer moving parts than
-    # a bounded wait, and nothing to get wrong under a timeout.
+    # A channel that already has a recorded outcome has fired. Filtering on
+    # `escalation_event` rather than only on the claim table is also what
+    # makes this safe against a store written before this change: the demo
+    # stack has live rows whose channels were claimed under the old
+    # incident-level key, and those rows suppress a re-fire on their own.
+    recorded = {str(event.get("channel", "")) for event in existing}
+    pending = tuple(c for c in channels_for(incident.get("severity", "")) if c not in recorded)
+    if not pending:
+        return existing
+
+    # Atomic claim BEFORE firing any real side effect, one row per channel.
+    # Two overlapping HTTP requests for the same incident (two browser tabs,
+    # or a poll overlapping a manual refresh - plausible with a judge on the
+    # dashboard) would otherwise both pass the `recorded` check above before
+    # either commits a row, and both post to Slack and both call Twilio.
+    # SQLite serialises writers on this INSERT (WAL mode + busy_timeout, set
+    # in investigation.store.connect), so for each channel exactly one caller
+    # ever gets rowcount == 1. A caller fires only the channels it won, and
+    # returns whatever is stored right now - possibly still empty on the very
+    # first race - rather than blocking: the dashboard already polls
+    # periodically, so the next read picks up the winner's result. Fewer
+    # moving parts than a bounded wait, and nothing to get wrong under a
+    # timeout.
+    #
+    # This is a separate table from the incident-level `escalation_claim`
+    # rather than a widened primary key on it, because SQLite cannot alter a
+    # primary key in place and the demo store already holds live rows. The old
+    # table is left untouched and unread; nothing is migrated or rewritten.
+    claimed: list[str] = []
+    claimed_at = _utc_now()
     with connection:
-        claimed = connection.execute(
-            "INSERT OR IGNORE INTO escalation_claim (incident_id, claimed_at) VALUES (?, ?)",
-            (incident_id, _utc_now()),
-        )
-    if claimed.rowcount == 0:
+        for channel in pending:
+            cursor = connection.execute(
+                "INSERT OR IGNORE INTO escalation_channel_claim "
+                "(incident_id, channel, claimed_at) VALUES (?, ?, ?)",
+                (incident_id, channel, claimed_at),
+            )
+            if cursor.rowcount == 1:
+                claimed.append(channel)
+    if not claimed:
         return load_escalation(connection, incident_id)
 
     def enqueue_call(call_id: str, payload: Mapping[str, Any]) -> None:
@@ -185,6 +245,7 @@ def ensure_escalation(
         incident,
         result,
         enqueue_call=enqueue_call,
+        channels=tuple(claimed),
         **kwargs,
     )
     now = _utc_now()
@@ -281,9 +342,26 @@ def _decode_record(row: sqlite3.Row) -> dict[str, Any] | None:
     return record
 
 
-def _priority_key(incident: Mapping[str, Any]) -> tuple[int, str]:
+def _priority_key(incident: Mapping[str, Any]) -> tuple[int, float, float, str]:
     severity = str(incident.get("severity", "")).lower()
-    return (SEVERITY_RANK.get(severity, 99), str(incident.get("incident_id", "")))
+    financial = incident.get("financial_impact")
+    if not isinstance(financial, Mapping):
+        financial = {}
+    return (
+        SEVERITY_RANK.get(severity, 99),
+        -_money_amount(financial.get("loss_per_hour")),
+        -_money_amount(financial.get("gmv_at_risk")),
+        str(incident.get("incident_id", "")),
+    )
+
+
+def _money_amount(value: Any) -> float:
+    if not isinstance(value, Mapping):
+        return 0.0
+    try:
+        return float(value.get("amount", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _utc_now() -> str:

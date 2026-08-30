@@ -293,6 +293,11 @@ def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
             keep_ids.add(watch["incident_id"])
     if persist:
         store.expire_watches_except(connection, keep_ids)
+        # When the inject is cleared, conversion recovers and the same cohort
+        # no longer qualifies. Without this, diagnosed rows stay on the board
+        # forever and the demo cannot return to healthy.
+        recovered = _recovered_incident_ids(connection, start, end, keep_ids)
+        store.resolve_recovered_incidents(connection, recovered)
 
     return {
         "incident": incident,
@@ -301,6 +306,45 @@ def _sweep(connection, window_buckets: int, persist: bool) -> dict[str, Any]:
         "window": {"start": schema.iso_utc(start), "end": schema.iso_utc(end)},
         "config_version": config.CONFIG_VERSION,
     }
+
+
+def _recovered_incident_ids(
+    connection,
+    start: int,
+    end: int,
+    keep_ids: set[str],
+) -> set[str]:
+    """Open incident ids whose cohort is no longer degraded in this window.
+
+    A row still being written this sweep (the current incident or a watch) is
+    kept. Everything else in a recoverable state is re-measured: if the
+    absolute drop has fallen below the watch floor and the z-score is no
+    longer a near-miss, the traffic has recovered and the row should resolve.
+    """
+    recovered: set[str] = set()
+    for row in store.list_incidents(connection):
+        incident_id = row.get("incident_id")
+        if not incident_id or incident_id in keep_ids:
+            continue
+        state = str(row.get("lifecycle_state") or "")
+        if state not in store.RECOVERABLE_STATES:
+            continue
+        cohort = row.get("affected_cohort") or {}
+        evaluation = detect.evaluate(connection, cohort or None, start, end)
+        drop = evaluation.get("absolute_drop")
+        z = evaluation.get("z")
+        still_hot = bool(
+            evaluation.get("qualifies")
+            or (
+                drop is not None
+                and drop >= config.WATCH_ABS_DROP_MIN
+                and z is not None
+                and z <= config.WATCH_Z_MAX
+            )
+        )
+        if not still_hot:
+            recovered.add(str(incident_id))
+    return recovered
 
 
 def main(argv: list[str] | None = None) -> int:

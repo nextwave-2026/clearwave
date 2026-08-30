@@ -8,8 +8,9 @@ from __future__ import annotations
 import io
 import sys
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -180,6 +181,79 @@ class IsolatedStackGuard(unittest.TestCase):
         self.assertEqual(verify.DEFAULT_PROJECT, "clearwave-verify-demo")
         self.assertNotIn(verify.DEFAULT_PROJECT, verify.FORBIDDEN_PROJECTS)
         self.assertNotIn(verify.DEFAULT_SURFACES_PORT, verify.OCCUPIED_PORTS)
+
+    def test_schema_registry_does_not_publish_a_host_port(self):
+        text = (ROOT / "scripts" / "verify-demo.compose.yml").read_text()
+        self.assertNotIn("18081", text)
+        self.assertIn("ports: !override []", text)
+
+
+def _capture_main(argv):
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        code = verify.main(argv)
+    return code, stdout.getvalue(), stderr.getvalue()
+
+
+class InfraAbort(unittest.TestCase):
+    def _assert_infra_abort(self, code, stdout, stderr, run_beats):
+        output = stdout + stderr
+        self.assertEqual(code, verify.INFRA_EXIT)
+        self.assertNotEqual(code, verify.BEATS_FAILED_EXIT)
+        run_beats.assert_not_called()
+        self.assertNotIn("FAIL", output)
+        self.assertNotIn("PASS", output)
+        self.assertNotIn("OVERALL", output)
+        self.assertNotIn("BEAT", output)
+        self.assertIn("did not come up", output)
+        self.assertIn("infrastructure", output.lower())
+
+    def test_stack_up_failure_aborts_before_any_beat(self):
+        with (
+            patch.object(verify.DemoVerifier, "bring_up", return_value="docker compose up exited 1"),
+            patch.object(verify.DemoVerifier, "surfaces_health", return_value=None) as health,
+            patch.object(verify.DemoVerifier, "run_beats", return_value=1) as run_beats,
+            patch.object(verify.DemoVerifier, "tear_down"),
+        ):
+            code, stdout, stderr = _capture_main([])
+        health.assert_not_called()
+        self._assert_infra_abort(code, stdout, stderr, run_beats)
+        self.assertIn("docker compose up exited 1", stdout + stderr)
+
+    def test_surfaces_health_failure_aborts_before_any_beat(self):
+        with (
+            patch.object(verify.DemoVerifier, "bring_up", return_value=None),
+            patch.object(
+                verify.DemoVerifier,
+                "surfaces_health",
+                return_value="surfaces is not answering GET /api/overview -> 0 URLError: Connection refused",
+            ),
+            patch.object(verify.DemoVerifier, "run_beats", return_value=1) as run_beats,
+            patch.object(verify.DemoVerifier, "tear_down"),
+        ):
+            code, stdout, stderr = _capture_main([])
+        self._assert_infra_abort(code, stdout, stderr, run_beats)
+        self.assertIn("surfaces is not answering", stdout + stderr)
+
+    def test_product_failure_still_prints_beats_and_exits_1(self):
+        def fake_run_beats(self):
+            self.record("clean-start", "Clean start is genuinely warm", False, "active_incident_count=3")
+            verify.print_table(self.beats)
+            return verify.BEATS_FAILED_EXIT
+
+        with (
+            patch.object(verify.DemoVerifier, "bring_up", return_value=None),
+            patch.object(verify.DemoVerifier, "surfaces_health", return_value=None),
+            patch.object(verify.DemoVerifier, "run_beats", fake_run_beats),
+            patch.object(verify.DemoVerifier, "tear_down"),
+        ):
+            code, stdout, stderr = _capture_main([])
+        output = stdout + stderr
+        self.assertEqual(code, verify.BEATS_FAILED_EXIT)
+        self.assertIn("FAIL", output)
+        self.assertIn("OVERALL FAIL", output)
+        self.assertIn("clean-start", output)
 
 
 if __name__ == "__main__":

@@ -4,10 +4,13 @@ C2 is the read surface used by the investigation agent. Each tool is a standalon
 subprocess: it reads one JSON object from stdin, writes one JSON object to stdout, and writes no
 human-oriented output. The entry points are in `stubs/evidence/`.
 
-C2 is an interface contract, not an implementation roster. Ten of the eleven tools measure the
+C2 is an interface contract, not an implementation roster. Eleven of the twelve tools measure the
 canonical events W2 has stored and are implemented by W2. `external_status` corroborates from a
 third-party source, so W3 implements it and it remains fixture-backed here; implementation
 ownership follows the data source. Nothing on the wire distinguishes them.
+
+Eleven of the twelve measure the payments. `ingest_health` measures the measuring - what reached the
+store, what was refused, and how recent it is - and is the only tool whose subject is the pipeline.
 
 ## Common protocol
 
@@ -349,6 +352,68 @@ forward in time.
 
 ```json
 {"query_id":"q_metric_series_eb6e1d7e3022d329","as_of":"2026-08-29T10:14:00Z","cohort":{"provider":"provider-p2","country":"CO"},"metric":"payment_approval_conversion","bucket_seconds":60,"watermark":"2026-08-29T10:14:00Z","measured_through":"2026-08-29T10:14:00Z","points":[{"bucket_start":"2026-08-29T10:00:00Z","bucket_end":"2026-08-29T10:01:00Z","value":0.92,"samples":50},{"bucket_start":"2026-08-29T10:01:00Z","bucket_end":"2026-08-29T10:02:00Z","value":0.64,"samples":48}]}
+```
+
+## 12. `ingest_health`
+
+**Purpose:** Answer "is anything actually arriving?" from the store alone. Every other tool measures
+the traffic; this one measures the pipeline that carried it - how many records survived normalisation
+into the store, how many were refused and why, how recent the newest observed event is, and how far
+that newest event sits ahead of the point measurement is complete to.
+
+It takes no `cohort` and no `window`, and refuses either through the error envelope. A freshness
+figure narrowed to a window is not a freshness figure, and a filter this tool does not honour would
+be a caller quietly reading a wider answer than the one asked for.
+
+**Input:** none. The request object must be empty; any key is refused with `invalid_input`.
+
+**Output fields:** `watermark`, `accepted`, `stored` (`attempts`, `telemetry_samples`,
+`payments_closed`), `rejected`, `dead_letter` (`count`, `distinct_reasons`, `reasons`, `by_source`),
+`oldest_event_at`, `newest_event_at`, `newest_by_kind`, `lag_seconds`, `lateness_grace_seconds`, and
+`not_measured`.
+
+- `accepted` is normalised payment attempts the store holds, after de-duplication. It is a row count,
+  not a running total of what a consumer saw.
+- `rejected` and `dead_letter.count` are **one measurement published twice, equal by construction**.
+  A refused record is dead-lettered in the same statement that rejects it. Both names exist because
+  "was anything rejected" and "what is in the dead-letter queue" are the same question of this store
+  and a caller should not have to know that.
+- `dead_letter.reasons` is grouped by reason, ordered by count then reason, and capped at ten entries;
+  `distinct_reasons` is always the full count, so a truncated list is visible rather than misleading.
+  `by_source` splits the same rows by the ingest path that refused them.
+- `lag_seconds` is `newest_event_at` minus `watermark`, **event time against event time**. It says how
+  much of what has arrived is not yet measured, and it is unchanged on a replay. It is not "how long
+  since a record arrived" and must never be presented as a wall-clock freshness figure.
+  `lateness_grace_seconds` is the configured grace the watermark subtracts, published so the number is
+  readable without knowing the detector's configuration.
+- `not_measured` names a counter this tool deliberately does not report, with the reason. It is a
+  statement about the tool, not a counter.
+- `oldest_event_at`, `newest_event_at`, `watermark`, `as_of` and `lag_seconds` all describe the
+  **full accepted event stream**. The bounds span attempt occurrence times, telemetry sample times,
+  and closed-payment times, so every accepted record can advance the shared watermark. `newest_by_kind`
+  gives each record kind its own newest event time - `attempts`, `telemetry_samples`,
+  `payments_closed`, each an RFC 3339 timestamp or `null` - so operators can identify the stream that
+  advanced the shared reading.
+
+**`duplicates` is absent on purpose.** At-least-once delivery is turned into exactly-once counting by
+`INSERT OR IGNORE` on `event_id`, so a redelivered record leaves no row behind. The count exists only
+in the consumer's in-memory progress for the length of one run and is printed on its stdout. There is
+no honest way to recover it from the store, so it is named in `not_measured` rather than estimated.
+
+**An empty store answers honestly**, as everywhere else: zero counters, an empty reason list, and
+`null` for `oldest_event_at`, `newest_event_at` and `lag_seconds` - which are undefined rather than
+zero when nothing has been observed.
+
+**Example call:**
+
+```json
+{}
+```
+
+**Example response:**
+
+```json
+{"query_id":"q_ingest_health_3f2a1c9d5e7b4086","as_of":"2026-08-30T05:18:00Z","watermark":"2026-08-30T05:18:00Z","accepted":1836,"stored":{"attempts":1836,"telemetry_samples":240,"payments_closed":0},"rejected":0,"dead_letter":{"count":0,"distinct_reasons":0,"reasons":[],"by_source":[]},"oldest_event_at":"2026-08-30T04:00:00Z","newest_event_at":"2026-08-30T05:19:00Z","newest_by_kind":{"attempts":"2026-08-30T05:19:00Z","telemetry_samples":"2026-08-30T05:18:30Z","payments_closed":null},"lag_seconds":60,"lateness_grace_seconds":30,"not_measured":{"duplicates":"redelivered records are dropped by INSERT OR IGNORE on event_id and leave no row behind; the count lives only in the consumer run that saw them, so the store cannot report it"}}
 ```
 
 ## Measurement notes

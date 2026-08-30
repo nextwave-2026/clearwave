@@ -33,6 +33,10 @@
           </div>
           <p id="judge-status" role="status">Ready. These controls change merchant-b's traffic. The board will keep showing whatever the store already holds.</p>
         </form>
+        <button type="button" class="ask-toggle" id="ask-toggle" aria-expanded="false" aria-controls="ask-drawer">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 3.2h11v7.4h-6L4 13.4v-2.8H2.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+          Ask the data
+        </button>
       </div>
     </div>
   </header>
@@ -44,6 +48,9 @@
         <span><b>clock</b> <span id="clock"></span></span>
         <span><b>store</b> SQLite, CLEARWAVE_DB</span>
         <span id="prov-source"><b>source</b> waiting for store</span>
+      </div>
+      <div class="prov-in prov-ingest mono" id="prov-ingest" aria-label="Ingestion, measured by the ingest_health evidence tool">
+        <span><b>ingest</b> waiting for store</span>
       </div>
     </div>
   </div>
@@ -67,22 +74,6 @@
       <p class="screen-lede">Money is the subject of this view; the incident below it is the explanation, not the headline. Every figure is copied from the highest-priority active incident and cites the record it came from. Nothing here is computed in the UI, and no figure is added up across incidents.</p>
       <div id="overview-board"></div>
       <div id="overview-merchants"></div>
-
-      <section class="ask" aria-labelledby="ask-title">
-        <div class="ask-head">
-          <h3 id="ask-title">Ask the data</h3>
-          <p class="ask-lede">A plain question about this store. The answer comes back with every query it ran, so you can check it rather than trust it. This one call costs a model request, so it fires only when you press Ask - never on the board's refresh.</p>
-        </div>
-        <form id="ask-form" class="ask-form">
-          <label class="vh" for="ask-input">Your question about the data</label>
-          <input id="ask-input" class="ask-input" type="text" autocomplete="off" maxlength="400"
-                 placeholder="Why did approvals drop for merchant-b?">
-          <button id="ask-go" class="ask-go" type="submit">Ask</button>
-        </form>
-        <div id="ask-examples" class="ask-egs"></div>
-        <div id="ask-result" class="ask-result" role="status" aria-live="polite"></div>
-      </section>
-
       <div id="overview-watch-rail"></div>
       <div id="overview-notes"></div>
     </section>
@@ -90,7 +81,7 @@
     <section id="view-queue" class="screen view" data-view="queue" hidden>
       <div class="screen-head">
         <h2>Incident queue</h2>
-        <span class="who" id="queue-who">Ordered by stored severity. Recency is not a ranking.</span>
+        <span class="who" id="queue-who">Ordered by severity, then measured loss per hour. Recency is not a ranking.</span>
       </div>
       <p class="screen-lede">Queue is ordered by business priority. A CRITICAL incident with LOW confidence is valid and expected.</p>
       <div id="queue-board" class="queue-board"></div>
@@ -119,6 +110,7 @@
         <h2>Evidence trail</h2>
         <span class="who">The queries that ran, in order, with what came back. This is a product surface, not a log.</span>
       </div>
+      <p class="screen-lede">Each card is one call the investigation agent made, written as the question it asked and the readings that came back. The raw request and response are one click away under every card: the sentences are a reading of that record, never a substitute for it, and this is the screen that shows we did not invent the answer.</p>
       <div id="evidence-board" class="evidence-board"></div>
     </section>
   </main>
@@ -135,6 +127,29 @@
       </button>
     </div>
     <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <div class="scrim ask-scrim" id="ask-scrim"></div>
+  <aside class="drawer ask-drawer" id="ask-drawer" aria-hidden="true" role="dialog" aria-labelledby="ask-title" tabindex="-1">
+    <div class="drawer-head">
+      <div>
+        <h3 id="ask-title">Ask the data</h3>
+        <p class="ask-lede">A plain question about this store. The answer comes back with every query it ran, so you can check it rather than trust it. This one call costs a model request, so it fires only when you press Ask - never on the board's refresh, and never on opening or closing this panel.</p>
+      </div>
+      <button type="button" class="drawer-close" id="ask-close" aria-label="Close Ask the data">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3l10 10M13 3 3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div id="ask-result" class="ask-thread" role="log" aria-live="polite" aria-label="Questions asked and what came back"></div>
+    <div class="ask-dock">
+      <div id="ask-examples" class="ask-egs"></div>
+      <form id="ask-form" class="ask-form">
+        <label class="vh" for="ask-input">Your question about the data</label>
+        <input id="ask-input" class="ask-input" type="text" autocomplete="off" maxlength="400"
+               placeholder="Ask about a merchant, a provider or a decline reason">
+        <button id="ask-go" class="ask-go" type="submit">Ask</button>
+      </form>
+    </div>
   </aside>
 
   <script src="/app.js"></script>

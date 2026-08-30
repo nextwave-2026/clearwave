@@ -166,7 +166,9 @@ class StoreTests(unittest.TestCase):
         state = connection.execute(
             "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
         ).fetchone()[0]
-        self.assertEqual(state, "investigating")
+        # A watch stays watching while claimed so the board and the verifier
+        # still see a preventive near-miss, not an incident.
+        self.assertEqual(state, "watching")
 
     def test_persisting_a_watch_result_restores_watching(self):
         connection = connect(":memory:")
@@ -423,7 +425,7 @@ class PreventiveRunnerTests(unittest.TestCase):
             connection.execute(
                 "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
             ).fetchone()[0],
-            "investigating",
+            "watching",
         )
         connection.execute(
             "UPDATE investigation_claim SET claimed_at = '2000-01-01T00:00:00.000Z' "
@@ -458,7 +460,7 @@ class PreventiveRunnerTests(unittest.TestCase):
             connection.execute(
                 "SELECT lifecycle_state FROM incident WHERE incident_id = 'inc-watch'"
             ).fetchone()[0],
-            "investigating",
+            "watching",
         )
         self.assertGreaterEqual(CLAIM_LEASE_SECONDS, 300)
 

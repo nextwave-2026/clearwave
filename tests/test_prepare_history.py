@@ -84,6 +84,89 @@ class LiveHealthyHistory(unittest.TestCase):
         self.assertTrue(any(stamp.startswith("2026-08-30T12:00:") for stamp in times))
 
 
+class HistoryLooksLikeLiveTraffic(unittest.TestCase):
+    """The warm start has to be indistinguishable from the traffic it precedes.
+
+    A baseline is a claim about what normal looks like. Where this history and
+    W1's live workers disagree, the detector reads the disagreement as a
+    deviation on every cohort at once for the first hour - which is exactly
+    what the 2026-08-30T07:45Z verification run measured. These four numbers
+    are where they used to disagree, so they are pinned.
+    """
+
+    def sample(self):
+        from worker.helpers.payment import BASELINE_DECLINE_PROBABILITY
+
+        events = synthetic.live_healthy_history(
+            minutes=30, per_merchant_per_minute=60, seed=3, as_of=AS_OF
+        )
+        chains: dict[str, list[dict]] = {}
+        for event in events:
+            chains.setdefault(event["payment_id"], []).append(event)
+        return events, chains, BASELINE_DECLINE_PROBABILITY
+
+    def test_payments_are_attempt_chains_not_single_attempts(self):
+        events, chains, decline = self.sample()
+        # W1 retries a declined attempt away from the provider that declined
+        # it, so a payment can carry more than one attempt and more than one
+        # provider. Without that, payment-level conversion is 1 - p and sits
+        # about nine points under live traffic.
+        self.assertGreater(len(events), len(chains))
+        retried = [chain for chain in chains.values() if len(chain) > 1]
+        self.assertTrue(retried)
+        multi_provider = [
+            chain for chain in retried if len({event["provider"] for event in chain}) > 1
+        ]
+        self.assertTrue(multi_provider)
+        for chain in retried:
+            self.assertEqual(
+                [event["attempt_number"] for event in chain],
+                list(range(1, len(chain) + 1)),
+            )
+            # Only the provider moves within one payment.
+            for field in ("merchant_id", "issuing_bank", "payment_method", "currency"):
+                self.assertEqual(len({event[field] for event in chain}), 1)
+
+    def test_payment_conversion_matches_the_live_retry_model(self):
+        _, chains, decline = self.sample()
+        converted = sum(
+            1 for chain in chains.values()
+            if any(event["status"] == "approved" for event in chain)
+        )
+        conversion = converted / len(chains)
+        # Measured against live traffic on 2026-08-30: 0.954 over the whole
+        # capture, 0.974 over its healthy opening. The old flat generator gave
+        # 0.875, and every cohort then read z +4 to +7 against it.
+        self.assertGreater(conversion, 1 - decline + 0.05)
+        self.assertGreater(conversion, 0.93)
+        self.assertLess(conversion, 0.99)
+
+    def test_latency_carries_the_live_error_tail(self):
+        events, _, _ = self.sample()
+        latencies = [event["latency_ms"] for event in events]
+        mean = sum(latencies) / len(latencies)
+        # Live traffic measured 352ms. A flat 220 put every cohort's latency
+        # ratio at 1.58 against live, over FORMING_LATENCY_P95_RATIO, for the
+        # whole first hour after a warm start.
+        self.assertGreater(mean, 300)
+        self.assertLess(mean, 420)
+        self.assertGreater(max(latencies), 2000)
+        self.assertLess(min(latencies), 100)
+
+    def test_errors_give_the_baseline_a_timeout_share_to_compare_against(self):
+        events, _, _ = self.sample()
+        timeouts = sum(
+            1 for event in events
+            if event.get("normalized_decline_reason") == "provider_timeout"
+        )
+        share = timeouts / len(events)
+        # Live measured 0.00625. A zero baseline would hand every injected
+        # timeout its full share as the delta.
+        self.assertGreater(share, 0.001)
+        self.assertLess(share, 0.02)
+        self.assertTrue(any(event["status"] == "error" for event in events))
+
+
 class PreparedStore(unittest.TestCase):
     def test_clean_start_drops_prior_incidents(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -127,7 +210,7 @@ class PreparedStore(unittest.TestCase):
             result = prepare.prepare(
                 path,
                 hours=6.25,
-                per_merchant_per_minute=12,
+                per_merchant_per_minute=synthetic.LIVE_HISTORY_PER_MERCHANT_PER_MINUTE,
                 seed=20260830,
                 as_of=AS_OF,
                 keep=False,
@@ -174,7 +257,7 @@ class PreparedStore(unittest.TestCase):
                     "--hours",
                     "6.25",
                     "--per-minute",
-                    "12",
+                    str(synthetic.LIVE_HISTORY_PER_MERCHANT_PER_MINUTE),
                     "--as-of",
                     "2026-08-30T12:00:00Z",
                     "--seed",
