@@ -441,7 +441,7 @@ class CliTests(unittest.TestCase):
                 main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         self.assertEqual(DEFAULT_POLL_INTERVAL_SECONDS, 2.0)
-        self.assertEqual(str(DEFAULT_DB), "state/clearwave.db")
+        self.assertEqual(DEFAULT_DB.as_posix(), "state/clearwave.db")
 
     def test_rejects_a_non_positive_interval(self) -> None:
         with mock.patch("sys.stdout"):
@@ -537,6 +537,8 @@ class SignalShutdownTests(unittest.TestCase):
                 proc.wait(timeout=2)
 
     def test_sigterm_drains_and_persists(self) -> None:
+        if os.name == "nt":
+            self.skipTest("Windows subprocesses cannot deliver a catchable SIGTERM")
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "clearwave.db"
             proc = self._start(_armed_daemon_script(db, 0.5))
@@ -548,6 +550,8 @@ class SignalShutdownTests(unittest.TestCase):
             self.assertNotEqual(_lifecycle(db, "inc-daemon-1"), "investigating")
 
     def test_sigint_drains_and_persists(self) -> None:
+        if os.name == "nt":
+            self.skipTest("Windows subprocesses cannot deliver SIGINT with send_signal")
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "clearwave.db"
             proc = self._start(_armed_daemon_script(db, 0.5))
@@ -557,6 +561,8 @@ class SignalShutdownTests(unittest.TestCase):
             self.assertEqual(_result_count(db, "inc-daemon-1"), 1)
 
     def test_sigterm_on_idle_store_leaves_nothing_behind(self) -> None:
+        if os.name == "nt":
+            self.skipTest("Windows subprocesses cannot deliver a catchable SIGTERM")
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "clearwave.db"
             proc = self._start(_armed_idle_script(db))

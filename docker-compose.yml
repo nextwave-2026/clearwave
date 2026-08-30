@@ -131,6 +131,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - ./state:/data
+    tmpfs:
+      - /data/ground_truth
     restart: unless-stopped
 
   detector:
@@ -163,6 +165,8 @@ services:
     volumes:
       - .:/workspaces/clearwave
       - ./state:/data
+    tmpfs:
+      - /data/ground_truth
     depends_on:
       kafka:
         condition: service_healthy
@@ -199,6 +203,8 @@ services:
     volumes:
       - .:/workspaces/clearwave
       - ./state:/data
+    tmpfs:
+      - /data/ground_truth
     depends_on:
       kafka:
         condition: service_healthy

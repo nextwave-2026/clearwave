@@ -198,28 +198,30 @@ class IsolationTests(unittest.TestCase):
         self.assertIn("CLEARWAVE_GROUND_TRUTH_DB: /hidden-truth/ground_truth.db", compose)
         services = _compose_services(compose)
         self.assertIn("investigation", services)
-        self.assertNotIn("ground_truth", services["investigation"])
         self.assertNotIn("CLEARWAVE_GROUND_TRUTH_DB", services["investigation"])
         self.assertIn("CLEARWAVE_DB: /data/clearwave.db", services["investigation"])
         self.assertIn("./state:/data", services["investigation"])
+        self.assertIn("- /data/ground_truth", services["investigation"])
         for name in ("detector", "surfaces"):
             self.assertIn(name, services)
-            self.assertNotIn("ground_truth", services[name])
             self.assertNotIn("CLEARWAVE_GROUND_TRUTH_DB", services[name])
             self.assertIn("CLEARWAVE_DB: /data/clearwave.db", services[name])
             self.assertIn("./state:/data", services[name])
+            self.assertIn("- /data/ground_truth", services[name])
         other_volume_hits = [
             line
             for line in compose.splitlines()
             if "ground_truth" in line and "worker-merchant" not in line
         ]
-        # env and volume lines live under worker services; no other service
-        # name should appear between a service header and those lines.
+        # Non-worker services may only mention ground truth as a tmpfs mask
+        # over the shared state mount. They must not receive a readable C6
+        # bind mount or the ground-truth environment variable.
         self.assertTrue(any("merchant-a" in compose for _ in [0]))
         for line in other_volume_hits:
             self.assertTrue(
                 "state/ground_truth/merchant-" in line
                 or "CLEARWAVE_GROUND_TRUTH_DB" in line
+                or "/data/ground_truth" in line
                 or line.strip().startswith("#"),
                 msg=f"unexpected ground_truth line outside worker mounts: {line}",
             )
