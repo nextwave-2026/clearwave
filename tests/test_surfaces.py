@@ -1521,6 +1521,19 @@ class RevenueFirstOverviewTests(unittest.TestCase):
         self.assertIn("merchant-risk:", self.js)
         self.assertIn("not a total for the row and not a total for the platform", self.js)
 
+    def test_a_calm_headline_is_never_contradicted_by_live_money_below_it(self):
+        # "No revenue at risk" over "USD 78,919 / hour, if it continues" is two
+        # panels contradicting each other. The money is kept - what a merchant
+        # lost is real - but a closed row is worded as closed.
+        self.assertIn('const live = row.source_is_active !== false;', self.js)
+        self.assertIn('"Was costing / hour"', self.js)
+        self.assertIn('"Was at risk"', self.js)
+        self.assertIn('"loss_per_hour, while it ran"', self.js)
+        self.assertIn('"Converted "', self.js)
+        self.assertIn('What it cost earlier', self.js)
+        self.assertIn('Nothing here is still running.', self.js)
+        self.assertRegex(self.css, r"\.mcard\.is-past")
+
     def test_the_watch_rail_still_sits_apart_and_below_the_real_incident(self):
         board = self.html.index('id="overview-board"')
         merchants = self.html.index('id="overview-merchants"')
@@ -1549,10 +1562,28 @@ class MerchantImpactPayloadTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         row = rows[0]
         self.assertEqual(row["source_incident_id"], "inc-a")
-        self.assertEqual(row["financial_impact"], rows[0]["financial_impact"])
         top = _incident("inc-a", "critical", "2026-08-29T10:00:00Z", merchant="merchant-b")
         self.assertEqual(row["financial_impact"], top["financial_impact"])
         self.assertEqual(row["change"], top["change"])
+
+    def test_a_group_with_a_live_record_never_publishes_a_closed_one(self):
+        # A resolved CRITICAL used to outrank a live LOW, so the row asserted
+        # the money of an incident that was already over.
+        closed = _incident("inc-old", "critical", "2026-08-29T09:00:00Z", merchant="merchant-b")
+        closed["lifecycle_state"] = "resolved"
+        live = _incident("inc-now", "low", "2026-08-29T10:00:00Z", merchant="merchant-b")
+        rows = merchant_health([closed, live])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["source_incident_id"], "inc-now")
+        self.assertTrue(rows[0]["source_is_active"])
+
+    def test_a_group_with_only_closed_records_is_flagged_as_history(self):
+        closed = _incident("inc-old", "critical", "2026-08-29T09:00:00Z", merchant="merchant-b")
+        closed["lifecycle_state"] = "resolved"
+        rows = merchant_health([closed])
+        self.assertEqual(rows[0]["source_incident_id"], "inc-old")
+        self.assertFalse(rows[0]["source_is_active"])
+        self.assertEqual(rows[0]["active_incident_count"], 0)
 
     def test_a_cohort_without_a_merchant_keeps_merchant_id_null(self):
         record = _incident("inc-p", "high", "2026-08-29T10:00:00Z", merchant=None)

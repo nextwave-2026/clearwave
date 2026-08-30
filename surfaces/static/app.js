@@ -271,32 +271,46 @@
   // A row is a merchant only when the stored cohort names one. Where it names
   // a provider or a country instead, the row says so rather than being filed
   // under a heading that calls it a merchant.
+  //
+  // A row whose source record is closed is history, and is worded as history.
+  // Drawing a loss rate as "if it continues" off a resolved incident - and
+  // worse, drawing it under a calm headline that has just said no revenue is at
+  // risk - is two panels contradicting each other on a board whose whole claim
+  // is that it does not say untrue things. The money is kept, because what a
+  // merchant lost earlier is real and worth reading; only the tense changes.
   function merchantCard(row, index) {
     const financial = row.financial_impact || {};
     const change = row.change || {};
     const source = row.source_incident_id || "not in store";
     const isMerchant = Boolean(row.merchant_id);
+    const live = row.source_is_active !== false;
     const sev = badgePair(row.highest_severity, "__omit__", null).querySelector(".sev").outerHTML;
+    const rateLabel = live ? "Loss rate" : "Was costing / hour";
+    const riskLabel = live ? "Revenue at risk" : "Was at risk";
+    const rateHint = live ? "loss_per_hour, if it continues" : "loss_per_hour, while it ran";
+    const riskHint = live ? "gmv_at_risk, an estimate" : "gmv_at_risk over that incident, an estimate";
+    const converting = live ? "Converting " : "Converted ";
     return (
-      '<article class="mcard">' +
+      '<article class="mcard' + (live ? "" : " is-past") + '">' +
       '<div class="mcard-head">' +
       "<h4>" + escapeHtml(row.scope_label || row.merchant_id || "Platform-wide") + "</h4>" +
       '<span class="mkind">' + (isMerchant ? "merchant" : "cohort") + "</span>" +
+      '<span class="mstate">' + (live ? "live" : "closed") + "</span>" +
       "</div>" +
       '<dl class="mcard-figs">' +
       '<div class="mfig mfig-rate">' +
-      "<dt>Loss rate</dt>" +
-      figure(money(financial.loss_per_hour) + " / hour", "loss_per_hour, if it continues",
-        "merchant-burn:" + index, "loss rate for " + (row.scope_label || source)) +
+      "<dt>" + escapeHtml(rateLabel) + "</dt>" +
+      figure(money(financial.loss_per_hour) + " / hour", rateHint,
+        "merchant-burn:" + index, rateLabel + " for " + (row.scope_label || source)) +
       "</div>" +
       '<div class="mfig mfig-risk">' +
-      "<dt>Revenue at risk</dt>" +
-      figure(money(financial.gmv_at_risk), "gmv_at_risk, an estimate",
-        "merchant-risk:" + index, "revenue at risk for " + (row.scope_label || source)) +
+      "<dt>" + escapeHtml(riskLabel) + "</dt>" +
+      figure(money(financial.gmv_at_risk), riskHint,
+        "merchant-risk:" + index, riskLabel + " for " + (row.scope_label || source)) +
       "</div>" +
       "</dl>" +
       '<p class="mcard-foot">' + sev +
-      "<span>Converting " + escapeHtml(ratio(change.actual)) + " against " +
+      "<span>" + converting + escapeHtml(ratio(change.actual)) + " against " +
       escapeHtml(ratio(change.expected)) + " expected</span>" +
       '<span class="mono">' + escapeHtml(count(row.active_incident_count)) +
       " active · " + escapeHtml(source) + "</span></p>" +
@@ -310,11 +324,20 @@
       overviewMerchants.innerHTML = "";
       return;
     }
+    // The heading is chosen by what the rows actually are. With nothing live,
+    // "Who is carrying it" would be asking a question the store is answering
+    // with "nobody, any more".
+    const anyLive = list.some(function (row) { return row.source_is_active !== false; });
+    const heading = anyLive ? "Who is carrying it" : "What it cost earlier";
+    const lede = anyLive
+      ? "One row per merchant, or per cohort where the stored incident names no merchant. " +
+        "Every figure is copied from that row's own highest-priority incident. Nothing is added up across rows."
+      : "Nothing here is still running. Every row below is a closed incident, kept because what it cost " +
+        "is real, and worded in the past because it is over. Nothing is added up across rows.";
     overviewMerchants.innerHTML =
       '<section class="impact" aria-label="Revenue impact by merchant">' +
-      '<div class="impact-head"><h3>Who is carrying it</h3>' +
-      '<p class="impact-lede">One row per merchant, or per cohort where the stored incident names no merchant. ' +
-      "Every figure is copied from that row's own highest-priority incident. Nothing is added up across rows.</p></div>" +
+      '<div class="impact-head"><h3>' + escapeHtml(heading) + "</h3>" +
+      '<p class="impact-lede">' + escapeHtml(lede) + "</p></div>" +
       '<div class="merchants">' + list.map(merchantCard).join("") + "</div>" +
       "</section>";
     bindCites(overviewMerchants);
@@ -1050,11 +1073,13 @@
     return {
       title: (parts[0] === "merchant-burn" ? "Loss rate · " : "Revenue at risk · ") +
         (row.scope_label || row.merchant_id || "Platform-wide"),
-      lede: "Copied from that row's own highest-priority incident record. It is that one " +
-        "incident's figure, not a total for the row and not a total for the platform.",
+      lede: "Copied from that row's own highest-priority incident record" +
+        (row.source_is_active === false ? ", which is closed - this is what it cost, not what it is costing" : "") +
+        ". It is that one incident's figure, not a total for the row and not a total for the platform.",
       rows: [
         ["source", row.source_incident_id || "not in store"],
         ["scope", row.merchant_id ? "merchant " + row.merchant_id : "cohort " + (row.scope_label || "not in store")],
+        ["state", row.source_is_active === false ? "closed" : "live"],
         ["field", field],
         ["value", value == null ? "not in store" : value],
       ],

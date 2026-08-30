@@ -834,7 +834,10 @@ table th:last-child, table td:last-child { padding-right: 0; }
   overflow-wrap: anywhere;
 }
 
-.mkind {
+.mcard.is-past { background: var(--surface); border-style: dashed; }
+.mcard.is-past .mfig-risk dd { color: var(--ink-2); }
+
+.mkind, .mstate {
   font-size: 9.5px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -843,6 +846,9 @@ table th:last-child, table td:last-child { padding-right: 0; }
   border-radius: 100px;
   padding: 2px 7px;
 }
+
+.mstate { color: var(--ink-2); }
+.mcard.is-past .mstate { color: var(--ink-3); }
 
 .mcard-figs {
   display: grid;

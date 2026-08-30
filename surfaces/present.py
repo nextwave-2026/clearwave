@@ -230,9 +230,12 @@ def merchant_health(incidents: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
 
     No health score is invented and nothing is added up across a group: the
     money published here is copied off that group's own highest-priority
-    record, and travels with the id of the record it came from so the board
-    can cite it. A group whose cohort names no merchant keeps `merchant_id`
-    null, which is how the board knows not to call it a merchant.
+    live record - or, where the group holds none, its highest-priority closed
+    one, flagged `source_is_active: False` so the board reads it as history
+    rather than as a loss still running. It travels with the id of the record
+    it came from so the board can cite it. A group whose cohort names no
+    merchant keeps `merchant_id` null, which is how the board knows not to
+    call it a merchant.
     """
     grouped: dict[tuple[Any, ...], list[Mapping[str, Any]]] = {}
     for incident in incidents:
@@ -242,9 +245,14 @@ def merchant_health(incidents: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
     health = []
     rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     for key in sorted(grouped):
+        # Active records rank ahead of closed ones, so a group with anything
+        # live never publishes the money of an incident that is already over.
+        # Where every record is closed the row is history, and `source_is_active`
+        # is what lets the board say so instead of asserting a live loss rate.
         records = sorted(
             grouped[key],
             key=lambda item: (
+                0 if _is_active(item) else 1,
                 rank.get(str(item.get("severity", "")).lower(), 99),
                 str(item.get("incident_id", "")),
             ),
@@ -259,6 +267,7 @@ def merchant_health(incidents: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
                 "active_incident_count": sum(1 for item in records if _is_active(item)),
                 "incident_ids": [item.get("incident_id") for item in records],
                 "source_incident_id": top.get("incident_id"),
+                "source_is_active": _is_active(top),
                 "financial_impact": top.get("financial_impact"),
                 "change": top.get("change"),
             }
