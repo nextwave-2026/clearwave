@@ -29,6 +29,38 @@ def _write_closed(db_path: Path, scenario_id: str, duration: int = 12) -> Scenar
     return run
 
 
+def _compose_services(text: str) -> dict[str, str]:
+    """Map compose service name to the raw block under it."""
+    services: dict[str, str] = {}
+    in_services = False
+    name: str | None = None
+    buf: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("services:"):
+            in_services = True
+            continue
+        if not in_services:
+            continue
+        if line and not line.startswith(" ") and line.rstrip().endswith(":"):
+            break
+        if (
+            line.startswith("  ")
+            and not line.startswith("    ")
+            and line.rstrip().endswith(":")
+            and not line.strip().startswith("#")
+            and not line.strip().startswith("-")
+        ):
+            if name is not None:
+                services[name] = "\n".join(buf)
+            name = line.strip().rstrip(":")
+            buf = []
+            continue
+        buf.append(line)
+    if name is not None:
+        services[name] = "\n".join(buf)
+    return services
+
+
 def _imported_modules(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     names: set[str] = set()
@@ -165,7 +197,12 @@ class IsolationTests(unittest.TestCase):
         self.assertIn("./state/ground_truth/merchant-c:/hidden-truth", compose)
         self.assertIn("CLEARWAVE_GROUND_TRUTH_DB: /hidden-truth/ground_truth.db", compose)
         self.assertNotIn("detector:", compose)
-        self.assertNotIn("investigation:", compose)
+        services = _compose_services(compose)
+        self.assertIn("investigation", services)
+        self.assertNotIn("ground_truth", services["investigation"])
+        self.assertNotIn("CLEARWAVE_GROUND_TRUTH_DB", services["investigation"])
+        self.assertIn("CLEARWAVE_DB: /data/clearwave.db", services["investigation"])
+        self.assertIn("./state:/data", services["investigation"])
         other_volume_hits = [
             line
             for line in compose.splitlines()
@@ -181,6 +218,12 @@ class IsolationTests(unittest.TestCase):
                 or line.strip().startswith("#"),
                 msg=f"unexpected ground_truth line outside worker mounts: {line}",
             )
+
+    def test_investigation_image_has_no_hidden_truth_path(self) -> None:
+        dockerfile = (ROOT / "investigation" / "Dockerfile").read_text(encoding="utf-8")
+        self.assertNotIn("ground_truth", dockerfile)
+        self.assertNotIn("CLEARWAVE_GROUND_TRUTH_DB", dockerfile)
+        self.assertNotIn("worker/", dockerfile)
 
     def _assert_tree_clean(self, tree: Path) -> None:
         offenders: list[str] = []
