@@ -110,7 +110,10 @@ behaviour is specified in `docs/contracts/evidence-tools.md`.
 
 W2 also consumes W1's three live Kafka topics into that same store (`python3 -m detector consume --detect`).
 The live and file-based paths share one normalisation and one store; the file-based path imports no Kafka
-client and is the broker-free demo fallback. Operator detail: `docs/live-ingestion.md`.
+client and is the broker-free demo fallback. Consumer operator detail: `docs/live-ingestion.md`.
+The copy-pasteable demo runbook - offline stage path, live Kafka caveats, and commands that fail - is
+`docs/demo-sequence.md`. Use `.venv/bin/python`. Do not use `--mode anomaly`, system pip, or `make live`
+as a one-step demo.
 
 ## Working conventions
 

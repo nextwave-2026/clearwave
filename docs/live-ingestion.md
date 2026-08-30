@@ -11,8 +11,8 @@ Owner: W2 (`andres`). The contract for what a record becomes is
 
 | Path | Command | Needs |
 |---|---|---|
-| **Live** | `python3 -m detector consume --detect` | Kafka, Schema Registry, a running W1 worker |
-| **Offline** | `python3 -m detector seed && python3 -m detector detect` | nothing but Python |
+| **Live** | `.venv/bin/python -m detector consume --detect` | Kafka, Schema Registry, a running W1 worker |
+| **Offline** | `.venv/bin/python -m detector seed && .venv/bin/python -m detector detect` | the project virtualenv |
 
 The offline path is the demo fallback and does not import a Kafka client at any point. If the
 broker will not start on the morning, it is still a complete demonstration of everything the
@@ -21,33 +21,43 @@ doors onto the same normalisation, the same store and the same detection sweep.
 
 ## Running it end to end from a clean checkout
 
+The copy-pasteable demo sequence, including the offline fallback that actually produces a diagnosed incident on the dashboard, is [`docs/demo-sequence.md`](demo-sequence.md). This page is the live consumer. Several commands that used to be written here fail; do not use them.
+
 ```sh
-# 1. Broker and Schema Registry (raul's stack).
+# 0. Dependencies. Do not use system pip; it fails with PEP 668 on Homebrew Python.
+make install
+
+# 1. Broker and Schema Registry (raul's stack). Use the docker compose
+#    subcommand; standalone docker-compose is not required.
 docker compose up -d kafka schema-registry
+# wait until both are healthy
 
-# 2. The Kafka client. Only the consumer needs it; nothing else in W2 does.
-python3 -m pip install -r detector/requirements.txt
+# 2. One of raul's merchants, in another shell. --mode anomaly does not exist.
+#    PYTHONUNBUFFERED=1 is required on the host (the image sets it; a host
+#    command does not). An empty log is not a dead worker.
+PYTHONUNBUFFERED=1 .venv/bin/python -m worker.worker merchant-a --interval-seconds 0.2
 
-# 3. One of raul's merchants, in another shell. --mode anomaly is the
-#    provider-degradation scenario the demo turns on.
-python3 -m worker.worker merchant-a --mode anomaly --interval-seconds 0.2
+# 3. Only after that worker is publishing. Injecting first is silently lost:
+#    incidents.control starts from latest with a new consumer group.
+.venv/bin/python -m worker.inject merchant-a --provider dlocal --effect decline
 
-# 4. Consume for a minute, then detect - one command, live traffic to a C3 record.
+# 4. Consume for a minute, then detect. This is live traffic into the store.
+#    It is not a guaranteed C3 record. Healthy 60s traffic returns incident null.
 export CLEARWAVE_DB=state/clearwave.db
-python3 -m detector consume --seconds 60 --detect
+.venv/bin/python -m detector consume --seconds 60 --detect
 ```
 
-`make live` is step 4. `make consume` reads until the topics go quiet and stops.
+`make live` is only step 4, and it hardcodes system `python3` rather than `.venv`. It starts neither Kafka nor a worker, and it does not guarantee an incident. `make consume` reads until the topics go quiet and stops.
 
-The consumer prints what it did:
+On healthy traffic the consumer prints something like this (live run: 1319 accepted, incident null):
 
 ```json
 {
-  "consumed": {"accepted": 812, "duplicates": 0, "rejected": 0, "batches": 5,
-               "polled": 812, "by_topic": {"ops.telemetry": 31, "payments.attempts": 640,
-                                           "payments.closed": 141}},
-  "stored": {"attempt": 640, "closed": 141, "telemetry": 31},
-  "detection": {"incident": {"...": "a C3 record with money attached"}, "stored": true}
+  "consumed": {"accepted": 1319, "duplicates": 0, "rejected": 0, "batches": 7,
+               "polled": 1319, "by_topic": {"ops.telemetry": 115, "payments.attempts": 628,
+                                           "payments.closed": 576}},
+  "stored": {"attempt": 628, "closed": 576, "telemetry": 115},
+  "detection": {"incident": null, "stored": false}
 }
 ```
 
