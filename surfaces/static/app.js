@@ -14,7 +14,11 @@
     detail: null,
     injected: false,
     stage: "clear",
-    ask: null,
+    // The conversation, oldest first. Each entry is one press: the question
+    // that was sent and the payload the engine returned for it. It lives in
+    // memory for the session only - no persistence, no API field.
+    askTurns: [],
+    askPending: null,
     asking: false,
   };
 
@@ -39,6 +43,9 @@
   const drawerLede = document.getElementById("drawer-lede");
   const drawerBody = document.getElementById("drawer-body");
   const scrim = document.getElementById("scrim");
+  const askDrawer = document.getElementById("ask-drawer");
+  const askScrim = document.getElementById("ask-scrim");
+  const askToggle = document.getElementById("ask-toggle");
 
   function $(id) {
     return document.getElementById(id);
@@ -466,12 +473,38 @@
   // Nothing here computes. Every figure and every query below is copied out of
   // what the engine returned, and a figure the engine did not tie to a query
   // says so rather than borrowing a citation it does not have.
+  //
+  // It lives in its own drawer, off the board, opened from the masthead. The
+  // board is operational data; this is a conversation, and it is available on
+  // demand rather than sitting in the middle of the money. Opening or closing
+  // the drawer asks nothing - only the press does.
+  //
+  // The transcript keeps every exchange of the session. Each turn carries its
+  // own answer, so an old answer's citations still point at the queries that
+  // produced *it* rather than at whatever was asked last - which is why every
+  // ask cite id carries its turn index.
   // ---------------------------------------------------------------------
 
+  // Deliberately cohort-neutral. These used to name merchant-b and adyen - the
+  // demo's injected cohort - which is only the right question when the demo's
+  // own injection is the thing that is wrong. On a run where the live faults sat
+  // elsewhere, "why did approvals drop for merchant-b?" returns a correct answer
+  // that nothing is wrong, and that reads as the product failing when it was the
+  // suggestion that was wrong. Naming no cohort cannot point at a healthy one.
+  //
+  // They stay hardcoded rather than derived from the store: a question phrased
+  // from live data would put a figure on screen that no query backs, which is
+  // exactly the defect W4's hard rule forbids. A question is not a measurement,
+  // so it names none.
+  //
+  // Neutral is not enough on its own - a neutral question the engine's tools
+  // cannot reach answers "not in the store", which reads as badly as pointing
+  // at a healthy merchant. All three below were run against a seeded store and
+  // came back answered, at the shape the evidence tools actually measure.
   const ASK_EXAMPLES = [
-    "Why did approvals drop for merchant-b?",
-    "Which decline reason is costing us the most?",
-    "Is adyen worse than the others today?",
+    "Why did approvals drop in the current window?",
+    "Which decline reason is the largest share of failures right now?",
+    "Is the service healthy right now, and what does the evidence say?",
   ];
 
   // Values arrive from the engine already priced and worded. `money()` is used
@@ -486,13 +519,13 @@
     return String(value);
   }
 
-  function askFigures(figures) {
+  function askFigures(figures, turn) {
     const rows = figures || [];
     if (!rows.length) return "";
     return '<dl class="ask-figs">' + rows.map(function (row, index) {
       const cited = row.query_id
         ? '<span class="fig">' + escapeHtml(askValue(row.value)) +
-          citeButton("ask-fig:" + index, "cite " + (row.label || "figure")) + "</span>"
+          citeButton("ask-fig:" + turn + ":" + index, "cite " + (row.label || "figure")) + "</span>"
         : '<span class="ask-uncited">' + escapeHtml(askValue(row.value)) + "</span>";
       const note = row.query_id
         ? '<small class="mono">' + escapeHtml(row.tool || "tool not in store") + " · " +
@@ -516,7 +549,7 @@
     );
   }
 
-  function askCitations(citations) {
+  function askCitations(citations, turn) {
     const rows = citations || [];
     if (!rows.length) return "";
     return (
@@ -530,7 +563,7 @@
           '<span class="ask-tool">' + escapeHtml(row.tool || "tool not in store") + "</span>" +
           '<span class="ask-qid mono">' + escapeHtml(row.query_id || "query id not in store") + "</span>" +
           '<span class="ask-outcome">' + escapeHtml(row.outcome || "outcome not in store") + "</span>" +
-          citeButton("ask-cite:" + index, "cite query " + count(row.sequence)) +
+          citeButton("ask-cite:" + turn + ":" + index, "cite query " + count(row.sequence)) +
           "</li>";
       }).join("") + "</ol></div>"
     );
@@ -588,59 +621,119 @@
     return ASK_STATES[payload.outcome] || null;
   }
 
-  function renderAsk() {
-    if (state.asking) {
-      askResult.innerHTML =
-        '<div class="ask-card is-pending"><div class="ask-status">' +
-        '<span class="ask-spin" aria-hidden="true"></span>' +
-        "<b>Reading the store</b></div>" +
-        "<p>The engine is choosing and running its own queries against this store, up to six of " +
-        "them, and it has thirty seconds. Every query it runs is listed here when it answers, " +
-        "including the ones that came back empty.</p>" +
-        "</div>";
-      return;
-    }
-    const payload = state.ask;
-    if (!payload) {
-      askResult.innerHTML = "";
-      return;
-    }
+  // One turn of the conversation, drawn from the payload that turn returned.
+  // Nothing is dropped for compactness: figures with their citations, the
+  // missing-evidence block, the full ordered query trail and the watermark all
+  // survive the move into the drawer.
+  function askTurnHtml(turn, index) {
+    const payload = turn.payload;
+    const asked = '<p class="ask-asked">' + escapeHtml(turn.question || "") + "</p>";
+    const cited = '<div class="ask-cited" id="ask-cited-' + index + '" hidden></div>';
     if (payload.busy) {
-      askResult.innerHTML =
+      return '<article class="ask-turn" data-turn="' + index + '">' + asked +
         '<div class="ask-card is-busy"><div class="ask-status"><b>A question is already running</b></div>' +
         "<p>" + escapeHtml(payload.detail || "One question runs at a time. This press started nothing new.") +
-        "</p></div>";
-      return;
+        "</p></div></article>";
     }
-    const asked = '<p class="ask-asked">' + escapeHtml(payload.question || "") + "</p>";
-    const trail = askCitations(payload.citations);
+    const trail = askCitations(payload.citations, index);
     const missing = askMissing(payload.missing_evidence);
     const info = askStateFor(payload);
     if (info) {
-      askResult.innerHTML =
-        '<div class="ask-card is-' + info.tone + '">' + asked +
+      return '<article class="ask-turn" data-turn="' + index + '">' + asked +
+        '<div class="ask-card is-' + info.tone + '">' +
         "<h4>" + escapeHtml(info.title) + "</h4>" +
         '<p class="ask-lede">' + escapeHtml(info.lede) + "</p>" +
         (payload.answer ? '<p class="ask-detail">' + escapeHtml(payload.answer) + "</p>" : "") +
-        missing + trail + askAsOf(payload) + "</div>";
-      bindCites(askResult);
-      return;
+        missing + trail + askAsOf(payload) + cited + "</div></article>";
     }
-    askResult.innerHTML =
-      '<div class="ask-card is-answer">' + asked +
+    return '<article class="ask-turn" data-turn="' + index + '">' + asked +
+      '<div class="ask-card is-answer">' +
       '<p class="ask-answer">' + escapeHtml(payload.answer || "The engine returned no wording for this answer.") + "</p>" +
-      askFigures(payload.figures) + trail + askAsOf(payload) + "</div>";
-    bindCites(askResult);
+      askFigures(payload.figures, index) + trail + askAsOf(payload) + cited + "</div></article>";
   }
 
+  function askPendingHtml(question) {
+    return '<article class="ask-turn">' +
+      '<p class="ask-asked">' + escapeHtml(question || "") + "</p>" +
+      '<div class="ask-card is-pending"><div class="ask-status">' +
+      '<span class="ask-spin" aria-hidden="true"></span>' +
+      "<b>Reading the store</b></div>" +
+      "<p>The engine is choosing and running its own queries against this store, up to six of " +
+      "them, and it has thirty seconds. Every query it runs is listed here when it answers, " +
+      "including the ones that came back empty.</p>" +
+      "</div></article>";
+  }
+
+  function renderAsk() {
+    const turns = state.askTurns.map(askTurnHtml).join("");
+    const pending = state.asking && state.askPending ? askPendingHtml(state.askPending) : "";
+    if (!turns && !pending) {
+      askResult.innerHTML =
+        '<div class="ask-empty"><p>Nothing asked yet this session.</p>' +
+        "<p>Type a question, or start from one below. The answer arrives with every query the " +
+        "engine ran, each under the id it is recorded against, so you can check it rather than " +
+        "trust it.</p></div>";
+      return;
+    }
+    askResult.innerHTML = turns + pending;
+    bindAskCites(askResult);
+    askResult.scrollTop = askResult.scrollHeight;
+  }
+
+  // A citation opened from inside a conversation must not destroy the
+  // conversation. The board's citation drawer occupies this same edge of the
+  // screen, so sending an ask citation there would slide the record over the
+  // answer that cited it. It renders inline instead, inside its own turn,
+  // directly under the answer it belongs to - the same record, the same fields,
+  // and the thread still intact behind it. Pressing the dot again closes it.
+  function bindAskCites(root) {
+    root.querySelectorAll("button.cite").forEach(function (btn) {
+      btn.addEventListener("click", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        const citeId = btn.getAttribute("data-cite");
+        const turn = citeId.split(":")[1];
+        const slot = $("ask-cited-" + turn);
+        if (!slot) return;
+        const open = btn.classList.contains("on");
+        root.querySelectorAll("button.cite.on").forEach(function (other) {
+          other.classList.remove("on");
+        });
+        if (open) {
+          slot.hidden = true;
+          slot.innerHTML = "";
+          return;
+        }
+        const rec = askCite(citeId);
+        if (!rec) return;
+        btn.classList.add("on");
+        slot.innerHTML =
+          '<div class="ask-cited-head"><h5>' + escapeHtml(rec.title) + "</h5>" +
+          "<p>" + escapeHtml(rec.lede) + "</p></div>" +
+          "<dl>" + rec.rows.map(function (row) {
+            return "<dt>" + escapeHtml(row[0]) + "</dt><dd class=\"mono\">" + escapeHtml(pretty(row[1])) + "</dd>";
+          }).join("") + "</dl><h6>Record</h6><pre>" + escapeHtml(pretty(rec.body)) + "</pre>";
+        slot.hidden = false;
+      });
+    });
+  }
+
+  // A suggestion fills the box and hands the press back to the reader. It used
+  // to submit on click, which spent a model call with no chance to adjust the
+  // wording - and the panel's own promise is that the call fires only when you
+  // press Ask. Filling and focusing keeps that literally true.
   function renderAskExamples() {
-    askExamples.innerHTML = ASK_EXAMPLES.map(function (text) {
-      return '<button type="button" class="ask-eg">' + escapeHtml(text) + "</button>";
-    }).join("");
+    askExamples.innerHTML =
+      '<p class="ask-egs-cap">Start from one of these, then edit it before you press Ask.</p>' +
+      ASK_EXAMPLES.map(function (text, index) {
+        return '<button type="button" class="ask-eg" data-eg="' + index + '">' + escapeHtml(text) + "</button>";
+      }).join("");
     askExamples.querySelectorAll("button.ask-eg").forEach(function (button) {
       button.addEventListener("click", function () {
-        $("ask-input").value = button.textContent;
-        submitAsk();
+        const input = $("ask-input");
+        input.value = ASK_EXAMPLES[Number(button.getAttribute("data-eg"))];
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
       });
     });
   }
@@ -1423,10 +1516,11 @@
   // shows what the engine recorded so it can be checked, and checking it is
   // not the dashboard's job.
   function askCite(citeId) {
-    const payload = state.ask;
-    if (!payload) return null;
     const parts = citeId.split(":");
-    const index = Number(parts[1]);
+    const turn = state.askTurns[Number(parts[1])];
+    if (!turn) return null;
+    const payload = turn.payload;
+    const index = Number(parts[2]);
     if (parts[0] === "ask-fig") {
       const row = (payload.figures || [])[index];
       if (!row) return null;
@@ -1694,6 +1788,50 @@
   $("drawer-close").addEventListener("click", closeCite);
   scrim.addEventListener("click", closeCite);
 
+  // The ask drawer. Same slide, same scrim, same close affordance as the
+  // citation drawer beside it, and deliberately a separate element: an answer
+  // opens its citations from inside itself, and one drawer cannot be both the
+  // conversation and the record the conversation cites.
+  //
+  // Opening and closing is presentation only. Neither touches /api/ask.
+  function openAsk() {
+    askDrawer.classList.add("open");
+    askDrawer.setAttribute("aria-hidden", "false");
+    askScrim.classList.add("on");
+    askToggle.setAttribute("aria-expanded", "true");
+    $("ask-input").focus();
+  }
+
+  function closeAsk() {
+    askDrawer.classList.remove("open");
+    askDrawer.setAttribute("aria-hidden", "true");
+    askScrim.classList.remove("on");
+    askToggle.setAttribute("aria-expanded", "false");
+    askToggle.focus();
+  }
+
+  function askIsOpen() {
+    return askDrawer.classList.contains("open");
+  }
+
+  askToggle.addEventListener("click", function () {
+    if (askIsOpen()) closeAsk();
+    else openAsk();
+  });
+  $("ask-close").addEventListener("click", closeAsk);
+  askScrim.addEventListener("click", closeAsk);
+
+  // Escape closes whichever is in front: the citation drawer sits above the
+  // ask drawer, so it goes first and the conversation stays where it was.
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== "Escape") return;
+    if (drawer.classList.contains("open")) {
+      closeCite();
+      return;
+    }
+    if (askIsOpen()) closeAsk();
+  });
+
   // The only thing that fires /api/ask. It is never called from refresh(), and
   // the endpoint itself refuses GET, so the board's poll cannot reach a model.
   function submitAsk() {
@@ -1705,8 +1843,9 @@
       return;
     }
     state.asking = true;
-    state.ask = null;
+    state.askPending = question;
     $("ask-go").disabled = true;
+    input.value = "";
     renderAsk();
     fetch("/api/ask", {
       method: "POST",
@@ -1743,8 +1882,9 @@
         };
       })
       .then(function (payload) {
-        state.ask = payload;
+        state.askTurns.push({ question: question, payload: payload });
         state.asking = false;
+        state.askPending = null;
         $("ask-go").disabled = false;
         renderAsk();
       });
@@ -1763,6 +1903,7 @@
   tick();
   setInterval(tick, 1000);
   renderAskExamples();
+  renderAsk();
   loadJudgeState();
   refresh();
   setInterval(refresh, 2500);

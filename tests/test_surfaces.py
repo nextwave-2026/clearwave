@@ -1866,12 +1866,36 @@ class AskPanelPageTests(unittest.TestCase):
         self.assertIn('fetch("/api/ask"', submit)
         self.assertIn('method: "POST"', submit)
 
-    def test_only_a_press_or_an_example_press_can_ask(self):
+    def test_only_a_press_can_ask(self):
         self.assertIn('$("ask-form").addEventListener("submit"', self.js)
-        # The example chips fill and submit; both are a user press.
         self.assertIn("ASK_EXAMPLES", self.js)
         self.assertNotIn("setInterval(submitAsk", self.js)
         self.assertNotIn("setTimeout(submitAsk", self.js)
+        # The suggestion chips fill the box and hand the press back. They do
+        # not spend a model call on a question nobody had a chance to edit.
+        chips = self.js[self.js.index("function renderAskExamples"):self.js.index("function renderQueue")]
+        self.assertNotIn("submitAsk", chips)
+        self.assertIn("input.focus()", chips)
+
+    def test_the_suggestions_cannot_point_at_a_healthy_cohort(self):
+        """They are static, so they must not name one.
+
+        Hardcoded to `merchant-b` and `adyen` - the demo's injected cohort -
+        a suggestion asks why approvals dropped somewhere nothing is wrong on
+        any run whose faults sat elsewhere, and a correct "nothing is wrong"
+        answer reads as the product failing. Naming no cohort cannot do that.
+        Deriving them from the store is the other fix and is deliberately not
+        taken: a question phrased from live data would put a figure on screen
+        that no query backs.
+        """
+        examples = self.js[self.js.index("const ASK_EXAMPLES"):self.js.index("function askValue")]
+        for cohort in ("merchant-a", "merchant-b", "merchant-c", "adyen", "stripe", "mercadopago"):
+            self.assertNotIn(cohort, examples)
+
+    def test_opening_or_closing_the_drawer_asks_nothing(self):
+        wiring = self.js[self.js.index("function openAsk"):self.js.index("// The only thing that fires")]
+        self.assertNotIn("/api/ask", wiring)
+        self.assertNotIn("submitAsk", wiring)
 
     def test_a_second_press_is_refused_in_the_page_as_well_as_the_server(self):
         submit = self.js[self.js.index("function submitAsk"):self.js.index('$("ask-form")')]
@@ -1889,6 +1913,31 @@ class AskPanelPageTests(unittest.TestCase):
         self.assertIn("including the ones that came back empty", self.js)
         self.assertRegex(self.css, r"\.ask-spin \{")
         self.assertIn('aria-live="polite"', self.html)
+
+    def test_the_transcript_keeps_the_thread_and_each_answer_keeps_its_own_cites(self):
+        self.assertIn("askTurns", self.js)
+        # A turn's citations carry its index, so an old answer still cites the
+        # queries that produced it rather than whatever was asked last.
+        self.assertIn('citeButton("ask-fig:" + turn + ":" + index', self.js)
+        self.assertIn('citeButton("ask-cite:" + turn + ":" + index', self.js)
+        cite = self.js[self.js.index("function askCite"):self.js.index("function openCite")]
+        self.assertIn("state.askTurns[Number(parts[1])]", cite)
+        # In memory for the session: no persistence, no API field.
+        for banned in ("localStorage", "sessionStorage", "/api/ask-history"):
+            self.assertNotIn(banned, self.js)
+        # Nothing is dropped for compactness.
+        turn = self.js[self.js.index("function askTurnHtml"):self.js.index("function askPendingHtml")]
+        for kept in ("askFigures", "askCitations", "askMissing", "askAsOf"):
+            self.assertIn(kept, turn)
+
+    def test_the_drawer_can_be_left_by_keyboard_and_gives_focus_back(self):
+        wiring = self.js[self.js.index("function openAsk"):self.js.index("function submitAsk")]
+        self.assertIn('$("ask-input").focus()', wiring)
+        self.assertIn("askToggle.focus()", wiring)
+        self.assertIn('event.key !== "Escape"', wiring)
+        self.assertIn("askScrim.addEventListener", wiring)
+        self.assertIn('$("ask-close").addEventListener', wiring)
+        self.assertIn('aria-hidden="true"', self.html)
 
     def test_every_non_answer_state_is_designed_rather_than_thrown(self):
         for key, phrase in (
@@ -1932,14 +1981,26 @@ class AskPanelPageTests(unittest.TestCase):
         for arithmetic in ("reduce(", "* 100", "+ Number(", ".toFixed(", " / "):
             self.assertNotIn(arithmetic, panel)
 
-    def test_the_panel_supports_the_board_rather_than_taking_it_over(self):
-        board = self.html.index('id="overview-board"')
-        merchants = self.html.index('id="overview-merchants"')
-        ask = self.html.index('id="ask-form"')
-        rail = self.html.index('id="overview-watch-rail"')
-        self.assertLess(board, merchants)
-        self.assertLess(merchants, ask)
-        self.assertLess(ask, rail)
+    def test_the_panel_is_out_of_the_board_and_in_its_own_drawer(self):
+        """The operational view is money and incidents; asking is on demand."""
+        overview = self.html[self.html.index('id="view-overview"'):self.html.index('id="view-queue"')]
+        for gone in ('id="ask-form"', 'id="ask-result"', 'class="ask"'):
+            self.assertNotIn(gone, overview)
+        # It is a second, independent drawer: an ask answer opens citations from
+        # inside itself, so it cannot live in the citation drawer.
+        self.assertIn('id="ask-drawer"', self.html)
+        self.assertNotEqual(self.html.index('id="drawer"'), self.html.index('id="ask-drawer"'))
+        drawer = self.html[self.html.index('id="ask-drawer"'):self.html.index("</aside>", self.html.index('id="ask-drawer"'))]
+        for owned in ('id="ask-result"', 'id="ask-form"', 'id="ask-input"', 'id="ask-examples"', 'id="ask-close"'):
+            self.assertIn(owned, drawer)
+        # A citation opened inside the conversation renders inside it.
+        self.assertIn("ask-cited-", self.js)
+        self.assertIn("function bindAskCites", self.js)
+        # Opened from the top-right, and the button says what it did.
+        mast = self.html[self.html.index('class="mast-right"'):self.html.index("</header>")]
+        self.assertIn('id="ask-toggle"', mast)
+        self.assertIn('aria-controls="ask-drawer"', mast)
+        self.assertIn('aria-expanded="false"', mast)
         # No display-weight money in the panel: the answer is prose, not a KPI.
         answer = re.search(r"\.ask-answer \{[^}]*font-size: (\d+)px", self.css)
         risk = re.search(r"\.money \.mfig-risk dd \{[^}]*font-size: (\d+)px", self.css)
@@ -1949,7 +2010,11 @@ class AskPanelPageTests(unittest.TestCase):
         self.assertIn('id="judge-form"', self.html)
         for stage in ("developing", "collapse", "clear"):
             self.assertIn(f'data-stage="{stage}"', self.html)
-        self.assertNotIn("ask", self.html[self.html.index('id="judge-form"'):self.html.index("</header>")])
+        # The panel adds a sibling button to the masthead and changes nothing
+        # inside the judge form itself.
+        judge = self.html[self.html.index('id="judge-form"'):self.html.index("</form>", self.html.index('id="judge-form"'))]
+        self.assertNotIn("ask", judge)
+        self.assertIn('id="judge-status"', judge)
 
 
 class EscalationRaceTests(unittest.TestCase):
