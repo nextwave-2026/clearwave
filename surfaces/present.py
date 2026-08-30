@@ -75,6 +75,7 @@ def queue_item(
         "outcome": None if investigation is None else investigation.get("outcome"),
         "onset": incident.get("onset"),
         "affected_cohort": incident.get("affected_cohort"),
+        "scope_label": cohort_scope_label(_mapping(incident.get("affected_cohort"))),
         "change": incident.get("change"),
         "financial_impact": incident.get("financial_impact"),
         "narrative_available": _narrative_available(investigation),
@@ -91,8 +92,10 @@ def detail(
     outcome = None if investigation is None else investigation.get("outcome")
     narrative_available = _narrative_available(investigation)
     trail = [] if investigation is None else list(investigation.get("trail") or [])
+    record = dict(incident)
+    record["scope_label"] = cohort_scope_label(_mapping(incident.get("affected_cohort")))
     return {
-        "incident": dict(incident),
+        "incident": record,
         "investigation": {
             "outcome": outcome,
             "narrative_available": narrative_available,
@@ -245,3 +248,52 @@ def _health_group_key(incident: Mapping[str, Any]) -> tuple[Any, ...]:
         )
     )
     return ("scope", dimensions)
+
+
+SEVERITY_LADDER = ("low", "medium", "high", "critical")
+
+
+def escalations(
+    incidents: list[Mapping[str, Any]],
+    recorded: Mapping[str, list[Mapping[str, Any]]],
+    binding: Mapping[str, tuple[str, ...]],
+    calls: list[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Stored escalation outcomes per incident, plus the calls still pending."""
+    groups = []
+    for incident in incidents:
+        incident_id = str(incident.get("incident_id", ""))
+        events = list(recorded.get(incident_id) or [])
+        payload = _mapping(events[0].get("payload")) if events else {}
+        groups.append(
+            {
+                "incident_id": incident.get("incident_id"),
+                "severity": incident.get("severity"),
+                "lifecycle_state": incident.get("lifecycle_state"),
+                "onset": incident.get("onset"),
+                "scope_label": cohort_scope_label(_mapping(incident.get("affected_cohort"))),
+                "affected_cohort": incident.get("affected_cohort"),
+                "change": incident.get("change"),
+                "financial_impact": incident.get("financial_impact"),
+                "blast_radius": incident.get("blast_radius"),
+                "expected_channels": list(binding.get(str(incident.get("severity", "")).lower(), ())),
+                "channels": [
+                    {
+                        "channel": event.get("channel"),
+                        "status": event.get("status"),
+                        "detail": event.get("detail"),
+                        "created_at": event.get("created_at"),
+                    }
+                    for event in events
+                ],
+                "payload": payload,
+            }
+        )
+    return {
+        "binding": [
+            {"severity": severity, "channels": list(binding.get(severity, ()))}
+            for severity in SEVERITY_LADDER
+        ],
+        "incidents": groups,
+        "calls": list(calls or []),
+    }
