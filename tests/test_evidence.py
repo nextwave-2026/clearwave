@@ -383,6 +383,49 @@ class MeasuredAnswerTests(unittest.TestCase):
         self.assertEqual(response["recurrence"]["prior_matching_incidents"], 1)
         self.assertEqual(response["incidents"][0]["incident_id"], self.incident["incident_id"])
 
+    def test_incident_history_without_a_merchant_lists_the_whole_store(self):
+        """The only route in this surface from "no cohort" to an incident_id.
+
+        `financial_impact` and `drilldown` both require an `incident_id` and
+        nothing else produces one, so a question scoped to all traffic could
+        reach neither - a money question about the platform was unanswerable
+        while the board beside it displayed the same figure.
+        """
+        response = evidence.answer("incident_history", {}, self.connection)
+        self.assertIsNone(response["merchant_id"])
+        self.assertEqual(response["recurrence"]["prior_matching_incidents"], 1)
+        entry = response["incidents"][0]
+        self.assertEqual(entry["incident_id"], self.incident["incident_id"])
+        # Enough to route on: an id, and what it is about.
+        for field in ("incident_id", "onset", "lifecycle_state", "severity", "cohort"):
+            self.assertIn(field, entry)
+
+    def test_incident_history_is_additive_for_a_caller_that_names_a_merchant(self):
+        scoped = evidence.answer(
+            "incident_history", {"merchant_id": "merchant-a"}, self.connection
+        )
+        self.assertEqual(scoped["merchant_id"], "merchant-a")
+        self.assertEqual(scoped["recurrence"]["pattern"], "merchant-a across all dimensions")
+        # Unchanged too: a merchant-scoped call still matches an incident whose
+        # own cohort names no merchant, because a provider-wide incident is that
+        # merchant's incident as well. Only the wording says which call it was.
+        other = evidence.answer(
+            "incident_history", {"merchant_id": "merchant-not-in-store"}, self.connection
+        )
+        self.assertEqual(other["merchant_id"], "merchant-not-in-store")
+        self.assertNotEqual(
+            other["recurrence"]["pattern"],
+            "every stored incident, across all merchants and all dimensions",
+        )
+
+    def test_incident_history_still_refuses_a_merchant_id_that_is_present_and_unusable(self):
+        """Omitted means store-wide; wrong means wrong, and must be heard."""
+        for bad in ("", "   ", 7, []):
+            with self.subTest(merchant_id=bad):
+                with self.assertRaises(evidence.EvidenceError) as caught:
+                    evidence.answer("incident_history", {"merchant_id": bad}, self.connection)
+                self.assertEqual(caught.exception.code, "invalid_input")
+
     def test_cohort_compare_shows_a_healthy_sibling_beside_the_target(self):
         response = evidence.answer(
             "cohort_compare",

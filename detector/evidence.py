@@ -679,14 +679,24 @@ def _confounding_check(connection: sqlite3.Connection, request: dict[str, Any]) 
 # --------------------------------------------------------------------------
 
 def _incident_history(connection: sqlite3.Connection, request: dict[str, Any]) -> dict[str, Any]:
-    merchant_id = _identifier(request, "merchant_id")
+    """Prior incidents for a merchant, or - with no merchant - for the store.
+
+    `merchant_id` is optional rather than required, and omitting it is the only
+    way anything in the C2 surface answers "which incidents does this store
+    hold?". Without it a question scoped to all traffic could reach no incident
+    at all: `financial_impact` and `drilldown` both take an `incident_id` and
+    nothing produced one, so a money question about the platform was
+    unanswerable while the same figure sat on the board. This is additive - a
+    call that names a merchant behaves exactly as before.
+    """
+    merchant_id = _optional_identifier(request, "merchant_id")
     cohort_filter = _cohort(request)
     window = _window(request, required=False)
 
     incidents = []
     for record in store.list_incidents(connection):
         affected = record.get("affected_cohort") or {}
-        if affected.get("merchant_id") not in (merchant_id, None):
+        if merchant_id is not None and affected.get("merchant_id") not in (merchant_id, None):
             continue
         if any(affected.get(key) != value for key, value in cohort_filter.items()):
             continue
@@ -696,11 +706,12 @@ def _incident_history(connection: sqlite3.Connection, request: dict[str, Any]) -
         incidents.append(_history_entry(record, onset))
 
     lookback_days = None if window is None else round((window[1] - window[0]) / 86400.0, 4)
-    pattern = (
-        " and ".join(f"{key}={cohort_filter[key]}" for key in sorted(cohort_filter))
-        if cohort_filter
-        else f"{merchant_id} across all dimensions"
-    )
+    if cohort_filter:
+        pattern = " and ".join(f"{key}={cohort_filter[key]}" for key in sorted(cohort_filter))
+    elif merchant_id is not None:
+        pattern = f"{merchant_id} across all dimensions"
+    else:
+        pattern = "every stored incident, across all merchants and all dimensions"
     return {
         "as_of": _as_of(connection, window[1] if window else None),
         "merchant_id": merchant_id,
@@ -907,6 +918,18 @@ def _identifier(request: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise EvidenceError("invalid_input", f"{key} is required and must be a non-empty string")
     return value
+
+
+def _optional_identifier(request: dict[str, Any], key: str) -> str | None:
+    """An identifier that may be omitted, but may not be sent as rubbish.
+
+    Absent and null both mean "not scoped to one". A present-but-unusable value
+    is still refused: a caller that meant to name something and got it wrong
+    must hear so, rather than silently receive a store-wide answer.
+    """
+    if key not in request or request[key] is None:
+        return None
+    return _identifier(request, key)
 
 
 # --------------------------------------------------------------------------

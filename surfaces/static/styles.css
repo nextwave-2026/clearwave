@@ -1403,7 +1403,7 @@ figure.chart.binding { max-width: 760px; }
 .ask-nocite { color: var(--sev-medium); }
 
 .ask-trail { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line-soft); }
-.ask-trail h5, .ask-missing h5 {
+.ask-trail h5, .ask-missing h5, .ask-measured h5 {
   margin: 0;
   font-size: 10px;
   font-weight: 600;
@@ -1411,6 +1411,9 @@ figure.chart.binding { max-width: 760px; }
   letter-spacing: 0.09em;
   color: var(--ink-3);
 }
+
+.ask-measured { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
+.ask-measured .ask-figs { margin-top: 12px; }
 
 .ask-missing { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
 .ask-missing ul { margin: 10px 0 0; padding: 0 0 0 18px; }
