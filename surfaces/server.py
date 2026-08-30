@@ -3,12 +3,12 @@
 Every read is read-only over the shared store: the dashboard renders what
 detection and investigation already wrote and computes nothing of its own.
 
-The one write is the judge trigger. `POST /api/trigger` publishes a start or
-stop command to W1's incident-control topic through `surfaces.inject`, which
-changes the behaviour of a running worker. It writes nothing to the store -
-the incident it produces arrives the same way every other incident does, by
-being detected in the traffic - but calling this server read-only would be a
-lie, so it is not called that.
+The one write is the judge trigger. `POST /api/trigger` publishes a developing,
+collapse, or clear command to W1's incident-control topic through
+`surfaces.inject`, which changes the behaviour of a running worker. It writes
+nothing to the store - whatever the board later shows arrives the same way
+every other finding does, by being detected in the traffic - but calling this
+server read-only would be a lie, so it is not called that.
 """
 
 from __future__ import annotations
@@ -46,6 +46,7 @@ class SurfacesApp:
     def __init__(self, db_path: Path | str | None = None) -> None:
         self.db_path = Path(db_path) if db_path is not None else shared_database_path()
         self.injected = False
+        self.stage = "clear"
 
     def overview(self) -> dict[str, Any]:
         with store.session(self.db_path) as connection:
@@ -79,22 +80,24 @@ class SurfacesApp:
             events = store.ensure_escalation(connection, incident, investigation)
             return present.detail(incident, investigation, events)
 
-    def trigger(self, active: bool = True) -> dict[str, Any]:
-        """Toggle W1's hidden incident, remembering only what we published.
+    def trigger(self, active: bool = True, stage: str | None = None) -> dict[str, Any]:
+        """Publish one judge stage, remembering only what we published.
 
-        `self.injected` is this control's own record of its last successful
-        command, which is what the toggle's visible state reflects. It is not
-        a reading of the worker: nothing here interrogates W1, so a worker
-        restarted underneath us is honestly outside what this can know.
+        `self.stage` is this control's own record of its last successful
+        command, which is what a reloaded page reflects. It is not a reading
+        of the worker: nothing here interrogates W1, so a worker restarted
+        underneath us is honestly outside what this can know.
         """
-        outcome = inject.fire_hidden_incident(active)
+        resolved = inject.resolve_stage(active=active, stage=stage)
+        outcome = inject.fire_hidden_incident(active, stage=resolved)
         if outcome.get("delivered"):
-            self.injected = bool(active)
-        return {**outcome, "active": self.injected}
+            self.stage = resolved
+            self.injected = resolved != "clear"
+        return {**outcome, "active": self.injected, "stage": self.stage}
 
     def trigger_state(self) -> dict[str, Any]:
         """What the control last published, for a page that has just loaded."""
-        return inject.describe(active=self.injected)
+        return inject.describe(stage=self.stage)
 
     def escalations(self) -> dict[str, Any]:
         """Every stored escalation outcome, with the binding it was routed on."""
@@ -150,11 +153,15 @@ class SurfacesApp:
                 return 404, {"error": "incident not found", "incident_id": incident_id}
             return 200, payload
         if method == "POST" and path in {"/api/trigger", "/api/judge/trigger"}:
-            # Only the on/off intent crosses this boundary. Any other key in
-            # the body - a scenario id above all - is ignored by construction,
-            # because nothing else is read out of it.
+            # Stage and the legacy on/off boolean are the only intents that
+            # cross this boundary. Any other key in the body - a scenario id
+            # above all - is ignored by construction, because nothing else is
+            # read out of it. A body-less POST, and `{active: true}`, still
+            # mean the full break.
+            requested = None if body is None else body.get("stage")
+            stage = requested if requested in inject.STAGES else None
             active = True if body is None else bool(body.get("active", True))
-            return 200, self.trigger(active)
+            return 200, self.trigger(active, stage=stage)
         return 404, {"error": "not found", "path": path}
 
 
