@@ -65,7 +65,8 @@ def queue_item(
     investigation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Severity and diagnostic confidence travel as independent fields."""
-    result_body = _result_body(investigation)
+    narrative_available = _narrative_available(investigation)
+    result_body = _result_body(investigation) if narrative_available else None
     confidence = result_body.get("diagnostic_confidence") if result_body else None
     return {
         "incident_id": incident.get("incident_id"),
@@ -78,7 +79,7 @@ def queue_item(
         "scope_label": cohort_scope_label(_mapping(incident.get("affected_cohort"))),
         "change": incident.get("change"),
         "financial_impact": incident.get("financial_impact"),
-        "narrative_available": _narrative_available(investigation),
+        "narrative_available": narrative_available,
     }
 
 
@@ -88,9 +89,16 @@ def detail(
     escalation_events: list[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Full incident, investigation, evidence trail, and the six TAM questions."""
-    result_body = _result_body(investigation)
     outcome = None if investigation is None else investigation.get("outcome")
     narrative_available = _narrative_available(investigation)
+    # The raw C4 result body still holds investigation/degrade.py's placeholder
+    # text (e.g. "Causal investigation unavailable: ...") when the narrative
+    # isn't available. Passing it through unfiltered here would show the
+    # dashboard's confidence badge (surfaces/static/app.js reads this field
+    # directly) as if it were a real diagnosis, even though the narrative
+    # banner correctly says it is unavailable - the same leak fixed in
+    # escalation.py:_payload for Slack/phone.
+    result_body = _result_body(investigation) if narrative_available else None
     trail = [] if investigation is None else list(investigation.get("trail") or [])
     record = dict(incident)
     record["scope_label"] = cohort_scope_label(_mapping(incident.get("affected_cohort")))
