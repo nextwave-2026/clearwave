@@ -66,15 +66,15 @@ SUSTAIN_BUCKETS = 3      # not a one-minute blip
 # z=-5.00, is n=150 with 6.3 expected failures, and only the ratio floor stops it.
 #
 # So the floor that works is a *validity* floor, not a bigger count, and adding
-# it is a change to `detect.evaluate` rather than a value here. `detector/detect.py`
-# belongs to PR #88, so this is reported and not made. For whoever picks it up it
-# is one clause beside the existing three, on numbers `evaluate` already has:
+# it is a change to `detect.evaluate` rather than a value here.
+# Evaluated 2026-08-30 against with_provider_incident in the 5-minute detect
+# window: provider-p2 has n=75, expected failures ~6.5, so the clause
+# unqualifies the true cohort and build_incident reports the platform instead.
+# Live merchant-b/adyen is safe (~180, ~19.4) but the guaranteed synthetic
+# scenario is not. Left as the finding until the detect window or the
+# synthetic volume matches the live rate.
 #
 #     "sample_valid": bool(observed["attempted_payments"] * (1 - expected) >= 10)
-#
-# The 10 wants a name here once something reads it. It is deliberately not
-# added yet: an unread constant in this file is the exact trap `SUSTAIN_BUCKETS`
-# already is, and one of those is enough.
 # --- baseline --------------------------------------------------------------
 # v0 uses a trailing window on the same cohort. The seasonal hour-of-week
 # baseline replaces this once W1 provides replayable backfill history.
