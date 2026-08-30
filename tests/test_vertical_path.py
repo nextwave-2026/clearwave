@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from detector import config, evidence, store
+from detector.cli import _sweep
+from tests import synthetic
 
 from investigation.contracts import InvestigationResult
 from investigation.gateway import EvidenceGateway
@@ -94,6 +100,45 @@ class VerticalPathTests(unittest.TestCase):
         self.assertNotIn("error", series_first)
         self.assertEqual(series_first["query_id"], series_second["query_id"])
         self.assertTrue(series_first["query_id"].startswith("q_metric_series_"))
+
+
+class FinancialConsistencyTests(unittest.TestCase):
+    """The cited C2 impact must use the window that produced C3."""
+
+    def test_gateway_financial_impact_matches_generated_incident(self):
+        root = Path(__file__).resolve().parents[1]
+        for events in (synthetic.confounded_incident(), synthetic.with_provider_incident()):
+            with self.subTest(event_count=len(events)):
+                with tempfile.TemporaryDirectory() as directory:
+                    db = Path(directory) / "clearwave.db"
+                    connection = store.connect(db)
+                    try:
+                        store.ingest(connection, events)
+                        sweep = _sweep(connection, config.DETECT_WINDOW_BUCKETS, persist=True)
+                        incident = sweep["incident"]
+                        self.assertIsNotNone(incident)
+                        with patch.dict(os.environ, {"CLEARWAVE_DB": str(db)}):
+                            cited = EvidenceGateway(
+                                cwd=root,
+                                python_executable=sys.executable,
+                            ).opening_bundle(incident)["financial_impact"]
+                    finally:
+                        connection.close()
+
+                detection_window = incident["detection"]["window"]
+                expected_window = {
+                    "start": evidence.schema.iso_utc(detection_window["start_epoch"]),
+                    "end": evidence.schema.iso_utc(detection_window["end_epoch"]),
+                }
+                self.assertEqual(cited["window"]["start"], expected_window["start"])
+                self.assertEqual(cited["window"]["end"], expected_window["end"])
+                for field in (
+                    "attempted_value",
+                    "estimated_lost_approved_volume",
+                    "gmv_at_risk",
+                    "loss_per_hour",
+                ):
+                    self.assertEqual(cited[field], incident["financial_impact"][field])
 
 
 if __name__ == "__main__":

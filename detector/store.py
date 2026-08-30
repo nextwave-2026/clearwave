@@ -250,6 +250,56 @@ def ingest(connection: sqlite3.Connection, events: Iterable[dict[str, Any]]) -> 
     }
 
 
+def ingest_stream(
+    connection: sqlite3.Connection,
+    records: Iterable[tuple[str, Any]],
+    batch_size: int = 1000,
+    source: str = "ingest",
+) -> dict[str, int]:
+    """Same summary as `ingest`, but never holds the whole source in memory.
+
+    `ingest` takes a list, which is right for the fixture files that fit in a
+    breath. A 15-day backfill does not: 83 MB of text plus 100k parsed dicts is
+    a working set nobody needs, since every record is finished with the moment
+    it is written.
+
+    This drains any iterable of ``(kind, raw)`` in batches, reusing
+    `write_batch` - the consumer's own batching - so there is exactly one
+    insert path, one dead-letter path and one dedupe rule in the codebase
+    rather than two that drift. Taking `(kind, raw)` rather than bare events is
+    what lets a reader hand over a line it could not parse as ``unroutable``,
+    so a malformed line in a 100k-line file is dead-lettered with its reason
+    instead of aborting the whole load.
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
+    counts = {"accepted": 0, "duplicates": 0, "rejected": 0}
+    batch: list[tuple[str, Any]] = []
+
+    def flush() -> None:
+        if not batch:
+            return
+        written = write_batch(connection, batch, source=source)
+        connection.commit()
+        for key in counts:
+            counts[key] += written[key]
+        batch.clear()
+
+    for record in records:
+        batch.append(record)
+        if len(batch) >= batch_size:
+            flush()
+    flush()
+
+    stored = connection.execute("SELECT COUNT(*) AS n FROM attempt").fetchone()["n"]
+    return {
+        "accepted": counts["accepted"] + counts["duplicates"],
+        "duplicates": counts["duplicates"],
+        "rejected": counts["rejected"],
+        "stored": stored,
+    }
+
+
 def window_bounds(connection: sqlite3.Connection) -> tuple[int, int] | None:
     """Return the epoch range actually present, or None on an empty store."""
     row = connection.execute(

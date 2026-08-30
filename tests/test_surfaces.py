@@ -21,10 +21,16 @@ from surfaces.escalation import (
     twiml_for,
     twilio_provider,
 )
-from surfaces.inject import fire_hidden_incident
+from surfaces.inject import (
+    INJECTED_INCIDENT,
+    fire_hidden_incident,
+    injected_incident_command,
+)
 from surfaces.present import cohort_scope_label, merchant_health
 from surfaces.server import SurfacesApp, make_server
 from surfaces.store import connect, list_incidents
+from worker.helpers.control import CONTROL_TOPIC
+from worker.inject import start_command, stop_command
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,6 +108,8 @@ class SurfacesTests(unittest.TestCase):
         self.db = Path(self._tmpdir.name) / "clearwave.db"
         os.environ.pop("CLEARWAVE_SLACK_WEBHOOK_URL", None)
         os.environ.pop("CLEARWAVE_PHONE_PROVIDER", None)
+        for name in (*TWILIO_ENV_VARS, TWILIO_TWIML_URL_ENV):
+            os.environ.pop(name, None)
         self.app = SurfacesApp(self.db)
 
     def _seed(self, *incidents):
@@ -240,15 +248,95 @@ class SurfacesTests(unittest.TestCase):
         self.assertEqual(detail["incident"]["change"], source_change)
         self.assertEqual(detail["incident"]["financial_impact"], source_financial)
 
-    def test_judge_trigger_reports_honestly_when_injection_is_not_wired(self):
-        result = fire_hidden_incident(loader=lambda: None)
-        self.assertFalse(result["wired"])
+    def test_judge_trigger_publishes_w1s_own_start_command(self):
+        published = []
+        result = fire_hidden_incident(True, publisher=published.append)
+        self.assertTrue(result["wired"])
+        self.assertTrue(result["delivered"])
+        self.assertTrue(result["fired"])
+        self.assertTrue(result["active"])
+        self.assertEqual(published, [start_command("merchant-b", provider="adyen",
+                                                   decline_reason="provider_timeout")])
+        self.assertEqual(result["topic"], CONTROL_TOPIC)
+        self.assertEqual(result["target"], INJECTED_INCIDENT)
+
+    def test_toggling_off_publishes_w1s_stop_command(self):
+        published = []
+        result = fire_hidden_incident(False, publisher=published.append)
+        self.assertTrue(result["delivered"])
         self.assertFalse(result["fired"])
-        self.assertIn("not wired", result["message"])
-        status, payload = self.app.handle("POST", "/api/trigger", {"scenario_id": "must-be-ignored"})
+        self.assertFalse(result["active"])
+        self.assertEqual(published, [{"merchant_id": "merchant-b", "action": "stop"}])
+        self.assertEqual(published[0], stop_command("merchant-b"))
+
+    def test_the_published_command_carries_no_scenario_identifier(self):
+        # C6 quarantine: what crosses to W1 is a cohort scope and an effect.
+        # Nothing downstream of the worker may learn which scenario this is.
+        for active in (True, False):
+            command = injected_incident_command(active)
+            rendered = json.dumps(command).lower()
+            self.assertNotIn("scenario", rendered)
+            self.assertNotIn("ground_truth", rendered)
+            self.assertLessEqual(
+                set(command),
+                {"merchant_id", "action", "scope", "effect", "decline_reason", "latency_ms"},
+            )
+
+    def test_an_unreachable_broker_never_claims_a_scenario_fired(self):
+        def unreachable(command):
+            raise RuntimeError("no broker at localhost:9092")
+
+        result = fire_hidden_incident(True, publisher=unreachable)
+        self.assertFalse(result["delivered"])
+        self.assertFalse(result["fired"])
+        self.assertFalse(result["active"])
+        self.assertIn("no broker", result["error"])
+        self.assertIn("Nothing was injected", result["message"])
+
+    def test_the_api_carries_the_on_off_intent_and_ignores_everything_else(self):
+        published = []
+        self.app_publisher(published)
+        status, on = self.app.handle(
+            "POST", "/api/trigger", {"active": True, "scenario_id": "must-be-ignored"}
+        )
         self.assertEqual(status, 200)
-        self.assertFalse(payload["wired"])
-        self.assertEqual(payload["message"], "injection is not wired")
+        self.assertTrue(on["active"])
+        status, off = self.app.handle("POST", "/api/judge/trigger", {"active": False})
+        self.assertEqual(status, 200)
+        self.assertFalse(off["active"])
+        self.assertEqual([command["action"] for command in published], ["start", "stop"])
+        self.assertNotIn("scenario_id", json.dumps(published))
+        # A body-less POST keeps the old "fire it" meaning of this path.
+        self.app.handle("POST", "/api/trigger", None)
+        self.assertEqual(published[-1]["action"], "start")
+
+    def test_the_toggle_state_survives_a_page_reload_and_a_failed_publish(self):
+        published = []
+        self.app_publisher(published)
+        self.assertFalse(self.app.handle("GET", "/api/trigger")[1]["active"])
+        self.app.handle("POST", "/api/trigger", {"active": True})
+        state = self.app.handle("GET", "/api/trigger")[1]
+        self.assertTrue(state["active"])
+        self.assertEqual(state["target"], INJECTED_INCIDENT)
+
+        import surfaces.inject as inject_module
+
+        def unreachable(command):
+            raise RuntimeError("broker went away")
+
+        inject_module._publish = unreachable
+        failed = self.app.handle("POST", "/api/trigger", {"active": False})[1]
+        self.assertFalse(failed["delivered"])
+        # The stop never landed, so the control must not pretend it is off.
+        self.assertTrue(self.app.handle("GET", "/api/trigger")[1]["active"])
+
+    def app_publisher(self, sink):
+        """Point the app's injection at a list instead of a broker."""
+        import surfaces.inject as inject_module
+
+        original = inject_module._publish
+        inject_module._publish = sink.append
+        self.addCleanup(setattr, inject_module, "_publish", original)
 
     def test_critical_severity_falls_back_to_dashboard_call_without_telephony(self):
         self._seed(_incident("inc-call", "critical", "2026-08-29T10:00:00Z"))
@@ -586,6 +674,92 @@ class StaticContractTests(unittest.TestCase):
         self.assertNotIn('payload.merchant_id || "unknown"', js)
         self.assertIn("scope_label", js)
         self.assertIn("incidentScope", js)
+
+    def test_dashboard_has_no_call_controls(self):
+        static = ROOT / "surfaces" / "static"
+        html = (static / "index.html").read_text(encoding="utf-8")
+        js = (static / "app.js").read_text(encoding="utf-8")
+        css = (static / "styles.css").read_text(encoding="utf-8")
+        for blob in (html, js, css):
+            self.assertNotIn("incoming-call", blob)
+            self.assertNotIn("answer-call", blob)
+            self.assertNotIn("incoming-copy", blob)
+            self.assertNotIn("incoming-panel", blob)
+        self.assertNotIn("dismissedCalls", js)
+        self.assertNotIn("pending-call", html)
+
+    def test_escalation_outcomes_are_shown_as_read_only_data(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("These are stored outcomes, not controls.", js)
+        self.assertIn("event.channel", js)
+        self.assertIn("event.status", js)
+        self.assertIn("fallback_dashboard", js)
+
+    def test_missing_recommended_action_is_honest_absence(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn(
+            "Operator narrative is the stored recommended action, or unavailable if the agent failed.",
+            js,
+        )
+        self.assertIn("questions.what_the_operator_should_do", js)
+        self.assertIn("Investigation has not run yet.", js)
+
+    def test_missing_investigation_is_not_labelled_agent_unavailable(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn('outcome || "agent_unavailable"', js)
+        self.assertNotIn("unavailableCopy", js)
+        self.assertIn("Investigation has not run yet.", js)
+        self.assertIn("Investigation is running.", js)
+        self.assertIn("Narrative unavailable because the investigation agent failed.", js)
+
+    def test_missing_confidence_is_not_labelled_none(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn('confidence || "none"', js)
+        self.assertIn('return "not in store"', js)
+        self.assertIn("awaiting investigation", js)
+        self.assertIn('"confidence " + confValue', js)
+
+    def test_live_dashboard_does_not_bake_mockup_figures(self):
+        static = ROOT / "surfaces" / "static"
+        html = (static / "index.html").read_text(encoding="utf-8")
+        js = (static / "app.js").read_text(encoding="utf-8")
+        css = (static / "styles.css").read_text(encoding="utf-8")
+        for blob in (html, js, css):
+            self.assertNotIn("78,919", blob)
+            self.assertNotIn("78919", blob)
+            self.assertNotIn("19,785", blob)
+            self.assertNotIn("inc-2026-08-30-c2b28a30", blob)
+
+    def test_tam_mockup_remains_as_design_reference(self):
+        path = ROOT / "surfaces" / "static" / "tam-dashboard.html"
+        self.assertTrue(path.is_file())
+        self.assertGreater(path.stat().st_size, 1000)
+
+    def test_the_judge_control_is_a_toggle_with_both_states_in_the_markup(self):
+        html = (ROOT / "surfaces" / "static" / "index.html").read_text(encoding="utf-8")
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        css = (ROOT / "surfaces" / "static" / "styles.css").read_text(encoding="utf-8")
+        self.assertIn('aria-pressed="false"', html)
+        self.assertIn('data-on="false"', html)
+        self.assertIn("Fire hidden incident", js)
+        self.assertIn("Stop hidden incident", js)
+        self.assertIn('judgeTrigger.setAttribute("aria-pressed"', js)
+        # The on state must be visibly distinct, in the palette already on the
+        # board rather than a second visual language.
+        self.assertRegex(css, r'\.judge button\[data-on="true"\][^}]*var\(--sev-critical\)')
+
+    def test_the_judge_control_never_upgrades_a_failure_into_a_claim(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        # The old dead adapter hard-coded its own success sentence; the toggle
+        # must report the server's account of what actually happened.
+        self.assertNotIn("Hidden incident fired. Detection will not be told", js)
+        self.assertIn("body.message", js)
+        self.assertIn("Nothing was injected", js)
+
+    def test_investigation_outcome_is_shown_beside_lifecycle(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("const outcome = investigation.outcome", js)
+        self.assertIn('(outcome ? " · " + outcome : "")', js)
 
 
 if __name__ == "__main__":
