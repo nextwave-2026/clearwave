@@ -110,6 +110,10 @@ read that same file or the system gives two answers to one question. `python3 -m
 python3 -m detector detect` fills a store; an empty one answers with zeros rather than failing. The
 behaviour is specified in `docs/contracts/evidence-tools.md`.
 
+`python3 -m investigation.vertical --investigate-only` (or `make investigate DB=...`) is the command that
+investigates an incident a store already holds - a live consume included - without reseeding it. The bare
+entry point still runs seed then detect then investigate.
+
 W2 also consumes W1's three live Kafka topics into that same store (`python3 -m detector consume --detect`).
 The live and file-based paths share one normalisation and one store; the file-based path imports no Kafka
 client and is the broker-free demo fallback. Consumer operator detail: `docs/live-ingestion.md`, and

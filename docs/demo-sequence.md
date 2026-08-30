@@ -117,6 +117,21 @@ Observed on a live Docker run: `docker compose up -d kafka schema-registry` brou
 
 A later run with the three compose workers and a longer consume did produce one, through the dashboard toggle: clicked on, `clearwave-worker-merchant-b` logged `incident control: now targeting {'provider': 'adyen'}`, merchant-b/adyen conversion fell from ~90% to 0-18%, `consume --seconds 180 --detect` took 4,254 records with 0 rejected, and detection stored `inc-2026-08-30-715ab9c3` on `{merchant-b, adyen, CO}` at USD 3.89 GMV at risk. Toggled off, conversion recovered and the next sweep returned `incident: null`. **Three minutes of consume, not one**, is what makes the difference.
 
+**Consume a healthy baseline BEFORE you inject, not after.** This is the failure that looks like a
+broken detector and is not one. The baseline is a trailing window on the same cohort
+(`detector/config.py:BASELINE_TRAILING_BUCKETS`), so if the injection was already running when the
+consume started, the whole history detection can see is degraded and there is no contrast in it.
+Observed here: merchant-b/adyen sitting at 0.045 conversion against ~0.87 on every other cohort,
+6111 records consumed with 0 rejected, and `incident: null` - correctly, because nothing *changed*
+inside the window. Healthy consume first, then inject, then keep consuming on the same store.
+
+A run that did produce one, end to end, for the shape to copy: six minutes of healthy traffic into a
+fresh store (`--from-latest`), then `worker.inject merchant-b --provider adyen --effect decline
+--decline-reason provider_timeout`, then six more minutes on the same consume. Detection stored
+`inc-2026-08-30-9797b639` on `{country: CO, merchant-b, adyen}`, conversion 0.653226 -> 0.065217,
+GMV at risk USD 4826.64, loss per hour USD 57919.73, severity `high`. `make investigate DB=...` then
+diagnosed that stored incident, and severity `high` escalated to dashboard, Slack and phone.
+
 Corrected order, if the broker is already up:
 
 ```sh
