@@ -284,11 +284,12 @@ class DaemonServeTests(unittest.TestCase):
         )
         payloads = [event["payload"] for event in events]
         for payload in payloads:
-            hypothesis = payload.get("leading_hypothesis") or {}
-            action = payload.get("recommended_next_action") or {}
-            self.assertTrue(hypothesis.get("statement"))
-            self.assertTrue(payload.get("diagnostic_confidence"))
-            self.assertTrue(action.get("action"))
+            # leading_hypothesis / diagnostic_confidence / recommended_next_action are None
+            # (not placeholder text) when outcome=agent_unavailable; see
+            # docs/contracts/notification-escalation.md
+            self.assertIsNone(payload.get("leading_hypothesis"))
+            self.assertIsNone(payload.get("diagnostic_confidence"))
+            self.assertIsNone(payload.get("recommended_next_action"))
             self.assertTrue(payload.get("citations"))
         slack = next(event for event in events if event["channel"] == "slack")
         self.assertEqual(slack["status"], "not_configured")
