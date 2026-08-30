@@ -114,6 +114,12 @@ behaviour is specified in `docs/contracts/evidence-tools.md`.
 investigates an incident a store already holds - a live consume included - without reseeding it. The bare
 entry point still runs seed then detect then investigate.
 
+An incident row is the **current reading, not the first one**: while the episode is live every detection
+sweep rewrites its measurement in place - severity included - on the identifier already on screen, so no
+consumer may treat a figure on an open incident as stable, and severity can cross a band boundary in both
+directions. `lifecycle_state` is the one field detection does not own. `docs/contracts/incident.md` and
+ADR 0026 are the definition.
+
 `python3 -m investigation` (or `make investigate-daemon`) is the continuous watcher over that same store:
 it polls, claims watches and detected incidents, and persists C4 without an operator command. A watch
 investigation returns the row to `watching` and never pages; a later floor-crossing enriches the same

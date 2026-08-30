@@ -426,6 +426,45 @@ def two_stage_deviation_mild_only(**kwargs: Any) -> list[dict[str, Any]]:
     return [event for event in two_stage_deviation(**kwargs) if event["occurred_at"] < cutoff]
 
 
+def single_fault(
+    merchant_id: str,
+    provider: str,
+    minutes: int = 84,
+    per_minute: int = 60,
+    onset_minute: int = 79,
+    rate: float = 0.30,
+    seed: int = 41,
+) -> list[dict[str, Any]]:
+    """One localised fault on one merchant-and-provider pair, nothing else wrong.
+
+    Two of these on different pairs are two incidents, not one, and that is the
+    bound on how hard adjacent cohort slices may be collapsed together. Each is
+    generated alone so localisation has a clean answer: a store carrying both
+    faults at once genuinely has no single degraded slice, and reports the
+    platform - which is honest, and useless for asserting on identity.
+    """
+    rng = random.Random(seed)
+    events: list[dict[str, Any]] = []
+    index = 0
+    for minute in range(minutes):
+        for _ in range(per_minute):
+            index += 1
+            base = _event(index, minute)
+            affected = (
+                base["merchant_id"] == merchant_id
+                and base["provider"] == provider
+                and minute >= onset_minute
+            )
+            approved = rng.random() < (rate if affected else 0.92)
+            base["status"] = "approved" if approved else "declined"
+            if not approved:
+                base["normalized_decline_reason"] = (
+                    "do_not_honor" if affected else "insufficient_funds"
+                )
+            events.append(base)
+    return events
+
+
 # Live-vocabulary healthy history. The fixtures above stay on the detector's
 # test names (provider-p2, bank-x, USD) so existing assertions keep passing.
 # The demo workers emit a different vocabulary - merchant-b/adyen in COP on

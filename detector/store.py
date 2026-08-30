@@ -129,6 +129,22 @@ CREATE INDEX IF NOT EXISTS closed_time ON payment_closed (closed_epoch);
 WATCHING = "watching"
 RESOLVED = "resolved"
 
+# The states in which a record still describes something happening now, which
+# is the set a later sweep may re-measure and a later reading may adopt. It is
+# the C3 lifecycle vocabulary (docs/contracts/incident.md) plus `diagnosed`,
+# which investigation sets, minus the two states that mean the episode is over:
+# `resolved`, and `mitigated` - the pair `surfaces/present.py` already calls
+# INACTIVE_STATES. A closed episode is never rewritten and never adopted, so a
+# fault that returns after it is a second incident rather than a resurrection
+# of the first, on a row nobody is looking at any more.
+LIVE_STATES = (
+    WATCHING,
+    "detected",
+    "investigating",
+    "diagnosed",
+    "acknowledged",
+)
+
 KINDS = {
     "attempt": "attempt",
     "telemetry": "telemetry_sample",
@@ -343,60 +359,90 @@ def save_incident(
     incident: dict[str, Any],
     lifecycle_state: str = "detected",
 ) -> bool:
-    """Durably record one C3 record. Returns False if it was already stored.
+    """Durably record one C3 record. Returns False when the write changed nothing.
 
-    ``lifecycle_state: detected`` is the sole handoff signal to investigation
-    (DECISIONS.md, 2026-08-29T19:43Z), so the write must never clobber a state
-    another runner has already moved on - hence INSERT OR IGNORE rather than a
-    replace.
+    One cohort keeps one record (DECISIONS.md, 2026-08-30T03:59Z), so a later
+    sweep of the same episode is a re-measurement of a row that already exists,
+    not a second row. What it may rewrite depends on what it is writing.
 
-    A row still in ``watching`` is the single exception, and it is why watches
-    do not need a table of their own (DECISIONS.md, 2026-08-30T03:59Z): one
-    cohort keeps one record, so a watch is updated in place as evidence
-    accumulates and upgraded to ``detected`` on the same identifier when the
-    floors finally pass. The guard is in the UPDATE's own WHERE clause, so a
-    row that has already left ``watching`` - claimed, investigating, diagnosed,
-    resolved - can never be rewritten by a later sweep.
+    A *measurement* - severity, severity score, the C3 record itself, the
+    cohort it localises to, onset and `last_seen_epoch` - may always be
+    rewritten while the episode is live. An incident that gets worse has to be
+    able to say so on the row a judge is already looking at, and one that
+    recovers has to be able to fall back down again; a store that can only ever
+    show the first reading is a board that lies as soon as the fault moves.
+
+    ``lifecycle_state`` is the one field this write does **not** own. It is the
+    handoff signal to investigation (DECISIONS.md, 2026-08-29T19:43Z, and
+    2026-08-29T20:32Z), so:
+
+    * a row still ``watching`` is upgraded to ``detected`` when the floors pass
+      - that upgrade is the whole point of keeping the warning and the incident
+      on one identifier - and a watch write keeps it ``watching``;
+    * a row that has left ``watching`` - investigating, diagnosed, acknowledged
+      - keeps exactly the state its owner left it in, however far its numbers
+      move. Being re-measured is not being re-opened;
+    * a watch write can never pull a row that has left ``watching`` back into
+      it, so the ``watching`` rules stay precisely as they were;
+    * a row outside ``LIVE_STATES`` - ``resolved`` or ``mitigated`` - is a
+      closed episode and is never rewritten at all.
     """
     record = dict(incident)
-    record["lifecycle_state"] = lifecycle_state
     detection = record.get("detection") or {}
-    financial = record.get("financial_impact") or {}
     onset = schema.parse_timestamp(record["onset"])
     last_seen_at = (record.get("persistence") or {}).get("last_observed_at")
     last_seen = schema.parse_timestamp(last_seen_at) if last_seen_at else onset
-    values = (
-        str(record["incident_id"]),
-        record["onset"],
-        json.dumps(record, sort_keys=True, default=str),
-        _cohort_key(record.get("affected_cohort") or {}),
-        str(record.get("severity", "low")),
-        float(detection.get("severity_score") or 0.0),
-        lifecycle_state,
-        int(onset.timestamp()),
-        int(last_seen.timestamp()),
-        str(detection.get("config_version") or "unknown"),
-    )
+    incident_id = str(record["incident_id"])
+
+    def measurement(state: str) -> tuple[Any, ...]:
+        stored = dict(record)
+        stored["lifecycle_state"] = state
+        return (
+            json.dumps(stored, sort_keys=True, default=str),
+            _cohort_key(stored.get("affected_cohort") or {}),
+            str(stored.get("severity", "low")),
+            float(detection.get("severity_score") or 0.0),
+            state,
+            int(onset.timestamp()),
+            int(last_seen.timestamp()),
+            str(detection.get("config_version") or "unknown"),
+        )
+
     with connection:
         cursor = connection.execute(
             """INSERT OR IGNORE INTO incident
                (incident_id, created_at, record, cohort_key, severity, severity_score,
                 lifecycle_state, onset_epoch, last_seen_epoch, config_version)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            values,
+            (incident_id, record["onset"]) + measurement(lifecycle_state),
         )
         if cursor.rowcount == 1:
             return True
-        # Only a row still watching may be rewritten, and only into whatever
-        # this sweep now measures - another watch reading, or the upgrade to
-        # detected. Everything else is left exactly as its owner left it.
+        row = connection.execute(
+            "SELECT lifecycle_state FROM incident WHERE incident_id = ?", (incident_id,)
+        ).fetchone()
+        if row is None:  # pragma: no cover - deleted between the two statements
+            return False
+        current = str(row["lifecycle_state"])
+        if lifecycle_state == WATCHING:
+            # Unchanged from before: only a row still watching may be written
+            # as a watch, so nothing that has moved on is ever pulled back.
+            if current != WATCHING:
+                return False
+            state = WATCHING
+        else:
+            if current not in LIVE_STATES:
+                return False
+            # The watching -> detected upgrade is ours. Every other state
+            # belongs to whoever set it.
+            state = lifecycle_state if current == WATCHING else current
         cursor = connection.execute(
             """UPDATE incident
                   SET record = ?, cohort_key = ?, severity = ?, severity_score = ?,
                       lifecycle_state = ?, onset_epoch = ?, last_seen_epoch = ?,
                       config_version = ?
                 WHERE incident_id = ? AND lifecycle_state = ?""",
-            values[2:] + (values[0], WATCHING),
+            measurement(state) + (incident_id, current),
         )
     return cursor.rowcount == 1
 
@@ -423,6 +469,24 @@ def list_incidents(connection: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = connection.execute(
         "SELECT record, lifecycle_state FROM incident "
         "ORDER BY onset_epoch DESC, incident_id ASC"
+    ).fetchall()
+    return [record for record in (_record_of(row) for row in rows) if record is not None]
+
+
+def live_incidents(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    """C3 records for episodes still open, oldest onset first.
+
+    Open means anything in `LIVE_STATES`: a `resolved` row is a closed episode
+    and is deliberately absent, so nothing here can resurrect one. Ordered by
+    onset so a caller adopting an identity always adopts the earliest, and the
+    row a judge is already looking at is the row that keeps moving.
+    """
+    placeholders = ", ".join("?" for _ in LIVE_STATES)
+    rows = connection.execute(
+        f"SELECT record, lifecycle_state FROM incident "
+        f"WHERE lifecycle_state IN ({placeholders}) "
+        f"ORDER BY onset_epoch ASC, incident_id ASC",
+        LIVE_STATES,
     ).fetchall()
     return [record for record in (_record_of(row) for row in rows) if record is not None]
 
