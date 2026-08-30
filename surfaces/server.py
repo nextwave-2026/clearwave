@@ -22,6 +22,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from detector.store import database_path as shared_database_path
+from investigation.env import load_dotenv
 
 from . import inject, present, store
 
@@ -195,6 +196,7 @@ def make_server(
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_dotenv()
     parser = argparse.ArgumentParser(description="Clearwave W4 surfaces server")
     parser.add_argument("--host", default="127.0.0.1", help="bind address (localhost only)")
     parser.add_argument("--port", type=int, default=int(os.environ.get("CLEARWAVE_SURFACES_PORT", "8080")))
