@@ -39,8 +39,8 @@ file is NOT union-merged, so it can genuinely conflict. A conflict here means an
 
 - **Boundary name:** C5 Notification and escalation payload
 - **Owner:** W4 - Surfaces and Escalation
-- **Current shape:** Specified in full in `docs/contracts/notification-escalation.md`, which is the single definition. W4 produces one payload per C3 incident for the dashboard, Slack and phone channels, copying C3 fields unchanged and adding available C4 narrative fields and evidence citations. Severity selects channels without recomputation; low and medium stay dashboard-only, while high and critical also escalate to Slack and phone. Each channel records a delivered, not_configured, fallback_dashboard or failed outcome, and channel failures never block the dashboard or incident.
-- **Last changed:** 2026-08-30T01:00Z
+- **Current shape:** Specified in full in `docs/contracts/notification-escalation.md`, which is the single definition. W4 produces one payload per C3 incident for the dashboard, Slack and phone channels, copying C3 fields unchanged and adding available C4 narrative fields and evidence citations. Severity selects channels without recomputation; low and medium stay dashboard-only, high adds Slack, and only critical also adds the phone (`CHANNELS_BY_SEVERITY`, ADR 0027; PR #85 fixed a `high` binding that had rung 8 real phone calls in 20 minutes for one outage). Each channel records a delivered, not_configured, fallback_dashboard or failed outcome, and channel failures never block the dashboard or incident.
+- **Last changed:** 2026-08-30T11:15Z
 
 - **Boundary name:** C6 Hidden ground truth and evaluator verdict
 - **Owner:** W1 - Simulated World and Ground Truth (`raul`); evaluator: `derek` (integration)
