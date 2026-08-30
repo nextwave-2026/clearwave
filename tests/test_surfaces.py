@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+import runpy
+import sys
 import tempfile
 import threading
 import unittest
 import urllib.request
+import warnings
 from pathlib import Path
+from unittest.mock import patch
 
 from investigation.store import insert_incident, persist_result
 from surfaces.escalation import (
@@ -670,6 +674,85 @@ class TwilioPhoneTests(unittest.TestCase):
     def test_place_call_falls_back_without_credentials(self):
         outcome = place_call({"incident_id": "inc-x"}, {"incident_id": "inc-x"})
         self.assertEqual(outcome["status"], "fallback_dashboard")
+
+
+class DashboardEntrypointTests(unittest.TestCase):
+    def test_dashboard_entrypoint_loads_dotenv_and_shell_values_win(self):
+        import investigation.env as env_module
+        import surfaces.server as server_module
+
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, ".env").write_text(
+                "CLEARWAVE_SLACK_WEBHOOK_URL=https://file.example/hook\n"
+                "CLEARWAVE_TWILIO_ACCOUNT_SID=ACfromfile\n",
+                encoding="utf-8",
+            )
+            observed = {}
+
+            class FakeServer:
+                server_address = ("127.0.0.1", 8080)
+
+                def __init__(self, *args, **kwargs):
+                    observed["slack"] = os.environ.get("CLEARWAVE_SLACK_WEBHOOK_URL")
+                    observed["sid"] = os.environ.get("CLEARWAVE_TWILIO_ACCOUNT_SID")
+
+                def serve_forever(self):
+                    return None
+
+                def server_close(self):
+                    return None
+
+            with patch.dict(
+                os.environ, {"CLEARWAVE_SLACK_WEBHOOK_URL": "https://shell.example/hook"}, clear=False
+            ):
+                os.environ.pop("CLEARWAVE_TWILIO_ACCOUNT_SID", None)
+                with patch.object(env_module, "ROOT", Path(directory)), patch.object(
+                    server_module, "ThreadingHTTPServer", FakeServer
+                ), patch.object(sys, "argv", ["surfaces", "--db", str(Path(directory, "db"))]):
+                    with self.assertRaises(SystemExit) as raised:
+                        runpy.run_module("surfaces.__main__", run_name="__main__")
+
+            self.assertEqual(raised.exception.code, 0)
+            self.assertEqual(observed, {
+                "slack": "https://shell.example/hook",
+                "sid": "ACfromfile",
+            })
+
+    def test_server_module_entrypoint_loads_dotenv(self):
+        import http.server
+        import investigation.env as env_module
+
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, ".env").write_text(
+                "CLEARWAVE_SLACK_WEBHOOK_URL=https://server-file.example/hook\n",
+                encoding="utf-8",
+            )
+            observed = {}
+
+            class FakeServer:
+                server_address = ("127.0.0.1", 8080)
+
+                def __init__(self, *args, **kwargs):
+                    observed["slack"] = os.environ.get("CLEARWAVE_SLACK_WEBHOOK_URL")
+
+                def serve_forever(self):
+                    return None
+
+                def server_close(self):
+                    return None
+
+            with patch.dict(
+                os.environ, {"CLEARWAVE_SLACK_WEBHOOK_URL": "https://server-shell.example/hook"}, clear=False
+            ), patch.object(env_module, "ROOT", Path(directory)), patch.object(
+                http.server, "ThreadingHTTPServer", FakeServer
+            ), patch.object(sys, "argv", ["surfaces.server", "--db", str(Path(directory, "db"))]):
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    with self.assertRaises(SystemExit) as raised:
+                        runpy.run_module("surfaces.server", run_name="__main__")
+
+            self.assertEqual(raised.exception.code, 0)
+            self.assertEqual(observed["slack"], "https://server-shell.example/hook")
 
 
 class StaticContractTests(unittest.TestCase):
