@@ -7,6 +7,13 @@ from typing import Any
 
 INACTIVE_STATES = {"resolved", "mitigated"}
 
+# A watch is a persisted near-miss, not yet an incident (DECISIONS.md
+# 2026-08-30T03:59Z): the detection floors have not all passed. It must never
+# be counted as active, never head the overview, and never enter the active
+# incident queue - a quieter rail shows it instead. See surfaces/store.py's
+# NON_ESCALATING_STATES for the matching escalation guard.
+WATCH_STATES = {"watching"}
+
 _SCOPE_ORDER = (
     "provider",
     "payment_method",
@@ -206,7 +213,13 @@ def merchant_health(incidents: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _is_active(incident: Mapping[str, Any]) -> bool:
-    return str(incident.get("lifecycle_state", "")).lower() not in INACTIVE_STATES
+    state = str(incident.get("lifecycle_state", "")).lower()
+    return state not in INACTIVE_STATES and state not in WATCH_STATES
+
+
+def is_watch(incident: Mapping[str, Any]) -> bool:
+    """True for a persisted near-miss. Never true for an active incident."""
+    return str(incident.get("lifecycle_state", "")).lower() in WATCH_STATES
 
 
 def _narrative_available(investigation: Mapping[str, Any] | None) -> bool:

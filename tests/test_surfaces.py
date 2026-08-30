@@ -664,6 +664,81 @@ class SurfacesTests(unittest.TestCase):
         self.assertNotIn("unknown", [row["merchant_id"] for row in rows])
 
 
+class WatchStateTests(unittest.TestCase):
+    """A watch (DECISIONS.md 2026-08-30T03:59Z) is a persisted near-miss on
+    the same C3 record, not yet an incident. It must never be counted as
+    active, never head the overview, and never escalate - even if a C4
+    result somehow exists for it, which should never happen because the
+    investigation daemon never claims a watch in the first place.
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.db = Path(self._tmpdir.name) / "clearwave.db"
+        os.environ.pop("CLEARWAVE_SLACK_WEBHOOK_URL", None)
+        os.environ.pop("CLEARWAVE_PHONE_PROVIDER", None)
+        for name in (*TWILIO_ENV_VARS, TWILIO_TWIML_URL_ENV):
+            os.environ.pop(name, None)
+        self.app = SurfacesApp(self.db)
+
+    def _seed(self, *incidents):
+        connection = connect(self.db)
+        self.addCleanup(connection.close)
+        for incident in incidents:
+            insert_incident(connection, incident, lifecycle_state=incident.get("lifecycle_state", "detected"))
+        return connection
+
+    def test_a_watch_is_never_counted_active_and_never_heads_the_overview(self):
+        self._seed(
+            _incident("inc-watch", "critical", "2026-08-29T09:00:00Z", lifecycle_state="watching"),
+        )
+        overview = self.app.overview()
+        self.assertEqual(overview["active_incident_count"], 0)
+        self.assertIsNone(overview["source_incident_id"])
+        self.assertEqual(overview["incidents"], [])
+
+    def test_a_real_incident_still_heads_the_overview_alongside_a_watch(self):
+        self._seed(
+            _incident("inc-watch", "critical", "2026-08-29T09:00:00Z", lifecycle_state="watching"),
+            _incident("inc-real", "low", "2026-08-29T10:00:00Z"),
+        )
+        overview = self.app.overview()
+        self.assertEqual(overview["active_incident_count"], 1)
+        self.assertEqual(overview["source_incident_id"], "inc-real")
+
+    def test_a_watch_never_escalates_even_with_a_forced_c4_result(self):
+        connection = self._seed(
+            _incident("inc-watch", "critical", "2026-08-29T09:00:00Z", lifecycle_state="watching"),
+        )
+        # Forcing a C4 result onto a watch should never happen in practice -
+        # the daemon only claims "detected" - but the guard must not rely on
+        # that staying true, so this proves it holds even here.
+        persist_result(connection, "inc-watch", _diagnosis("inc-watch"), "diagnosed")
+        outcomes = self.app.queue()  # triggers ensure_escalation for every row
+        self.assertEqual(load_escalation(connection, "inc-watch"), [])
+        # No claim row either: the guard fires before the atomic claim.
+        claimed = connection.execute(
+            "SELECT COUNT(*) FROM escalation_claim WHERE incident_id = ?", ("inc-watch",)
+        ).fetchone()[0]
+        self.assertEqual(claimed, 0)
+        self.assertEqual(outcomes["incidents"][0]["lifecycle_state"], "watching")
+
+    def test_a_diagnosed_incident_still_escalates(self):
+        """Regression guard: the escalation filter is a blocklist of watch
+        states, not an allowlist of {"detected"} - escalation only fires once
+        a C4 result exists, which is exactly when lifecycle_state has already
+        moved to "diagnosed" (investigation/store.py). An allowlist of
+        "detected" alone would silently stop every real escalation.
+        """
+        connection = self._seed(
+            _incident("inc-real", "critical", "2026-08-29T09:00:00Z", lifecycle_state="diagnosed"),
+        )
+        persist_result(connection, "inc-real", _diagnosis("inc-real"), "diagnosed")
+        self.app.queue()
+        self.assertNotEqual(load_escalation(connection, "inc-real"), [])
+
+
 class SlackBlockKitTests(unittest.TestCase):
     def test_severity_and_confidence_render_in_separate_blocks(self):
         payload = {

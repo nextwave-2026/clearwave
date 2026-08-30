@@ -22,6 +22,17 @@ from .escalation import escalate
 
 DEFAULT_DB = Path("state/clearwave.db")
 
+# A watch (DECISIONS.md 2026-08-30T03:59Z) is a persisted near-miss on the
+# same C3 record, not yet an incident. It must never escalate, including if a
+# future caller points ensure_escalation at a watch row by mistake - the
+# investigation daemon separately never claims one, so it also has no C4 to
+# escalate on, but this guard does not rely on that staying true. This is
+# deliberately a blocklist, not an allowlist of {"detected"}: escalation
+# fires only once a C4 result exists, which is when lifecycle_state has
+# already moved to "diagnosed" (investigation/store.py), so an allowlist of
+# "detected" alone would silently stop every real escalation.
+NON_ESCALATING_STATES = {"watching"}
+
 # Stored severity is already the business priority. This rank is only a sort
 # key over that stored label; it does not compute or adjust severity.
 SEVERITY_RANK = {
@@ -133,6 +144,9 @@ def ensure_escalation(
     complete message. Already-sent rows are never rewritten.
     """
     incident_id = str(incident.get("incident_id", ""))
+    state = str(incident.get("lifecycle_state", "")).lower()
+    if state in NON_ESCALATING_STATES:
+        return []
     existing = load_escalation(connection, incident_id)
     if existing:
         return existing
