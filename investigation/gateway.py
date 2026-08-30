@@ -354,6 +354,27 @@ def _utc_now() -> str:
 
 
 def _incident_window(incident: Mapping[str, Any]) -> dict[str, str]:
+    """Use the exact interval that produced the stored C3 financial impact."""
+    detection = incident.get("detection", {})
+    window = detection.get("window") if isinstance(detection, Mapping) else None
+    if isinstance(window, Mapping):
+        start_epoch = window.get("start_epoch")
+        end_epoch = window.get("end_epoch")
+        if (
+            isinstance(start_epoch, int)
+            and not isinstance(start_epoch, bool)
+            and isinstance(end_epoch, int)
+            and not isinstance(end_epoch, bool)
+            and end_epoch >= start_epoch
+        ):
+            try:
+                return {
+                    "start": _epoch_as_utc(start_epoch),
+                    "end": _epoch_as_utc(end_epoch),
+                }
+            except (OverflowError, OSError, ValueError):
+                pass
+
     persistence = incident.get("persistence", {})
     end = persistence.get("last_observed_at") if isinstance(persistence, Mapping) else None
     start = incident.get("onset")
@@ -362,3 +383,9 @@ def _incident_window(incident: Mapping[str, Any]) -> dict[str, str]:
     if not isinstance(end, str) or not end:
         end = start
     return {"start": start, "end": end}
+
+
+def _epoch_as_utc(value: int) -> str:
+    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat(timespec="seconds").replace(
+        "+00:00", "Z"
+    )

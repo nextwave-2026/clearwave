@@ -108,6 +108,8 @@ class SurfacesTests(unittest.TestCase):
         self.db = Path(self._tmpdir.name) / "clearwave.db"
         os.environ.pop("CLEARWAVE_SLACK_WEBHOOK_URL", None)
         os.environ.pop("CLEARWAVE_PHONE_PROVIDER", None)
+        for name in (*TWILIO_ENV_VARS, TWILIO_TWIML_URL_ENV):
+            os.environ.pop(name, None)
         self.app = SurfacesApp(self.db)
 
     def _seed(self, *incidents):
@@ -673,13 +675,25 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("scope_label", js)
         self.assertIn("incidentScope", js)
 
-    def test_incoming_hidden_attribute_overrides_display_grid(self):
-        css = (ROOT / "surfaces" / "static" / "styles.css").read_text(encoding="utf-8")
-        self.assertRegex(css, r"\.incoming\[hidden\][^}]*display:\s*none")
+    def test_dashboard_has_no_call_controls(self):
+        static = ROOT / "surfaces" / "static"
+        html = (static / "index.html").read_text(encoding="utf-8")
+        js = (static / "app.js").read_text(encoding="utf-8")
+        css = (static / "styles.css").read_text(encoding="utf-8")
+        for blob in (html, js, css):
+            self.assertNotIn("incoming-call", blob)
+            self.assertNotIn("answer-call", blob)
+            self.assertNotIn("incoming-copy", blob)
+            self.assertNotIn("incoming-panel", blob)
+        self.assertNotIn("dismissedCalls", js)
+        self.assertNotIn("pending-call", html)
 
-    def test_incoming_copy_preserves_newlines(self):
-        css = (ROOT / "surfaces" / "static" / "styles.css").read_text(encoding="utf-8")
-        self.assertRegex(css, r"\.incoming-copy[^}]*white-space:\s*pre-line")
+    def test_escalation_outcomes_are_shown_as_read_only_data(self):
+        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("These are stored outcomes, not controls.", js)
+        self.assertIn("event.channel", js)
+        self.assertIn("event.status", js)
+        self.assertIn("fallback_dashboard", js)
 
     def test_missing_recommended_action_is_honest_absence(self):
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
@@ -687,7 +701,8 @@ class StaticContractTests(unittest.TestCase):
             "Operator narrative is the stored recommended action, or unavailable if the agent failed.",
             js,
         )
-        self.assertIn("Recommended action not in store", js)
+        self.assertIn("questions.what_the_operator_should_do", js)
+        self.assertIn("Investigation has not run yet.", js)
 
     def test_missing_investigation_is_not_labelled_agent_unavailable(self):
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
@@ -704,10 +719,21 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("awaiting investigation", js)
         self.assertIn('"confidence " + confValue', js)
 
-    def test_answered_call_is_not_reshown_from_a_stale_refresh(self):
-        js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
-        self.assertIn("dismissedCalls", js)
-        self.assertIn("state.dismissedCalls[incidentId] = true", js)
+    def test_live_dashboard_does_not_bake_mockup_figures(self):
+        static = ROOT / "surfaces" / "static"
+        html = (static / "index.html").read_text(encoding="utf-8")
+        js = (static / "app.js").read_text(encoding="utf-8")
+        css = (static / "styles.css").read_text(encoding="utf-8")
+        for blob in (html, js, css):
+            self.assertNotIn("78,919", blob)
+            self.assertNotIn("78919", blob)
+            self.assertNotIn("19,785", blob)
+            self.assertNotIn("inc-2026-08-30-c2b28a30", blob)
+
+    def test_tam_mockup_remains_as_design_reference(self):
+        path = ROOT / "surfaces" / "static" / "tam-dashboard.html"
+        self.assertTrue(path.is_file())
+        self.assertGreater(path.stat().st_size, 1000)
 
     def test_the_judge_control_is_a_toggle_with_both_states_in_the_markup(self):
         html = (ROOT / "surfaces" / "static" / "index.html").read_text(encoding="utf-8")
@@ -720,7 +746,7 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn('judgeTrigger.setAttribute("aria-pressed"', js)
         # The on state must be visibly distinct, in the palette already on the
         # board rather than a second visual language.
-        self.assertRegex(css, r'\.judge button\[data-on="true"\][^}]*var\(--heat\)')
+        self.assertRegex(css, r'\.judge button\[data-on="true"\][^}]*var\(--sev-critical\)')
 
     def test_the_judge_control_never_upgrades_a_failure_into_a_claim(self):
         js = (ROOT / "surfaces" / "static" / "app.js").read_text(encoding="utf-8")
