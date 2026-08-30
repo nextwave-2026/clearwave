@@ -873,6 +873,11 @@ class SlackBlockKitTests(unittest.TestCase):
         self.assertIn("28,000", rendered)
         self.assertIn("112,000", rendered)
         self.assertIn("Merchant A", rendered)
+        self.assertIn("$112,000 USD/h", message["text"])
+        self.assertIn("Executive readout", rendered)
+        self.assertIn("Next action", rendered)
+        self.assertIn("Affected slice", rendered)
+        self.assertIn("No automatic remediation was executed", rendered)
         body = message["attachments"][0]["blocks"]
         self.assertEqual(message["attachments"][0]["color"], "#DC2626")
         severity_block = next(b for b in body if b["type"] == "header")
@@ -883,6 +888,43 @@ class SlackBlockKitTests(unittest.TestCase):
         self.assertIn("medium confidence", hypothesis_block["text"]["text"])
         self.assertNotIn("Bank X over-decline", hypothesis_block["text"]["text"])
         self.assertIn("Bank X over-decline", not_ruled_out_block["text"]["text"])
+
+    def test_affected_slice_is_labelled_for_fast_tam_triage(self):
+        payload = {
+            "incident_id": "inc-slice",
+            "severity": "high",
+            "affected_cohort": {
+                "merchant_id": "merchant-a",
+                "provider": "provider-p2",
+                "country": "CO",
+                "payment_method": "cash_in_store",
+                "card_network": "visa",
+                "issuing_bank": "bank-x",
+                "decline_code": "provider_timeout",
+            },
+        }
+        rendered = json.dumps(slack_blocks(payload))
+        self.assertIn("Affected slice", rendered)
+        for expected in (
+            "Merchant A",
+            "Provider P2",
+            "CO",
+            "cash in store",
+            "visa",
+            "bank-x",
+            "provider timeout",
+        ):
+            self.assertIn(expected, rendered)
+        for label in (
+            "*Merchant*",
+            "*Provider*",
+            "*Country*",
+            "*Payment method*",
+            "*Card network*",
+            "*Issuing bank*",
+            "*Decline code*",
+        ):
+            self.assertIn(label, rendered)
 
     def test_citations_render_as_verified_against_sources(self):
         payload = {

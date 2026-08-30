@@ -158,6 +158,38 @@ def humanize_id(value: str) -> str:
     return " ".join(words)
 
 
+def _money_if_present(value: Any) -> str | None:
+    if not isinstance(value, Mapping) or value.get("amount") is None:
+        return None
+    rendered = _money(value)
+    return None if rendered == "n/a" else rendered
+
+
+def _cohort_fields(cohort: Mapping[str, Any]) -> list[dict[str, str]]:
+    labels = (
+        ("merchant_id", "Merchant"),
+        ("provider", "Provider"),
+        ("country", "Country"),
+        ("payment_method", "Payment method"),
+        ("card_network", "Card network"),
+        ("issuing_bank", "Issuing bank"),
+        ("decline_code", "Decline code"),
+    )
+    fields = []
+    for key, label in labels:
+        value = cohort.get(key)
+        if value:
+            fields.append({"type": "mrkdwn", "text": f"*{label}*\n{_cohort_value(key, value)}"})
+    return fields
+
+
+def _cohort_value(key: str, value: Any) -> str:
+    text = str(value)
+    if key in {"merchant_id", "provider"}:
+        return humanize_id(text)
+    return text.replace("_", " ")
+
+
 def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Render one Block Kit message. Every figure is read from payload, never computed.
 
@@ -197,8 +229,11 @@ def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
     metric_label = str(metric).replace("_", " ").title() if metric else None
     expected, actual = change.get("expected"), change.get("actual")
     cohort_label = " / ".join(str(value) for value in cohort.values() if value)
+    cohort_fields = _cohort_fields(cohort)
     merchant = humanize_id(cohort.get("merchant_id")) if cohort.get("merchant_id") else None
     scope = merchant or payload.get("scope_label") or cohort_scope_label(cohort)
+    gmv_at_risk = _money_if_present(financial.get("gmv_at_risk"))
+    loss_per_hour = _money_if_present(financial.get("loss_per_hour"))
 
     body: list[dict[str, Any]] = [
         {
@@ -222,6 +257,35 @@ def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
     ]
 
     summary = f"{severity_label}: {incident_id}"
+    if scope:
+        summary = f"{sev_icon} {severity_label}: {scope}"
+    executive_lines = []
+    if loss_per_hour:
+        executive_lines.append(f"*Loss rate:* {loss_per_hour}/h")
+    if gmv_at_risk:
+        executive_lines.append(f"*GMV at risk:* {gmv_at_risk}")
+    if metric_label and expected is not None and actual is not None:
+        executive_lines.append(f"*{metric_label}:* {_pct(expected)} expected -> *{_pct(actual)} actual*")
+    if confidence:
+        executive_lines.append(f"*Diagnostic confidence:* {confidence}")
+    action_text = action.get("action")
+    if action_text:
+        executive_lines.append(f"*Next action:* {_truncate(str(action_text), 240)}")
+    if executive_lines:
+        body.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": _truncate(
+                        ":rotating_light: *Executive readout*\n" + "\n".join(executive_lines),
+                        SECTION_TEXT_LIMIT,
+                    ),
+                },
+            }
+        )
+        body.append({"type": "divider"})
+
     if metric_label and expected is not None and actual is not None:
         change_text = f"*{metric_label}*\n{_pct(expected)}  ➜  *{_pct(actual)}*"
         if cohort_label:
@@ -231,16 +295,30 @@ def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
         summary = f"{sev_icon} {severity_label}: {metric_label} {_pct(expected)} -> {_pct(actual)}"
         if cohort_label:
             summary += f" in {cohort_label}"
+        if loss_per_hour:
+            summary += f" | {loss_per_hour}/h"
+
+    if cohort_fields:
+        body.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "*Affected slice*"},
+                "fields": cohort_fields[:10],
+            }
+        )
+        body.append({"type": "divider"})
 
     fields = []
-    if isinstance(financial.get("gmv_at_risk"), Mapping):
-        fields.append({"type": "mrkdwn", "text": f":moneybag: *GMV at risk*\n{_money(financial['gmv_at_risk'])}"})
-    if isinstance(financial.get("loss_per_hour"), Mapping):
+    if gmv_at_risk:
+        fields.append({"type": "mrkdwn", "text": f":moneybag: *GMV at risk*\n{gmv_at_risk}"})
+    if loss_per_hour:
         fields.append(
-            {"type": "mrkdwn", "text": f":chart_with_downwards_trend: *Loss rate*\n{_money(financial['loss_per_hour'])}/h"}
+            {"type": "mrkdwn", "text": f":chart_with_downwards_trend: *Loss rate*\n{loss_per_hour}/h"}
         )
     if payload.get("onset"):
         fields.append({"type": "mrkdwn", "text": f":clock3: *Onset (UTC)*\n{payload['onset']}"})
+    if confidence:
+        fields.append({"type": "mrkdwn", "text": f":mag: *Diagnostic confidence*\n{confidence}"})
     if fields:
         body.append({"type": "section", "fields": fields})
         body.append({"type": "divider"})
@@ -260,11 +338,13 @@ def slack_blocks(payload: Mapping[str, Any]) -> dict[str, Any]:
         text = _truncate(f":grey_question: *Not ruled out*\n{not_ruled_out}", SECTION_TEXT_LIMIT)
         body.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
 
-    action_text = action.get("action")
     if action_text:
         urgency = action.get("urgency")
         label = f"Recommended · {urgency}" if urgency else "Recommended"
-        text = _truncate(f":dart: *{label}*\n{action_text}", SECTION_TEXT_LIMIT)
+        text = _truncate(
+            f":dart: *{label}*\n{action_text}\n_No automatic remediation was executed._",
+            SECTION_TEXT_LIMIT,
+        )
         body.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
 
     if action_text or hypothesis_statement:
